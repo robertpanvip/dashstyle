@@ -1,0 +1,41 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+    <id>com.pan.dashstyle</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-name -->
+    <name>DashStyle CSS Module Support</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor url="https://www.pan.com">pan</vendor>
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
+    <description><![CDATA[
+<p>Enhances IntelliJ IDEA with better support for CSS Modules, specifically targeting string-key access like <code>styles["foo-bar"]</code>.</p>
+
+<p>Key features:</p>
+<ul>
+  <li><strong>Code completion</strong>: Auto-complete class names from imported CSS Modules inside <code>styles["</code> (in kebab-case), with the corresponding camelCase name shown next to each suggestion.</li>
+  <li><strong>Navigation</strong>: Ctrl+click on <code>"foo-bar"</code> jumps directly to the matching <code>.foo-bar</code> ruleset in the CSS file, or to the <code>fooBar</code> property in a local object definition.</li>
+  <li><strong>Smart quote handling</strong>: After completion, automatically inserts the matching closing quote and places the cursor inside the quotes.</li>
+  <li>Supports both imported CSS/SCSS/LESS files (CSS Modules) and locally defined JS/TS objects.</li>
+</ul>
+
+<p>Ideal for React, Vue, or any project using CSS Modules — brings full IDE intelligence to kebab-case class names used in string literals.</p>
+]]></description>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>JavaScript</depends>
+    <!-- Extension points defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <!-- 关键：声明你的 ReferenceContributor -->
+    <extensions defaultExtensionNs="com.intellij">
+        <psi.referenceContributor
+                implementation="com.pan.dashstyle.StyleStringKeyReferenceContributor"
+               />
+        <!-- 如果你还支持 TypeScript，可以再加一行 language="TypeScript" -->
+    </extensions>
+</idea-plugin>
