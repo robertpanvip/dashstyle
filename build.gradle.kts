@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.0-SNAPSHOT"
+version = "1.0.0"
 
 repositories {
     // 国内镜像优先
@@ -51,5 +51,9 @@ tasks {
     }
     withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         kotlinOptions.jvmTarget = "21"
+    }
+
+    publishPlugin {
+        token.set(providers.gradleProperty("intellijPublishToken"))
     }
 }
