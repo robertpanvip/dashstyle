@@ -1,21 +1,20 @@
 <svg width="40" height="40" viewBox="0 0 40 40"
      xmlns="http://www.w3.org/2000/svg">
 
-    <rect x="1.5" y="1.5" width="37" height="37" rx="8"
-          fill="url(#bg)"/>
+<rect x="1.5" y="1.5" width="37" height="37" rx="8"
+      fill="url(#bg)"/>
 
-    <rect x="10" y="19" width="20" height="3" rx="1.5"
-          fill="url(#fg)"/>
+<rect x="9" y="13" width="7" height="14" rx="1" fill="white"/>
+<rect x="24" y="13" width="7" height="14" rx="1" fill="white"/>
 
-    <defs>
-        <linearGradient id="bg" x1="0" y1="0" x2="40" y2="40">
-            <stop offset="0%" stop-color="#667EEA"/>
-            <stop offset="100%" stop-color="#764BA2"/>
-        </linearGradient>
-
-        <linearGradient id="fg" x1="10" y1="10" x2="30" y2="30">
-            <stop offset="0%" stop-color="#FFFFFF"/>
-            <stop offset="100%" stop-color="#E0E0E0"/>
-        </linearGradient>
-    </defs>
+<rect x="17" y="19" width="6" height="2" rx="1" fill="white"/>
+<defs>
+    <linearGradient id="bg" x1="2.94192" y1="4.89955" x2="37.7772" y2="39.7345"
+                    gradientUnits="userSpaceOnUse">
+        <stop offset="0.15937" stop-color="#3BEA62"/>
+        <stop offset="0.5404" stop-color="#3C99CC"/>
+        <stop offset="0.93739" stop-color="#6B57FF"/>
+    </linearGradient>
+</defs>
 </svg>
+
