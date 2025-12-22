@@ -42,3 +42,4 @@ gradle
 .intellijPlatform/
 ### Mac OS ###
 .DS_Store
+/.kotlin/
