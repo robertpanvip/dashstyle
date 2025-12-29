@@ -122,10 +122,10 @@ class StyleStringKeyReference(
 
         val qualifierExpr = indexAccess.qualifier ?: return null
 
-        val stylesObj = qualifierExpr.reference?.resolve() ?: return null;
-
+        val stylesObj = qualifierExpr.reference?.resolve();
         val containingFile = element.containingFile
-        if (containingFile?.name?.endsWith(".vue") == true && containingFile is XmlFile) {
+
+        if ((stylesObj == null || stylesObj.text == null) && containingFile?.name?.endsWith(".vue") == true && containingFile is XmlFile) {
             // 当作 Vue 文件处理
             // 条件2: 当前位置必须在 <template> 标签内部（包括绑定表达式）
             val templateTag = findTagInFile(containingFile, "template") ?: return null
@@ -138,7 +138,7 @@ class StyleStringKeyReference(
                 val initializer = variable.initializer
                 return initializer;
             }
-            if (qualifierExpr.text == "$"+"style") {
+            if (qualifierExpr.text == "$" + "style") {
                 val moduleStyleTag = findModuleStyleTag(containingFile) ?: return null
                 return moduleStyleTag
             }
@@ -169,6 +169,7 @@ class StyleStringKeyReference(
                                 ?.rulesets
                                 ?.forEach(::collectFrom)
                         }
+
                         else -> {
                             PsiTreeUtil.findChildrenOfType(
                                 declaration,
