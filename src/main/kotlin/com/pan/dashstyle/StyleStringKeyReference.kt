@@ -1,7 +1,6 @@
 package com.pan.dashstyle
 
 import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.icons.AllIcons
 import com.intellij.lang.ecmascript6.psi.ES6ImportedBinding
 import com.intellij.lang.javascript.psi.*
 import com.intellij.openapi.diagnostic.Logger
@@ -12,6 +11,9 @@ import com.intellij.psi.PsiReferenceBase
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.css.StylesheetFile
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.PsiFile
+import com.intellij.psi.xml.XmlFile
+import com.intellij.psi.xml.XmlTag
 
 /**
  * PsiReference，用于将 styles["foo-bar"] 映射为 styles.fooBar
@@ -26,7 +28,6 @@ class StyleStringKeyReference(
         if (stylesObj === null) {
             return null
         }
-
         val originName = kebabName;
 
         val kebabName = if (kebabName.contains("-")) kebabName else camelToKebab(kebabName)
@@ -85,6 +86,34 @@ class StyleStringKeyReference(
         }.removePrefix("-")  // 防止首字母大写时多出一个前导 -
     }
 
+
+    // 查找文件中的指定标签（如 "template" 或 "style"）
+    private fun findTagInFile(file: PsiFile, tagName: String): XmlTag? {
+        return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
+            .firstOrNull { it.name.equals(tagName, ignoreCase = true) }
+    }
+
+    // 辅助函数：在指定容器中搜索同名变量声明
+    private fun findVariableDeclarationByName(name: String, container: PsiElement?): JSVariable? {
+        if (container == null) return null
+        return PsiTreeUtil.findChildrenOfType(container, JSVariable::class.java)
+            .firstOrNull { it.name == name }
+    }
+
+    // 查找 <script> 标签
+    private fun findScriptTag(file: PsiFile): XmlTag? {
+        return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
+            .firstOrNull { it.name.equals("script", ignoreCase = true) }
+    }
+
+    private fun findModuleStyleTag(file: PsiFile): XmlTag? {
+        return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
+            .firstOrNull { tag ->
+                tag.name.equals("style", ignoreCase = true) &&
+                        tag.getAttribute("module") != null
+            }
+    }
+
     fun getStyleElement(): PsiElement? {
         val literal = element as? JSLiteralExpression ?: return null
 
@@ -94,8 +123,30 @@ class StyleStringKeyReference(
         val qualifierExpr = indexAccess.qualifier ?: return null
 
         val stylesObj = qualifierExpr.reference?.resolve() ?: return null;
+
+        val containingFile = element.containingFile
+        if (containingFile?.name?.endsWith(".vue") == true && containingFile is XmlFile) {
+            // 当作 Vue 文件处理
+            // 条件2: 当前位置必须在 <template> 标签内部（包括绑定表达式）
+            val templateTag = findTagInFile(containingFile, "template") ?: return null
+            if (!PsiTreeUtil.isAncestor(templateTag, element, false)) return null;
+            val varName = qualifierExpr.text;
+            // 在整个文件或 script 块中搜索同名变量声明
+            val variable = findVariableDeclarationByName(varName, containingFile)
+                ?: findVariableDeclarationByName(varName, findScriptTag(containingFile));
+            if (variable !== null) {
+                val initializer = variable.initializer
+                return initializer;
+            }
+            if (qualifierExpr.text == "$"+"style") {
+                val moduleStyleTag = findModuleStyleTag(containingFile) ?: return null
+                return moduleStyleTag
+            }
+        }
+
         return stylesObj;
     }
+
 
     fun <T> collectStyleMembers(
         stylesObj: PsiElement,
@@ -118,7 +169,6 @@ class StyleStringKeyReference(
                                 ?.rulesets
                                 ?.forEach(::collectFrom)
                         }
-
                         else -> {
                             PsiTreeUtil.findChildrenOfType(
                                 declaration,
@@ -135,6 +185,14 @@ class StyleStringKeyReference(
                     stylesObj,
                     JSProperty::class.java
                 ).forEach(::collectFrom)
+            }
+            // <style module> 标签本身
+            is XmlTag -> {
+                if (stylesObj.name.equals("style", ignoreCase = true)) {
+                    // 直接遍历 <style> 标签的子树，找到所有 CssRuleset
+                    PsiTreeUtil.findChildrenOfType(stylesObj, CssRuleset::class.java)
+                        .forEach(::collectFrom)
+                }
             }
         }
 
