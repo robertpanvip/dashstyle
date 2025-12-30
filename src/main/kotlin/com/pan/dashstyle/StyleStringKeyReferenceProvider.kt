@@ -19,8 +19,9 @@ class StyleStringKeyReferenceProvider : PsiReferenceProvider() {
             // 不是索引访问的字符串，或不是作为索引的那个字符串
             return emptyArray()
         }
-        //text?.let { if (!it.contains("-")) return emptyArray() } // 只处理 kebab-case
-        //LOG.info("StyleStringKeyReferenceProvider: literal text = '$text'")  // ← 这里打印
-        return arrayOf(text?.let { StyleStringKeyReference(literal, it) })
+        if(text == null){
+            return emptyArray()
+        }
+        return arrayOf(StyleStringKeyReference(literal, text))
     }
 }
