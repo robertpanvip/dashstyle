@@ -5,12 +5,12 @@ import com.intellij.psi.PsiReference
 import com.intellij.psi.PsiReferenceProvider
 import com.intellij.util.ProcessingContext
 import com.intellij.lang.javascript.psi.JSLiteralExpression
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.psi.util.PsiTreeUtil
 
+
 class StyleStringKeyReferenceProvider : PsiReferenceProvider() {
-    private val LOG = Logger.getInstance(StyleStringKeyReferenceProvider::class.java)
     override fun getReferencesByElement(element: PsiElement, context: ProcessingContext): Array<out PsiReference?> {
+
         val literal = element as? JSLiteralExpression ?: return emptyArray()
         val text = literal.stringValue
         // 关键判断：父节点必须是 JSIndexedPropertyAccessExpression（即 xxx["..."] 形式）

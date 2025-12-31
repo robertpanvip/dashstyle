@@ -1,10 +1,8 @@
 package com.pan.dashstyle
 
 import com.intellij.codeInsight.lookup.LookupElementBuilder
-import com.intellij.lang.ecmascript6.psi.ES6ImportSpecifierAlias
 import com.intellij.lang.ecmascript6.psi.ES6ImportedBinding
 import com.intellij.lang.javascript.psi.*
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
@@ -12,18 +10,9 @@ import com.intellij.psi.PsiReferenceBase
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.css.StylesheetFile
 import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.psi.PsiFile
-
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
-
-import com.intellij.psi.stubs.StubIndex
-import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.lang.javascript.psi.JSVariable
-import com.intellij.lang.javascript.index.JavaScriptIndex
-import com.intellij.lang.javascript.psi.ecma6.impl.TypeScriptFunctionExpressionImpl
-import com.intellij.lang.javascript.psi.impl.JSBlockStatementImpl
-import com.intellij.openapi.diagnostic.thisLogger
 
 /**
  * PsiReference，用于将 styles["foo-bar"] 映射为 styles.fooBar
@@ -32,7 +21,6 @@ class StyleStringKeyReference(
     element: PsiElement,
     private val kebabName: String
 ) : PsiReferenceBase<PsiElement>(element, TextRange(1, element.textLength - 1)) {
-    private val LOG = Logger.getInstance(StyleStringKeyReferenceProvider::class.java)
     override fun resolve(): PsiElement? {
         val stylesObj = this.getStyleElement();
         if (stylesObj === null || stylesObj.text === null) {
@@ -40,9 +28,9 @@ class StyleStringKeyReference(
         }
         val originName = kebabName;
 
-        val kebabName = if (kebabName.contains("-")) kebabName else camelToKebab(kebabName)
+        val kebabName = if (kebabName.contains("-")) kebabName else Util.camelToKebab(kebabName)
         // 统一转为 camelCase 用于匹配属性名
-        val camelName = if (kebabName.contains("-")) kebabToCamel(kebabName) else kebabName
+        val camelName = if (kebabName.contains("-")) Util.kebabToCamel(kebabName) else kebabName
 
         val pattern =
             Regex("""(^|[^\w-])\.${Regex.escape(kebabName)}($|[^\w-])""")
@@ -75,68 +63,6 @@ class StyleStringKeyReference(
         return candidates.firstOrNull()
     }
 
-    private fun kebabToCamel(name: String): String {
-        return name.split("-").mapIndexed { index, part ->
-            if (index == 0) part else part.replaceFirstChar { it.uppercase() }
-        }.joinToString("")
-    }
-
-    private fun camelToKebab(name: String): String {
-        return buildString {
-            name.forEach { ch ->
-                if (ch.isUpperCase()) {
-                    append("-")
-                    append(ch.lowercaseChar())
-                } else {
-                    append(ch)
-                }
-            }
-        }.removePrefix("-")  // 防止首字母大写时多出一个前导 -
-    }
-
-
-    // 查找文件中的指定标签（如 "template" 或 "style"）
-    private fun findTagInFile(file: PsiFile, tagName: String): XmlTag? {
-        return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
-            .firstOrNull { it.name.equals(tagName, ignoreCase = true) }
-    }
-
-    // 辅助函数：在指定容器中搜索同名变量声明
-    private fun findVariableDeclarationByName(name: String, scriptTag: XmlTag?): JSVariable? {
-        if (scriptTag === null) {
-            return null;
-        }
-        if (name.isBlank()) return null
-
-        val topLevelBlocks = PsiTreeUtil.collectElements(scriptTag, { ele ->
-            return@collectElements ele.text.trim()
-                .isNotEmpty() && ele.parent.javaClass.simpleName == "VueScriptSetupEmbeddedContentImpl"
-        })
-
-        // 从所有嵌入块中查找变量，取最后一个匹配的
-        val allMatchingVars = topLevelBlocks.flatMap { block ->
-            PsiTreeUtil.findChildrenOfType(block, JSVariable::class.java)
-                .filter { it.name == name }
-        }
-
-        return allMatchingVars.maxByOrNull { it.textOffset }
-    }
-
-
-    // 查找 <script> 标签
-    private fun findScriptTag(file: PsiFile): XmlTag? {
-        return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
-            .firstOrNull { it.name.equals("script", ignoreCase = true) }
-    }
-
-    private fun findModuleStyleTag(file: PsiFile): XmlTag? {
-        return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
-            .firstOrNull { tag ->
-                tag.name.equals("style", ignoreCase = true) &&
-                        tag.getAttribute("module") != null
-            }
-    }
-
     fun getStyleElement(): PsiElement? {
         val literal = element as? JSLiteralExpression ?: return null
 
@@ -150,19 +76,18 @@ class StyleStringKeyReference(
         if ((stylesObj?.text == null) && containingFile?.name?.endsWith(".vue") == true && containingFile is XmlFile) {
             // 当作 Vue 文件处理
             // 条件: 当前位置必须在 <template> 标签内部（包括绑定表达式）
-            val templateTag = findTagInFile(containingFile, "template") ?: return stylesObj
+            val templateTag = Util.findTagInFile(containingFile, "template") ?: return stylesObj
             if (!PsiTreeUtil.isAncestor(templateTag, element, false)) return stylesObj;
             val varName = qualifierExpr.text;
 
             // 在整个文件或 script 块中搜索同名变量声明
-            val variable = findVariableDeclarationByName(varName, findScriptTag(containingFile))
+            val variable = Util.findVariableDeclarationByName(varName, Util.findScriptTag(containingFile))
             if (variable !== null) {
                 val initializer = variable.initializer;
                 if (initializer !== null) {
-                    print("initializer${initializer.text}\n")
                     if (initializer is JSCallExpression) {
-                        if (isUseCssModuleFromVue(initializer)) {
-                            val moduleStyleTag = findModuleStyleTag(containingFile) ?: return stylesObj
+                        if (Util.isUseCssModuleFromVue(initializer)) {
+                            val moduleStyleTag = Util.findModuleStyleTag(containingFile) ?: return stylesObj
                             return moduleStyleTag
                         }
                     }
@@ -170,34 +95,13 @@ class StyleStringKeyReference(
                 }
             }
             if (qualifierExpr.text == "$" + "style") {
-                val moduleStyleTag = findModuleStyleTag(containingFile) ?: return stylesObj
+                val moduleStyleTag = Util.findModuleStyleTag(containingFile) ?: return stylesObj
                 return moduleStyleTag
             }
         }
 
         return stylesObj;
     }
-
-    fun isUseCssModuleFromVue(initializer: JSCallExpression): Boolean {
-        // 获取被调用的表达式（如 useCssModule 或别名 css）
-        val methodExpr = initializer.methodExpression
-        // 检查这个引用是否来自 'vue' 导入
-        var resolved = methodExpr?.reference?.resolve();
-        if (resolved == null) return false;
-        if (resolved is ES6ImportSpecifierAlias) {
-            resolved = resolved.findAliasedElement()
-        }
-        if (resolved == null) return false
-        val cf = resolved.containingFile
-        val virtualFile = cf?.virtualFile ?: cf?.originalFile?.virtualFile
-
-        val filePath = virtualFile?.path?.lowercase()
-        if (filePath == null) {
-            return false
-        }
-        return filePath.contains("node_modules/@vue")
-    }
-
 
     fun <T> collectStyleMembers(
         stylesObj: PsiElement,
@@ -280,7 +184,7 @@ class StyleStringKeyReference(
 
         // 排序后生成补全项
         return kebabOptions.sorted().map { kebab ->
-            val camel = kebabToCamel(kebab)
+            val camel = Util.kebabToCamel(kebab)
             LookupElementBuilder.create(kebab)
                 .withTypeText(camel, true)                    // 右侧灰字显示 camelCase
                 .withIcon(ICON)             // CSS 图标
