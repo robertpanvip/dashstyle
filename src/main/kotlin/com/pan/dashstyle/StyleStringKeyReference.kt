@@ -119,10 +119,10 @@ class StyleStringKeyReference(
                 stylesObj.findReferencedElements().forEach { declaration ->
                     when (declaration) {
                         is StylesheetFile -> {
-                            declaration.stylesheet
-                                ?.rulesetList
-                                ?.rulesets
-                                ?.forEach(::collectFrom)
+                            PsiTreeUtil.findChildrenOfType(
+                                declaration.stylesheet,
+                                CssRuleset::class.java
+                            ).forEach(::collectFrom)
                         }
 
                         else -> {
