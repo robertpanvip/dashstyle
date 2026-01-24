@@ -4,6 +4,7 @@ import com.intellij.lang.ecmascript6.psi.ES6ImportSpecifierAlias
 import com.intellij.lang.javascript.psi.JSCallExpression
 import com.intellij.lang.javascript.psi.JSVariable
 import com.intellij.psi.PsiFile
+import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlTag
 import kotlin.text.contains
@@ -85,6 +86,21 @@ class Util {
                     }
                 }
             }.removePrefix("-")  // 防止首字母大写时多出一个前导 -
+        }
+
+        fun expandSelector(ruleset: CssRuleset): String {
+            val self = ruleset.selectorList?.text ?: return ""
+
+            val parent = PsiTreeUtil.getParentOfType(ruleset, CssRuleset::class.java)
+                ?: return self
+
+            val parentSelector = parent.selectorList?.text ?: return self
+
+            return if (self.contains("&")) {
+                self.replace("&", parentSelector)
+            } else {
+                self
+            }
         }
 
     }

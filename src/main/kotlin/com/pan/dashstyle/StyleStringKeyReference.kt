@@ -39,7 +39,8 @@ class StyleStringKeyReference(
             collectStyleMembers(stylesObj) { item ->
                 when (item) {
                     is CssRuleset -> {
-                        val selectorText = item.selectorList?.text ?: ""
+                        val selectorText = Util.expandSelector(item)
+
                         if (pattern.containsMatchIn(selectorText)) {
                             listOf(item)
                         } else {
@@ -168,7 +169,8 @@ class StyleStringKeyReference(
         val kebabOptions = this.collectStyleMembers<String>(stylesObj, { item ->
             when (item) {
                 is CssRuleset -> {
-                    val text = item.selectorList?.text ?: ""
+                    val text = Util.expandSelector(item)
+                    //val text = item.selectorList?.text ?: ""
                     Regex("""\.([a-zA-Z0-9_-]+)""")
                         .findAll(text)
                         .map { it.groupValues[1] }
