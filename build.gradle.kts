@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.0.8"
+version = "1.1.0"
 
 repositories {
     // 国内镜像优先
