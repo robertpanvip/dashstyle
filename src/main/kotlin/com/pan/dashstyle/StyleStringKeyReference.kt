@@ -33,14 +33,13 @@ class StyleStringKeyReference(
         val camelName = if (kebabName.contains("-")) Util.kebabToCamel(kebabName) else kebabName
 
         val pattern =
-            Regex("""(^|[^\w-])\.${Regex.escape(kebabName)}($|[^\w-])""")
+            Regex("""\.${Regex.escape(kebabName)}(?=[^a-zA-Z0-9_-]|$)""")
 
         val candidates: List<PsiElement> =
             collectStyleMembers(stylesObj) { item ->
                 when (item) {
                     is CssRuleset -> {
                         val selectorText = Util.expandSelector(item)
-
                         if (pattern.containsMatchIn(selectorText)) {
                             listOf(item)
                         } else {

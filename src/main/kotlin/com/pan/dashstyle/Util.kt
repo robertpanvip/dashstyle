@@ -89,19 +89,21 @@ class Util {
         }
 
         fun expandSelector(ruleset: CssRuleset): String {
-            val self = ruleset.selectorList?.text ?: return ""
+            val raw = ruleset.selectorList?.text ?: return ""
 
-            val parent = PsiTreeUtil.getParentOfType(ruleset, CssRuleset::class.java)
-                ?: return self
+            val parent = PsiTreeUtil.getParentOfType(
+                ruleset,
+                CssRuleset::class.java,
+                true
+            ) ?: return raw
 
-            val parentSelector = parent.selectorList?.text ?: return self
+            val parentSelector = expandSelector(parent)
 
-            return if (self.contains("&")) {
-                self.replace("&", parentSelector)
+            return if (raw.contains("&")) {
+                raw.replace("&", parentSelector)
             } else {
-                self
+                raw
             }
         }
-
     }
 }
