@@ -52,6 +52,8 @@
         <psi.referenceContributor
                 implementation="com.pan.dashstyle.StyleStringKeyReferenceContributor"
                />
-        <!-- 如果你还支持 TypeScript，可以再加一行 language="TypeScript" -->
+        <!-- 这个才是存在的 EP -->
+        <copyPastePreProcessor
+                implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
     </extensions>
 </idea-plugin>
