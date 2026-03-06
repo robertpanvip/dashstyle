@@ -92,7 +92,7 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
         try {
             gson.fromJson(trimmed, JsonObject::class.java)
             return true
-        } catch (e: JsonParseException) {
+        } catch (_: JsonParseException) {
             return false
         }
     }
@@ -100,7 +100,7 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
     private fun convertJsonToCss(jsonStr: String): String {
         val obj = try {
             gson.fromJson(jsonStr, JsonObject::class.java)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return jsonStr  // 解析失败时原样返回，避免破坏用户输入
         }
 
