@@ -33,7 +33,7 @@ jobs:
           cache: gradle
 
       - name: Build Kotlin project
-        run: ./gradlew build
+        run: bash gradlew build
 
       - name: Get version
         id: version
