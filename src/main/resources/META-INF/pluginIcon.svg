@@ -1,20 +1,52 @@
-<svg width="40" height="40" viewBox="0 0 40 40"
-     xmlns="http://www.w3.org/2000/svg">
-
-<rect x="1.5" y="1.5" width="37" height="37" rx="6"
-      fill="url(#bg)"/>
-
-<rect x="9" y="13" width="7" height="14" rx="1" fill="white"/>
-<rect x="24" y="13" width="7" height="14" rx="1" fill="white"/>
-
-<rect x="17" y="19" width="6" height="2" rx="1" fill="white"/>
-<defs>
-    <linearGradient id="bg" x1="2.94192" y1="4.89955" x2="37.7772" y2="39.7345"
-                    gradientUnits="userSpaceOnUse">
-        <stop offset="0.15937" stop-color="#3BEA62"/>
-        <stop offset="0.5404" stop-color="#3C99CC"/>
-        <stop offset="0.93739" stop-color="#6B57FF"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <!-- DashStyle 插件图标（与 icons/dash.svg 设计同步，尺寸 16×→40× 2.5 倍放大）
+       设计语言：CSS 大括号 { } + kebab-case 连字符虚线 · 蓝紫渐变 -->
+  <defs>
+    <linearGradient id="dash-bg" x1="2.5" y1="2.5" x2="37.5" y2="37.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"  stop-color="#6C8CFF"/>
+      <stop offset="55%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#A855F7"/>
     </linearGradient>
-</defs>
-</svg>
+    <linearGradient id="dash-fg" x1="7.5" y1="10" x2="32.5" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E9D5FF"/>
+    </linearGradient>
+  </defs>
 
+  <!-- 圆角方形底板 -->
+  <rect x="1.5" y="1.5" width="37" height="37" rx="9" fill="url(#dash-bg)"/>
+
+  <!-- 左括号 '{'（16 版 * 2.5） -->
+  <path d="M13 8.5
+           L8 8.5
+           C6.5 8.5, 5.5 9.5, 5.5 11
+           L5.5 19
+           C5.5 19.75, 5.875 20.375, 6.5 20.75
+           L8.75 22
+           C9.5 22.5, 9.5 22.5, 8.75 23
+           L6.5 24.25
+           C5.875 24.625, 5.5 25.25, 5.5 26
+           L5.5 29
+           C5.5 30.5, 6.5 31.5, 8 31.5
+           L13 31.5"
+        stroke="url(#dash-fg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- 右括号 '}'（16 版 * 2.5） -->
+  <path d="M27 8.5
+           L32 8.5
+           C33.5 8.5, 34.5 9.5, 34.5 11
+           L34.5 19
+           C34.5 19.75, 34.125 20.375, 33.5 20.75
+           L31.25 22
+           C30.5 22.5, 30.5 22.5, 31.25 23
+           L33.5 24.25
+           C34.125 24.625, 34.5 25.25, 34.5 26
+           L34.5 29
+           C34.5 30.5, 33.5 31.5, 32 31.5
+           L27 31.5"
+        stroke="url(#dash-fg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- 中部 kebab-case 虚线：圆点 + 短横（16 版 * 2.5） -->
+  <circle cx="17.5" cy="20" r="2.25" fill="url(#dash-fg)"/>
+  <rect x="20.5" y="18.25" width="9" height="3.5" rx="1.75" fill="url(#dash-fg)"/>
+</svg>
