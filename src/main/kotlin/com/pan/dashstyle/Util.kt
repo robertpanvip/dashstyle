@@ -208,5 +208,172 @@ class Util {
             }
             return result.toString()
         }
+
+        // ================================================================
+        // 颜色提取与归一化（支持 HEX3 / HEX6 / HEX8 / rgb(a) / hsl(a)）
+        // ================================================================
+        private val RE_HEX8 = Regex("""#([0-9a-fA-F]{8})\b""")
+        private val RE_HEX6 = Regex("""#([0-9a-fA-F]{6})\b""")
+        private val RE_HEX3 = Regex("""#([0-9a-fA-F]{3})\b""")
+        private val RE_RGBA = Regex("""rgba?\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
+        private val RE_HSLA = Regex("""hsla?\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
+        /** 常见的 148 CSS 命名颜色（小写），避免把 transparent / currentcolor 当作命名颜色处理 */
+        private val NAMED_COLORS: Set<String> = setOf(
+            "aliceblue","antiquewhite","aqua","aquamarine","azure","beige","bisque","black","blanchedalmond","blue",
+            "blueviolet","brown","burlywood","cadetblue","chartreuse","chocolate","coral","cornflowerblue","cornsilk",
+            "crimson","cyan","darkblue","darkcyan","darkgoldenrod","darkgray","darkgreen","darkgrey","darkkhaki",
+            "darkmagenta","darkolivegreen","darkorange","darkorchid","darkred","darksalmon","darkseagreen","darkslateblue",
+            "darkslategray","darkslategrey","darkturquoise","darkviolet","deeppink","deepskyblue","dimgray","dimgrey",
+            "dodgerblue","firebrick","floralwhite","forestgreen","fuchsia","gainsboro","ghostwhite","gold","goldenrod",
+            "gray","green","greenyellow","grey","honeydew","hotpink","indianred","indigo","ivory","khaki","lavender",
+            "lavenderblush","lawngreen","lemonchiffon","lightblue","lightcoral","lightcyan","lightgoldenrodyellow",
+            "lightgray","lightgreen","lightgrey","lightpink","lightsalmon","lightseagreen","lightskyblue","lightslategray",
+            "lightslategrey","lightsteelblue","lightyellow","lime","limegreen","linen","magenta","maroon",
+            "mediumaquamarine","mediumblue","mediumorchid","mediumpurple","mediumseagreen","mediumslateblue",
+            "mediumspringgreen","mediumturquoise","mediumvioletred","midnightblue","mintcream","mistyrose","moccasin",
+            "navajowhite","navy","oldlace","olive","olivedrab","orange","orangered","orchid","palegoldenrod",
+            "palegreen","paleturquoise","palevioletred","papayawhip","peachpuff","peru","pink","plum","powderblue",
+            "purple","rebeccapurple","red","rosybrown","royalblue","saddlebrown","salmon","sandybrown","seagreen",
+            "seashell","sienna","silver","skyblue","slateblue","slategray","slategrey","snow","springgreen","steelblue",
+            "tan","teal","thistle","tomato","turquoise","violet","wheat","white","whitesmoke","yellow","yellowgreen"
+        )
+
+        /** 归一化颜色到"规范形态"（hex6 #rrggbb / hex8 #rrggbbaa / rgba() / hsla()），用于等值分组比较。 */
+        fun normalizeColor(raw: String): String? {
+            val t = raw.trim().lowercase()
+            if (t.isEmpty()) return null
+            // HEX8 #rrggbbaa (含 alpha)
+            RE_HEX8.find(t)?.let { m ->
+                val v = m.groupValues[1]
+                val (r, g, b, a) = listOf(v.substring(0,2), v.substring(2,4), v.substring(4,6), v.substring(6,8))
+                // alpha=ff 就降到 hex6
+                return if (a == "ff") "#$r$g$b" else "#$r$g$b$a"
+            }
+            // HEX6 #rrggbb
+            RE_HEX6.find(t)?.let { m -> return "#${m.groupValues[1]}" }
+            // HEX3 #rgb → expand
+            RE_HEX3.find(t)?.let { m ->
+                val v = m.groupValues[1]
+                return "#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}"
+            }
+            // rgb(a) → 归一化空格/逗号/alpha
+            RE_RGBA.find(t)?.let { m ->
+                val args = m.groupValues[1].split(Regex("""[,/\s]+""")).filter { it.isNotBlank() }
+                return when (args.size) {
+                    3 -> "rgb(${args[0]},${args[1]},${args[2]})"
+                    4 -> {
+                        val a = normalizeAlpha(args[3])
+                        if (a == "1") "rgb(${args[0]},${args[1]},${args[2]})"
+                        else "rgba(${args[0]},${args[1]},${args[2]},$a)"
+                    }
+                    else -> null
+                }
+            }
+            // hsl(a)
+            RE_HSLA.find(t)?.let { m ->
+                val args = m.groupValues[1].split(Regex("""[,/\s]+""")).filter { it.isNotBlank() }
+                return when (args.size) {
+                    3 -> "hsl(${args[0]},${args[1]},${args[2]})"
+                    4 -> {
+                        val a = normalizeAlpha(args[3])
+                        if (a == "1") "hsl(${args[0]},${args[1]},${args[2]})"
+                        else "hsla(${args[0]},${args[1]},${args[2]},$a)"
+                    }
+                    else -> null
+                }
+            }
+            // named color
+            if (NAMED_COLORS.contains(t)) return t
+            return null
+        }
+
+        private fun normalizeAlpha(a: String): String {
+            val s = a.trimEnd('%')
+            val d = s.toDoubleOrNull() ?: return a
+            if (a.endsWith('%')) return (d / 100.0).toString().trimEnd('0').trimEnd('.')
+            return d.toString().trimEnd('0').trimEnd('.').ifEmpty { "0" }
+        }
+
+        /** 在任意文本中扫描所有颜色 token 及其 range（按顺序，可重复）。返回 List<Pair<原始文本, 归一化值>> */
+        fun scanColorsInText(text: String): List<Triple<String, String, IntRange>> {
+            val out = mutableListOf<Triple<String, String, IntRange>>()
+            val patterns = listOf(RE_HEX8, RE_HEX6, RE_HEX3, RE_RGBA, RE_HSLA)
+            val consumed = BooleanArray(text.length)
+            for (p in patterns) {
+                for (m in p.findAll(text)) {
+                    val r = m.range
+                    if (r.any { consumed[it] }) continue
+                    val normalized = normalizeColor(m.value) ?: continue
+                    for (i in r) consumed[i] = true
+                    out += Triple(m.value, normalized, r)
+                }
+            }
+            // named color：前后都是非字母数字下划线才匹配
+            val reNamed = Regex("""(?<![\w-])(?:${NAMED_COLORS.joinToString("|")})(?![\w-])""", RegexOption.IGNORE_CASE)
+            for (m in reNamed.findAll(text)) {
+                val r = m.range
+                if (r.any { consumed[it] }) continue
+                val normalized = normalizeColor(m.value) ?: continue
+                for (i in r) consumed[i] = true
+                out += Triple(m.value, normalized, r)
+            }
+            out.sortBy { it.third.first }
+            return out
+        }
+
+        /** 按归一化颜色给一组候选名，语义优先（primary/secondary/accent 等），否则 --color-1/2/3。 */
+        fun suggestColorVarName(normalized: String, existingNames: Set<String>, index: Int): String {
+            // 启发式：基于 RGB 近似映射到常见语义色（蓝=primary, 灰=neutral/text-xxx, 红=error/danger, 绿=success, 黄=warning, 紫=accent）
+            val base = deriveSemanticHint(normalized)
+            var candidate = if (base.isNotEmpty()) "--color-$base" else "--color-${index + 1}"
+            var i = 2
+            while (candidate in existingNames) {
+                candidate = if (base.isNotEmpty()) "--color-$base-$i" else "--color-${index + i}"
+                i++
+            }
+            return candidate
+        }
+
+        private fun deriveSemanticHint(norm: String): String {
+            // 转成 #rrggbb (若 hsl/rgb 无法直接映射，则返回空)
+            val hex = when {
+                norm.startsWith("#") && norm.length >= 7 -> norm.substring(1, 7)
+                norm == "white" -> "ffffff"
+                norm == "black" -> "000000"
+                norm == "red" -> "ff0000"
+                norm == "green" -> "008000"
+                norm == "blue" -> "0000ff"
+                norm == "yellow" -> "ffff00"
+                norm == "purple" -> "800080"
+                else -> null
+            } ?: return ""
+            val r = hex.substring(0,2).toInt(16)
+            val g = hex.substring(2,4).toInt(16)
+            val b = hex.substring(4,6).toInt(16)
+            val max = maxOf(r, g, b)
+            val min = minOf(r, g, b)
+            val diff = max - min
+            val sum = r + g + b
+            // 灰度
+            if (diff < 20) {
+                return when {
+                    sum < 60 -> "dark"
+                    sum < 180 -> "text-dark"
+                    sum < 360 -> "muted"
+                    sum < 600 -> "neutral"
+                    else -> "bg-light"
+                }
+            }
+            // 主色分量
+            return when {
+                b > r && b > g -> "primary" // 蓝
+                r > g && r > b && sum > 500 -> "accent" // 粉橙
+                r > g && r > b -> "danger"  // 红
+                g > r && g > b -> "success" // 绿
+                r > b && g > b -> "warning" // 黄
+                r == g && r > b -> "warning"
+                else -> ""
+            }
+        }
     }
 }
