@@ -9,9 +9,9 @@ group = "com.pan"
 version = "1.1.1"
 
 repositories {
-    // 国内镜像优先
-    maven { url = uri("https://maven.aliyun.com/repository/public") }
-    maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+    // 国内镜像优先（腾讯镜像）
+    maven { url = uri("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/") }
+    maven { url = uri("https://mirrors.cloud.tencent.com/gradle/") }
     mavenCentral()
     intellijPlatform {
         defaultRepositories()
@@ -29,6 +29,11 @@ dependencies {
         //bundledPlugin("com.intellij.java")
         bundledPlugin("JavaScript") // 让 PSI API 可用
     }
+
+    // 单元测试依赖
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5:2.1.0")
 }
 
 intellijPlatform {
@@ -55,5 +60,18 @@ tasks {
 
     publishPlugin {
         token.set(providers.gradleProperty("intellijPublishToken"))
+    }
+
+    test {
+        useJUnitPlatform()
+        // 让单元测试可以访问 internal 成员
+        kotlinOptions {
+            freeCompilerArgs += listOf("-Xfriend-paths=classes/java/main")
+        }
+        // 测试输出详细信息
+        testLogging {
+            events("passed", "skipped", "failed")
+            showStandardStreams = true
+        }
     }
 }

@@ -99,11 +99,85 @@ class Util {
 
             val parentSelector = expandSelector(parent)
 
-            return if (raw.contains("&")) {
-                raw.replace("&", parentSelector)
-            } else {
-                raw
+            return expandAmpersand(raw, parentSelector)
+        }
+
+        /**
+         * 扩展选择器中的 & 符号，支持 Less/SCSS 的各种 & 用法：
+         * 1. 基本替换: & → .parent
+         * 2. 后缀拼接: &-bar → .parent-bar
+         * 3. 下划线后缀: &_bar → .parent_bar
+         * 4. 多 & 组合: & + &, & &, & > &
+         * 5. 类拼接: &.active → .parent.active
+         * 6. 伪类: &:hover → .parent:hover
+         * 7. 多选择器逗号分隔: .a, .b { &-c {} } → .a-c, .b-c
+         * 8. Less 变量插值占位符: @{var} 保留原文（无法在无上下文时解析）
+         */
+        fun expandAmpersand(rawSelector: String, parentSelector: String): String {
+            // 先处理 Less/SCSS 变量插值 @{...}，暂时用占位符保护，最后还原
+            val placeholders = mutableMapOf<String, String>()
+            var processedSelector = rawSelector
+            val varPattern = Regex("""@\{([^}]+)\}""")
+            var matchResult = varPattern.find(processedSelector)
+            var counter = 0
+            while (matchResult != null) {
+                val placeholder = "__VAR_PLACEHOLDER_${counter}__"
+                placeholders[placeholder] = matchResult.value
+                processedSelector = processedSelector.replaceRange(matchResult.range, placeholder)
+                counter++
+                matchResult = varPattern.find(processedSelector)
             }
+
+            val expanded = if (!processedSelector.contains("&")) {
+                // 处理多父选择器的情况：逗号分隔的每个父选择器都要拼接子选择器
+                val parentParts = parentSelector.split(",").map { it.trim() }
+                val childParts = processedSelector.split(",").map { it.trim() }
+                val combinations = mutableListOf<String>()
+                for (p in parentParts) {
+                    for (c in childParts) {
+                        combinations.add("$p $c")
+                    }
+                }
+                combinations.joinToString(", ")
+            } else {
+                // 处理多父选择器 (逗号分隔)
+                val parentParts = parentSelector.split(",").map { it.trim() }
+                val results = mutableListOf<String>()
+
+                for (parentPart in parentParts) {
+                    val childParts = processedSelector.split(",").map { it.trim() }
+                    for (childPart in childParts) {
+                        results.add(replaceAmpersandInPart(childPart, parentPart))
+                    }
+                }
+                results.joinToString(", ")
+            }
+
+            // 还原变量插值占位符
+            var finalResult = expanded
+            for ((placeholder, original) in placeholders) {
+                finalResult = finalResult.replace(placeholder, original)
+            }
+            return finalResult
+        }
+
+        internal fun replaceAmpersandInPart(childPart: String, parentPart: String): String {
+            val result = StringBuilder()
+            var i = 0
+            val n = childPart.length
+
+            while (i < n) {
+                if (childPart[i] == '&') {
+                    // 无论 & 后面跟什么，都执行替换：&-suffix / &_suffix / &.class / &:pseudo / &
+                    result.append(parentPart)
+                    i++ // 跳过 &，后面的 -._: 等字符在下次循环中正常追加
+                } else {
+                    result.append(childPart[i])
+                    i++
+                }
+            }
+
+            return result.toString()
         }
     }
 }
