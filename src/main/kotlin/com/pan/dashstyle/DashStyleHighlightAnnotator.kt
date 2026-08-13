@@ -60,7 +60,7 @@ class DashStyleHighlightAnnotator : Annotator,
     override fun createHighlightingPasses(file: com.intellij.psi.PsiFile, document: com.intellij.openapi.editor.Document, all: Boolean): MutableCollection<com.intellij.codeHighlighting.TextEditorHighlightingPass> = mutableListOf()
 
     // ================================================================
-    // #1 未使用置灰（selector 范围）
+    // #1 未使用置灰（仅针对 selector 文本内部 .class-name 每个片段画灰，避免整 selectorList 连带声明误染灰色）
     // ================================================================
     private fun annotateUnused(rs: CssRuleset, holder: AnnotationHolder) {
         val cssFile = rs.containingFile ?: return
@@ -74,14 +74,34 @@ class DashStyleHighlightAnnotator : Annotator,
 
         val selector = runCatching { rs.selectorList }.getOrNull() ?: return
         if (!selector.isPhysical) return
-        // HighlightVisitor 可能跨文件使用，但我们只在 cssFile 里操作
-        val anyUnused = classes.any { it !in snap.used }
-        if (!anyUnused) return
+        val unusedKebabs = classes.filter { it !in snap.used }
+        if (unusedKebabs.isEmpty()) return
 
-        holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
-            .range(selector)
-            .textAttributes(UNUSED_CSS_CLASS_KEY)
-            .create()
+        val selectorText = selector.text
+        if (selectorText.isBlank()) return
+        val baseStart = selector.textRange.startOffset
+
+        for (kebab in unusedKebabs) {
+            // 用正则精确定位选择器文本里所有出现的 .kebab-case 片段（允许前后非单词字符），
+            // 对每个出现的精确子区间单独画灰，不会连带到 :hover 伪类或后续 declarations。
+            val pattern = Regex("""(^|[^\w-])\.(${Regex.escape(kebab)})(?=[^\w-]|${'$'})""")
+            for (mm in pattern.findAll(selectorText)) {
+                val wordGroup = mm.groups[2] ?: continue
+                val relStart = wordGroup.range.first
+                val relEnd = wordGroup.range.last + 1
+                if (relStart < 0 || relEnd > selectorText.length || relEnd <= relStart) continue
+                val absStart = baseStart + relStart
+                val absEnd = baseStart + relEnd
+                // 避免 range 跨越相邻 PsiElement（理论上不会，selector 本身就是一个 leafish PsiElement）
+                runCatching {
+                    val tr = com.intellij.openapi.util.TextRange(absStart, absEnd)
+                    holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
+                        .range(tr)
+                        .textAttributes(UNUSED_CSS_CLASS_KEY)
+                        .create()
+                }
+            }
+        }
     }
 
     // ================================================================
@@ -181,20 +201,15 @@ class DashStyleHighlightAnnotator : Annotator,
             }
         }
 
-        // 重复：黄底 + 波浪下划线（跟随主题 WEAK_WARNING 色 + 自适应）
+        // 重复：波浪下划线（无背景色，避免和 declaration 行内文字颜色/选中高亮冲突；用户只想要黄色波浪「提醒」即可）
         val DUPLICATE_CSS_BLOCK_KEY: TextAttributesKey = run {
             val effect: Color = JBColor.namedColor(
                 "EditorColors.WEAK_WARNING_ATTRIBUTES",
                 JBColor(Color(0xE0, 0xA5, 0x00), Color(0xFF, 0xC1, 0x07))
             )
-            val bg: Color = JBColor.namedColor(
-                "Notification.warningBackground",
-                JBColor(Color(0xFF, 0xF6, 0xD6, 96), Color(0x59, 0x4C, 0x11, 130))
-            )
             val fallback = TextAttributes().apply {
                 effectType = EffectType.WAVE_UNDERSCORE
                 effectColor = effect
-                backgroundColor = bg
             }
             val baseKey: TextAttributesKey = runCatching {
                 val field = DefaultLanguageHighlighterColors::class.java.getField("WARNINGS_ATTRIBUTES")

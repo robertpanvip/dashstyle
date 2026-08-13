@@ -68,37 +68,7 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
     }
 
     // ================================================================
-    // Scope 抽象 —— 注意：tag/scopeFile 都是 PsiElement 弱类型（不直接引用 XmlFile/XmlTag），
-    // 避免 Vue/XML 插件未装或版本差异时 classloader fail-link。
-    // ================================================================
-    sealed class StyleScope {
-        data class CssFile(val file: PsiFile) : StyleScope()
-        /** 存储 vue 的 <style> 节点（PsiElement）+ 整个 vue PsiFile */
-        data class VueStyle(val styleTag: PsiElement, val scopeFile: PsiFile) : StyleScope()
-
-        fun text(): String = runCatching {
-            when (this) {
-                is CssFile -> file.text
-                is VueStyle -> readTagValueViaReflection(styleTag)
-            }
-        }.getOrDefault("")
-
-        fun replace(newText: String) {
-            runCatching {
-                when (this) {
-                    is CssFile -> {
-                        val doc = PsiDocumentManager.getInstance(file.project).getDocument(file)
-                            ?: return@runCatching
-                        doc.replaceString(0, doc.textLength, newText)
-                    }
-                    is VueStyle -> replaceTagValueViaReflection(styleTag, scopeFile, newText)
-                }
-            }
-        }
-    }
-
-    // ================================================================
-    // 解析目标文件 / Vue <style> 块（全反射 + 类名字符串）
+    // 解析目标文件 / Vue <style> 块（全反射 + 类名字符串，不引用 XmlFile/XmlTag 字面类）
     // ================================================================
     private fun resolveStyleScope(file: PsiFile, offset: Int): StyleScope? {
         val name = runCatching { file.name }.getOrNull().orEmpty()
@@ -110,7 +80,6 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
         val psiClassname = file.javaClass.name
         val looksLikeXmlLike = "XmlFile" in psiClassname || "VueFile" in psiClassname || ".vue" in name.lowercase()
         if (!looksLikeXmlLike) {
-            // 就算类名不匹配，.vue 后缀仍尝试按纯文本查找 style 块，避免 PSI 实现变化导致完全不可用
             val root = file as? PsiElement ?: return null
             val tags = PsiTreeUtil.findChildrenOfAnyType(root, false, PsiElement::class.java).filter { el ->
                 val nm = callName(el)
@@ -120,7 +89,6 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
         }
 
         val at = runCatching { file.findElementAt(offset) }.getOrNull() ?: return null
-        // 逐层向上找名为 "style" 的 tag 子节点
         var cur: PsiElement? = at
         for (i in 0..20) {
             if (cur == null) break
@@ -146,67 +114,6 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
             else -> null
         }
     }.getOrNull()
-
-    // ================================================================
-    // 读 / 写 Vue <style> 内容：不直接依赖 XmlTag.value，全部反射调用 getValue / setValue / getAttribute
-    // ================================================================
-    private fun readTagValueViaReflection(styleTag: PsiElement): String {
-        // 方法1：getValue()
-        runCatching {
-            val m = styleTag.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterCount == 0 }
-                ?: return@runCatching null
-            m.isAccessible = true
-            when (val v = m.invoke(styleTag)) {
-                is CharSequence -> return v.toString()
-                is PsiElement -> return v.text
-                else -> null
-            }
-        }
-        // 方法2：直接按文本拼开闭标签之间
-        val whole = styleTag.text
-        val firstGT = whole.indexOf('>')
-        val lastLT = whole.lastIndexOf('<')
-        if (firstGT >= 0 && lastLT >= 0 && lastLT > firstGT) return whole.substring(firstGT + 1, lastLT)
-        return ""
-    }
-
-    private fun replaceTagValueViaReflection(styleTag: PsiElement, scopeFile: PsiFile, newText: String) {
-        val doc = PsiDocumentManager.getInstance(scopeFile.project).getDocument(scopeFile) ?: return
-        // 优先 setValue 反射
-        runCatching {
-            val setM = styleTag.javaClass.methods.firstOrNull { m ->
-                m.name == "setValue" && m.parameterCount == 1 &&
-                    (m.parameterTypes[0] == String::class.java || CharSequence::class.java.isAssignableFrom(m.parameterTypes[0]))
-            }
-            if (setM != null) {
-                setM.isAccessible = true
-                setM.invoke(styleTag, newText)
-                return
-            }
-        }
-        // 其次：getValue() 返回 PsiElement，取其 textRange 替换
-        runCatching {
-            val getM = styleTag.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterCount == 0 }
-                ?: return@runCatching
-            getM.isAccessible = true
-            val v = getM.invoke(styleTag) as? PsiElement ?: return@runCatching
-            val tr = v.textRange
-            if (!tr.isEmpty) {
-                doc.replaceString(tr.startOffset, tr.endOffset, newText)
-                return
-            }
-        }
-        // 最后：按整个 styleTag 文本切 > 与最后 < 之间定位
-        val tagRange = styleTag.textRange
-        val tagText = styleTag.text
-        val firstGT = tagText.indexOf('>')
-        val lastLT = tagText.lastIndexOf('<')
-        if (firstGT >= 0 && lastLT >= 0 && lastLT > firstGT) {
-            val start = tagRange.startOffset + firstGT + 1
-            val end = tagRange.startOffset + lastLT
-            runCatching { doc.replaceString(start, end, newText) }
-        }
-    }
 
     private fun detectFormat(scope: StyleScope): Format = when (scope) {
         is StyleScope.CssFile -> formatByExt(scope.file.name)
@@ -428,5 +335,97 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
         private val MIXIN_DEF_RE = Regex("""^@mixin\s+([A-Za-z_][\w-]*)\s*(\([^)]*\))?\s*\{\s*${'$'}""")
         private val SCSS_INTERP = Regex("""#\{\s*\$([A-Za-z_][\w-]*)\s*\}""")
         private val LESS_INTERP = Regex("""@\{([A-Za-z_][\w-]*)\}""")
+
+        // ================================================================
+        // Scope 抽象 —— 把嵌套类放进 companion，便于访问同域的私有反射工具函数
+        // ================================================================
+        sealed class StyleScope {
+            data class CssFile(val file: PsiFile) : StyleScope()
+            /** 存储 vue 的 <style> 节点（PsiElement）+ 整个 vue PsiFile */
+            data class VueStyle(val styleTag: PsiElement, val scopeFile: PsiFile) : StyleScope()
+
+            fun text(): String = runCatching {
+                when (this) {
+                    is CssFile -> file.text
+                    is VueStyle -> readTagValueViaReflection(styleTag)
+                }
+            }.getOrDefault("")
+
+            fun replace(newText: String) {
+                runCatching {
+                    when (this) {
+                        is CssFile -> {
+                            val doc = PsiDocumentManager.getInstance(file.project).getDocument(file)
+                                ?: return@runCatching
+                            doc.replaceString(0, doc.textLength, newText)
+                        }
+                        is VueStyle -> replaceTagValueViaReflection(styleTag, scopeFile, newText)
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------
+        // 内部工具：style tag 的值读/写（全部反射，无 XmlTag 强依赖）
+        // ------------------------------------------------------------
+        @JvmStatic
+        private fun readTagValueViaReflection(styleTag: PsiElement): String {
+            // 方法1：getValue()
+            runCatching {
+                val m = styleTag.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterCount == 0 }
+                    ?: return@runCatching null
+                m.isAccessible = true
+                when (val v = m.invoke(styleTag)) {
+                    is CharSequence -> return v.toString()
+                    is PsiElement -> return v.text
+                    else -> null
+                }
+            }
+            // 方法2：直接按文本拼开闭标签之间
+            val whole = styleTag.text
+            val firstGT = whole.indexOf('>')
+            val lastLT = whole.lastIndexOf('<')
+            if (firstGT >= 0 && lastLT >= 0 && lastLT > firstGT) return whole.substring(firstGT + 1, lastLT)
+            return ""
+        }
+
+        @JvmStatic
+        private fun replaceTagValueViaReflection(styleTag: PsiElement, scopeFile: PsiFile, newText: String) {
+            val doc = PsiDocumentManager.getInstance(scopeFile.project).getDocument(scopeFile) ?: return
+            // 优先 setValue 反射
+            runCatching {
+                val setM = styleTag.javaClass.methods.firstOrNull { m ->
+                    m.name == "setValue" && m.parameterCount == 1 &&
+                        (m.parameterTypes[0] == String::class.java || CharSequence::class.java.isAssignableFrom(m.parameterTypes[0]))
+                }
+                if (setM != null) {
+                    setM.isAccessible = true
+                    setM.invoke(styleTag, newText)
+                    return
+                }
+            }
+            // 其次：getValue() 返回 PsiElement，取其 textRange 替换
+            runCatching {
+                val getM = styleTag.javaClass.methods.firstOrNull { it.name == "getValue" && it.parameterCount == 0 }
+                    ?: return@runCatching
+                getM.isAccessible = true
+                val v = getM.invoke(styleTag) as? PsiElement ?: return@runCatching
+                val tr = v.textRange
+                if (!tr.isEmpty) {
+                    doc.replaceString(tr.startOffset, tr.endOffset, newText)
+                    return
+                }
+            }
+            // 最后：按整个 styleTag 文本切 > 与最后 < 之间定位
+            val tagRange = styleTag.textRange
+            val tagText = styleTag.text
+            val firstGT = tagText.indexOf('>')
+            val lastLT = tagText.lastIndexOf('<')
+            if (firstGT >= 0 && lastLT >= 0 && lastLT > firstGT) {
+                val start = tagRange.startOffset + firstGT + 1
+                val end = tagRange.startOffset + lastLT
+                runCatching { doc.replaceString(start, end, newText) }
+            }
+        }
     }
 }

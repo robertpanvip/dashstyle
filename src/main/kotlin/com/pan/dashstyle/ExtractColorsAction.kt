@@ -484,14 +484,14 @@ class ExtractColorsAction : AnAction("DashStyle: Extract Colors as CSS Variables
                 table: JTable?, value: Any?, isSelected: Boolean,
                 hasFocus: Boolean, row: Int, column: Int
             ): Component {
-                val norm = (value as? String) ?: run {
-                    background = if (isSelected) table?.selectionBackground ?: JBColor.WHITE
-                        else JBColor.WHITE
+                // 背景跟随当前 LaF：选中 → table.selectionBackground；未选中 → table.background
+                val norm = (value as? String)
+                if (norm == null) {
+                    background = if (isSelected) table?.selectionBackground else table?.background
                     icon = null
                     return this
                 }
-                background = if (isSelected) table?.selectionBackground ?: JBColor.WHITE
-                    else table?.background ?: JBColor.WHITE
+                background = if (isSelected) table?.selectionBackground else table?.background
                 val color: java.awt.Color = try {
                     parseColorForSwatch(norm)
                 } catch (_: Throwable) {
