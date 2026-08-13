@@ -157,10 +157,11 @@
                 implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
+        <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，
+             所以移除 DashStyle 自己实现的 CssModuleImportCopyPasteProcessor（#3）避免两条逻辑冲突；
+             只保留 #7 的「复制 TSX/Vue 标签时把关联 CSS 规则一起打包到目标 CSS Module」的处理器。-->
         <copyPastePreProcessor
                 implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
-        <copyPastePreProcessor
-                implementation="com.pan.dashstyle.CssModuleImportCopyPasteProcessor"/>
         <copyPastePreProcessor
                 implementation="com.pan.dashstyle.CssBundleCopyPastePostProcessor"/>
 
