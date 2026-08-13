@@ -16,6 +16,7 @@ import com.intellij.psi.*
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
+import com.intellij.psi.xml.XmlTag
 import org.jetbrains.annotations.NotNull
 import java.util.concurrent.atomic.AtomicReference
 
@@ -90,8 +91,16 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
         }.getOrNull()
         val bundle = jsonStr?.let { runCatching { gson.fromJson(it, Bundle::class.java) }.getOrNull() }
 
-        // 2. 无论成功失败，先从粘贴文本里去掉 marker
-        val stripped = text.removeRange(m.range.first, m.range.last + 1).trimEnd() + "\n"
+        // 2. 精确移除 marker，不要乱改其他换行（避免把原本干净的 JSX 拆成畸形）
+        //    marker 之前一般是 `\n` 或 `\r\n`，连同这条换行一起删掉，否则粘贴末尾会多出一行空行
+        val rangeToRemove = if (m.range.first > 0 && text[m.range.first - 1] == '\n') {
+            val prevIdx = m.range.first - 1
+            val withCr = prevIdx > 0 && text[prevIdx - 1] == '\r'
+            if (withCr) (prevIdx - 1)..m.range.last else prevIdx..m.range.last
+        } else {
+            m.range.first..m.range.last
+        }
+        val stripped = text.removeRange(rangeToRemove)
 
         // 3. 如果有 bundle，调度：等粘贴提交到文档之后，再注入 CSS rules
         //    （用 AtomicReference 把 context 搬过去，避免闭包可变变量警告）
@@ -321,6 +330,13 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
         bindingName: String
     ) {
         val from = computeRelPath(file.virtualFile, targetCssVf) ?: return
+
+        // Vue / 非 JS/TS：沿用保守的 PSI 策略，但 import 只插在 script 根块而非光标所在处
+        val fileName = file.name.orEmpty()
+        val isJsTsLike = fileName.endsWith(".js") || fileName.endsWith(".jsx") ||
+            fileName.endsWith(".ts") || fileName.endsWith(".tsx")
+
+        // 避免重复插入：和 #3 CssModuleImportCopyPasteProcessor 的等价性判断保持一致
         val imports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
         if (imports.any { imp ->
                 pathsEquivalent(
@@ -329,38 +345,74 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
                 )
             }) return
 
-        val text = "import $bindingName from '$from'\n"
+        val importText = "import $bindingName from '$from'\n"
+
+        if (!isJsTsLike && file is XmlFile && fileName.endsWith(".vue")) {
+            // Vue 场景（insert in script setup root，非 template/script body 内部）
+            val script = Util.findScriptTag(file)
+            if (script != null) {
+                val existing = PsiTreeUtil.findChildrenOfType(script, ES6ImportDeclaration::class.java)
+                if (existing.isEmpty()) {
+                    // 用 Document 的方式往 <script> 内容开头插，跳过 PSI 树以免插到子 body
+                    val doc = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
+                    val embedded = findEmbeddedContent(script)
+                    val startInDoc = embedded?.textRange?.startOffset
+                        ?: (script.value?.textRange?.startOffset
+                            ?: script.textRange.startOffset + "<script>".length)
+                    doc.insertString(startInDoc, "\n$importText")
+                    PsiDocumentManager.getInstance(project).commitDocument(doc)
+                } else {
+                    existing.last().parent.addAfter(
+                        makeImportPsi(project, importText) ?: return, existing.last()
+                    )
+                }
+            } else {
+                val doc = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
+                doc.insertString(0, "\n<script setup>\n$importText</script>\n")
+                PsiDocumentManager.getInstance(project).commitDocument(doc)
+            }
+            return
+        }
+
+        // ******** 关键修复：JS/TS/JSX/TSX 一律走 Document 插入（module scope，与粘贴位置绝对无关） ********
+        // 不调用 file.addBefore(newImport, file.firstChild)：
+        //  当 file 是内嵌 JSXExpression 或 PSI 被格式化成「文件根节点的 firstChild 是 function」时，
+        //  PSI.addBefore 会把 import 插到该 function body 第一行之前（用户报告的 `function Z() { import styles from ...`），
+        //  导致 import 落在函数作用域内而非模块顶部。
+        val doc = PsiDocumentManager.getInstance(project).getDocument(file)
+        if (doc != null) {
+            val topLevelImports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
+                .filter { it.parent == file || it.parent?.parent == file }
+            if (topLevelImports.isEmpty()) {
+                // module scope 的 0 偏移插入 —— 必然在任何 function/class/statement 之前
+                doc.insertString(0, importText)
+            } else {
+                val last = topLevelImports.maxByOrNull { it.textRange.endOffset } ?: return
+                doc.insertString(last.textRange.endOffset, "\n$importText")
+            }
+            PsiDocumentManager.getInstance(project).commitDocument(doc)
+        } else {
+            // 极端 fallback：没有 Document。仍避免用 file.firstChild（函数体内），改用 file.add 后再内部重排
+            val newImport = makeImportPsi(project, importText) ?: return
+            file.addBefore(newImport, file.firstChild)
+        }
+    }
+
+    private fun makeImportPsi(project: Project, importText: String): ES6ImportDeclaration? {
         val factory = PsiFileFactory.getInstance(project)
         val dummy = factory.createFileFromText(
             "__dashstyle_import__.js",
             com.intellij.lang.Language.findInstance(com.intellij.lang.javascript.JavascriptLanguage::class.java),
-            text + "export {}"
+            importText + "export {}"
         )
-        val newImport = PsiTreeUtil.findChildrenOfType(dummy, ES6ImportDeclaration::class.java)
-            .firstOrNull() ?: return
-        if (file is XmlFile && file.name.endsWith(".vue")) {
-            val script = Util.findScriptTag(file)
-            if (script != null) {
-                if (imports.isEmpty()) {
-                    val first = script.firstChild
-                    if (first != null) script.addBefore(newImport, first)
-                    else script.add(newImport)
-                } else {
-                    imports.last().parent.addAfter(newImport, imports.last())
-                }
-            } else {
-                val doc = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
-                doc.insertString(0, "\n<script setup>\n$text</script>\n")
-            }
-        } else {
-            if (imports.isEmpty()) {
-                val first = file.firstChild
-                if (first != null) file.addBefore(newImport, first)
-                else file.add(newImport)
-            } else {
-                imports.last().parent.addAfter(newImport, imports.last())
-            }
-        }
+        return PsiTreeUtil.findChildrenOfType(dummy, ES6ImportDeclaration::class.java).firstOrNull()
+    }
+
+    private fun findEmbeddedContent(scriptTag: XmlTag): PsiElement? {
+        return PsiTreeUtil.collectElements(scriptTag) { ele ->
+            ele.parent.javaClass.simpleName.contains("VueScript", ignoreCase = true) ||
+                ele.javaClass.simpleName.contains("EmbeddedContent", ignoreCase = true)
+        }.maxByOrNull { it.textRange.length }
     }
 
     private fun pathsEquivalent(a: String, b: String): Boolean {

@@ -165,8 +165,13 @@
                 implementation="com.pan.dashstyle.CssBundleCopyPastePostProcessor"/>
 
         <!-- ========================= 快速修复 / 意向动作 ========================= -->
+        <!-- language=JavaScript 让 WebStorm 把这些意向动作应用到 JS/TS/JSX/TSX 文件里的编辑器 Alt+Enter；
+             不要省略，否则 IntelliJ 平台默认这些 intention 只能在 Java 或任何其他非 JS 文件环境触发，
+             在 JSX 的 style={{...}} / styles.xxx 上便永远不会出现在 Alt+Enter 列表里。-->
         <intentionAction>
             <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
+            <language>JavaScript</language>
+            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               Extracts the inline style object (<code>style={{ ... }}</code> in React/TSX
@@ -183,6 +188,8 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.CreateMissingCssClassIntention</className>
+            <language>JavaScript</language>
+            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
@@ -194,6 +201,8 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.AddCssModuleImportIntention</className>
+            <language>JavaScript</language>
+            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               When the qualifier <code>styles</code> is unresolved (no import), scans sibling
@@ -206,6 +215,8 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.CssPreprocessorTranspileIntention</className>
+            <language>CSS</language>
+            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               Convert a CSS / SCSS / LESS file or Vue <code>&lt;style lang="..."&gt;</code> block between SCSS, LESS, and native CSS Nesting

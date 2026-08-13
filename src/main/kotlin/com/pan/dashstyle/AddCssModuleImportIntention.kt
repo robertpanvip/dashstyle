@@ -11,7 +11,6 @@ import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
-
 /**
  * #5. 自动补全 styles 导入。
  *
@@ -71,6 +70,8 @@ class AddCssModuleImportIntention : BaseIntentionAction() {
     // ================================================================
     private data class Loc(val qualifierName: String, val scope: PsiElement?, val isVue: Boolean)
 
+    private val QUALIFIER_WHITELIST = setOf("styles", "css", "classes", "styled", "style", "moduleStyles")
+
     private fun locateUnresolvedQualifier(editor: Editor, file: PsiFile): Loc? {
         val offset = editor.caretModel.offset
         val at = file.findElementAt(offset) ?: return null
@@ -87,23 +88,60 @@ class AddCssModuleImportIntention : BaseIntentionAction() {
         }
 
         // styles.xxx
-        val ref = PsiTreeUtil.getParentOfType(at, JSReferenceExpression::class.java)
+        // 扩大范围：光标落在 referenceName (xxx) 所在的 JSReferenceExpression 也要能识别其 qualifier
+        var ref = PsiTreeUtil.getParentOfType(at, JSReferenceExpression::class.java)
+        // 若当前 ref 本身没有 qualifier（它自己就是 xxx，且在更深层里），向上再找一层父 JSReferenceExpression
+        var guard = 0
+        while (ref != null && ref.qualifier == null && guard < 3) {
+            ref = PsiTreeUtil.getParentOfType(ref.parent, JSReferenceExpression::class.java)
+            guard++
+        }
         if (ref != null && ref.qualifier != null) {
             val q = ref.qualifier!!
             if (isUnresolved(q, file)) return Loc(q.text, q, isVue)
         }
+
+        // 兜底：光标在 `styles` 这个标识符上（无任何成员访问包裹），但它本身是 unresolved
+        if (at.node?.elementType?.toString()?.contains("identifier", ignoreCase = true) == true ||
+            at is JSReferenceExpression && at.qualifier == null) {
+            val text = at.text
+            if (text in QUALIFIER_WHITELIST || text == "styles") {
+                val anchor: PsiElement = (at as? JSReferenceExpression) ?: at
+                if (isUnresolved(anchor, file)) return Loc(text, anchor, isVue)
+            }
+        }
+
         return null
     }
 
     private fun isUnresolved(qualifierExpr: PsiElement, file: PsiFile): Boolean {
-        val ref = (qualifierExpr as? JSReferenceExpression)?.reference ?: return true
-        val resolved = ref.resolve()
-        if (resolved != null) return false
-        // 文本是不是一个常见的绑定名？且同文件里真的找不到同名变量 / import → 算 unresolved
-        val qName = qualifierExpr.text
+        val qName = qualifierExpr.text.takeIf { it.isNotBlank() } ?: return false
+        if (qName !in QUALIFIER_WHITELIST) return false
+
         if (file is XmlFile && file.name.endsWith(".vue")) {
             if (qName.startsWith("$")) return false  // Vue $style 是内置，不在我们处理
         }
+
+        // ① 如果是 JSReferenceExpression → resolve()，但要排除 PsiPackage / PsiDirectory 等假阳性
+        val ref = (qualifierExpr as? JSReferenceExpression)?.reference
+        if (ref != null) {
+            val resolved = runCatching { ref.resolve() }.getOrNull()
+            if (resolved != null) {
+                val rc = resolved.javaClass.name
+                // PsiPackage / PsiDirectory / Fake / light method 等 → 不是真正的 styles 绑定，仍算 unresolved
+                // 注意：PsiPackage 类在某些 IDE 版本 FQN 可能不同，这里用字符串匹配兜底
+                val isPackage = (resolved::class.java.name).contains("PsiPackage", ignoreCase = true) ||
+                    rc.contains("PsiPackage", ignoreCase = true)
+                if (!isPackage &&
+                    !rc.contains("PsiDirectory", ignoreCase = true) &&
+                    !rc.contains("Fake", ignoreCase = true) &&
+                    !rc.contains("LightMethod", ignoreCase = true)) {
+                    return false
+                }
+            }
+        }
+
+        // ② 同文件里是否真的找不到同名变量 / import → 算 unresolved
         val sameNameVar = PsiTreeUtil.findChildrenOfType(file, JSVariable::class.java)
             .any { it.name == qName }
         if (sameNameVar) return false
@@ -111,6 +149,19 @@ class AddCssModuleImportIntention : BaseIntentionAction() {
             .flatMap { it.importedBindings.toList() }
             .any { it.name == qName }
         if (sameNameImport) return false
+        // Vue script 内再找一次（有时 JS 树挂在 script tag 下，外层 XmlFile 扫描也会覆盖，这里冗余双保险）
+        if (file is XmlFile && file.name.endsWith(".vue")) {
+            val scriptTag = Util.findScriptTag(file)
+            if (scriptTag != null) {
+                val inScriptVar = PsiTreeUtil.findChildrenOfType(scriptTag, JSVariable::class.java)
+                    .any { it.name == qName }
+                if (inScriptVar) return false
+                val inScriptImp = PsiTreeUtil.findChildrenOfType(scriptTag, ES6ImportDeclaration::class.java)
+                    .flatMap { it.importedBindings.toList() }
+                    .any { it.name == qName }
+                if (inScriptImp) return false
+            }
+        }
         return true
     }
 

@@ -145,12 +145,16 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     }
 
     // ================================================================
-    // 定位 style 属性（两层：JSX 的 JSAttribute / Vue 的 XmlAttribute，外加文本级 fallback）
+    // 定位 style 属性：兼容三层
+    //   ① 新版 WebStorm-2025.3 JSX：属性 Psi 是 JSAttribute/JSXAttribute 或其自定义子类，
+    //      统一用 attr.name == "style" + PsiTreeUtil.safe text 识别；
+    //   ② Vue XmlAttribute（:style / v-bind:style）；
+    //   ③ 纯文本兜底（用户可能光标选中 style={{...}} 中间的 property，Psi 是标识符）。
     // ================================================================
     data class StyleAttrLoc(
         val attrPsi: PsiElement,
         val sourceLanguage: Lang,
-        val jsxAttribute: JSAttribute? = null,
+        val jsxAttribute: PsiElement? = null,
         val xmlAttribute: XmlAttribute? = null
     ) {
         enum class Lang { JSX_TSX, VUE }
@@ -158,25 +162,44 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
     private fun locateStyleAttribute(cursor: PsiElement): StyleAttrLoc? {
         var cur: PsiElement? = cursor
-        for (depth in 0..8) {
+        for (depth in 0..10) {
             if (cur == null) break
-            when (cur) {
-                is JSAttribute -> {
-                    if (cur.name == "style" && cur.values.isNotEmpty())
-                        return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = cur)
+            val className = cur.javaClass.name
+            when {
+                // JSX/TSX 属性：新版 JSX 有多种具体 class（JSAttribute/JSXAttribute/impl.*JsxAttribute），
+                // 不直接 is 类型判断，统一用反射式属性名判定，兼容 WebStorm 2025.2+ 的 JSX PSI 结构差异。
+                className.contains("JSAttribute", ignoreCase = true) ||
+                    className.contains("JSXAttribute", ignoreCase = true) -> {
+                    val attrName = runCatching {
+                        cur.javaClass.methods.firstOrNull { m ->
+                            m.name == "getName" && m.parameterCount == 0
+                        }?.invoke(cur) as? String
+                    }.getOrNull()
+                    if (attrName == "style") {
+                        // values.isNotEmpty（存在 value）就直接返回。
+                        val hasValue = runCatching {
+                            val valuesM = cur.javaClass.methods.firstOrNull { m ->
+                                m.name == "getValues" && m.parameterCount == 0
+                            }
+                            val v = valuesM?.invoke(cur) as? List<*>
+                            (v?.size ?: 0) > 0
+                        }.getOrDefault(false) || cur.text.contains('=')
+                        if (hasValue) return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = cur)
+                    }
                 }
-                is XmlAttribute -> {
+                cur is XmlAttribute -> {
                     val n = cur.name
                     if (n == "style" || n == ":style" || n == "v-bind:style")
                         return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE, xmlAttribute = cur)
                 }
             }
+            // 兜底：如果整个 attr 的文本以 style= 开头 → 直接认（防止用户光标落内部 value 节点 Psi）
             val t = cur.text
-            if (!t.isNullOrEmpty() && t.length in 5..40) {
-                if (VALID_JSX_STYLE_RE.matches(t))
-                    return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX)
-                if (VALID_VUE_STYLE_RE.matches(t))
-                    return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE)
+            if (!t.isNullOrEmpty()) {
+                val isJsxLike = t.startsWith("style") && VALID_JSX_STYLE_RE.matches(t.trimIndent().lines().firstOrNull() ?: "")
+                if (isJsxLike) return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX)
+                val isVueLike = VALID_VUE_STYLE_RE.matches(t.trimIndent().lines().firstOrNull() ?: "")
+                if (isVueLike) return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE)
             }
             cur = cur.parent
         }
@@ -184,17 +207,49 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     }
 
     // ================================================================
-    // 提取 { key: value, ... } 文本
+    // 提取 { key: value, ... } 文本（同时兼容新版 JSX 的 valueNode API）
     // ================================================================
     private fun extractObjectLiteral(loc: StyleAttrLoc): String? {
         if (loc.jsxAttribute != null) {
-            val pair: JSAttributeNameValuePair? = loc.jsxAttribute.getValueByName(JSAttributeNameValuePair.DEFAULT)
-                ?: loc.jsxAttribute.values.firstOrNull()
-            val valueNode = pair?.valueNode?.psi ?: return null
-            val obj = PsiTreeUtil.findChildOfType(valueNode, JSObjectLiteralExpression::class.java)
-            if (obj != null) return obj.text
-            // 兜底：整个 valueNode.text 可能是 { {...} } (JSXExpressionContainer)
-            return unwrapBracesOnce(valueNode.text)
+            val pair: PsiElement? = runCatching {
+                val c = loc.jsxAttribute.javaClass
+                val m = c.methods.firstOrNull {
+                    it.parameterCount == 1 && it.name == "getValueByName"
+                }
+                val defCls = Class.forName(
+                    "com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair",
+                    false, c.classLoader
+                )
+                val defField = runCatching {
+                    defCls.fields.firstOrNull { f ->
+                        "DEFAULT" == f.name || "default" == f.name
+                    }?.get(null)
+                }.getOrNull()
+                if (m != null && defField != null) m.invoke(loc.jsxAttribute, defField) as? PsiElement else null
+            }.getOrNull() ?: run {
+                val values = runCatching {
+                    val m = loc.jsxAttribute.javaClass.methods.firstOrNull {
+                        it.parameterCount == 0 && it.name == "getValues"
+                    }
+                    (m?.invoke(loc.jsxAttribute) as? List<*>)?.firstOrNull() as? PsiElement
+                }.getOrNull()
+                values
+            }
+            if (pair != null) {
+                val valueNode = runCatching {
+                    pair.javaClass.methods.firstOrNull { it.parameterCount == 0 && it.name == "getValueNode" }
+                        ?.invoke(pair) as? PsiElement
+                }.getOrNull()
+                if (valueNode != null) {
+                    val obj = PsiTreeUtil.findChildOfType(valueNode, JSObjectLiteralExpression::class.java)
+                    if (obj != null) return obj.text
+                    return unwrapBracesOnce(valueNode.text)
+                }
+            }
+            // 最后兜底：直接 attr.text 正则拉
+            val t = loc.attrPsi.text
+            val m = Regex("""=\s*(\{[\s\S]*\})\s*$""").find(t) ?: return null
+            return unwrapBracesOnce(m.groupValues[1])
         }
         if (loc.xmlAttribute != null) {
             val v = loc.xmlAttribute.value
@@ -395,7 +450,18 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 val snippet = "const _ = () => <div $newAttrText/>"
                 val jsLang = Language.findInstance(JavascriptLanguage::class.java)
                 val tmp = factory.createFileFromText("__tmp__.tsx", jsLang, snippet)
-                val newAttr = PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
+                // 新版 WebStorm JSX 属性可能不是 JSAttribute，搜索所有"名字 == className"属性 Psi。
+                val newAttr = run {
+                    val fromJsAttribute = PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
+                    fromJsAttribute ?: PsiTreeUtil.collectElements(tmp) {
+                        val c = it.javaClass.name
+                        (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
+                        runCatching {
+                            it.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
+                                ?.invoke(it) == "className"
+                        }.getOrDefault(false)
+                    }.firstOrNull()
+                }
                 if (newAttr != null) loc.attrPsi.replace(newAttr)
                 else fallbackReplace(loc.attrPsi, newAttrText)
             }
@@ -429,9 +495,23 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 "__fallback__.txt", lang,
                 if (isVue) "<div $parentNewText/>" else "const _ = () => <div $parentNewText/>"
             )
-            val targetReplacement = when (attrPsi) {
-                is JSAttribute -> PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
-                is XmlAttribute -> PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)?.attributes?.firstOrNull()
+            val attrJavaClass = attrPsi.javaClass.name
+            val targetReplacement = when {
+                attrPsi is JSAttribute || attrJavaClass.let {
+                    it.contains("JSAttribute", ignoreCase = true) || it.contains("JSXAttribute", ignoreCase = true)
+                } -> {
+                    PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
+                        ?: PsiTreeUtil.collectElements(tmp) {
+                            val c = it.javaClass.name
+                            (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
+                                runCatching {
+                                    it.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
+                                        ?.invoke(it)
+                                }.getOrNull() == "className"
+                        }.firstOrNull()
+                }
+                attrPsi is XmlAttribute ->
+                    PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)?.attributes?.firstOrNull()
                 else -> null
             }
             if (targetReplacement != null) attrPsi.replace(targetReplacement)
