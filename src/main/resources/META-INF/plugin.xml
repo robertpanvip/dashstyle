@@ -57,9 +57,14 @@
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
-    <depends>com.intellij.modules.css-openapi</depends>
     <depends>com.intellij.modules.xml</depends>
+    <!-- CSS 插件（WebStorm / IDEA Ultimate / PyCharm Pro 内置）。
+         历史上的 "com.intellij.modules.css-openapi" 已在 2023.3+ 被拆分废弃，
+         2025.3 现代版本的 bundled plugin ID 统一是 "com.intellij.css"，
+         否则本地安装会弹「需要安装 com.intellij.modules.css-openapi 模块」的提示。-->
+    <depends>com.intellij.css</depends>
     <depends>JavaScript</depends>
+    <depends optional="true">org.jetbrains.plugins.vue</depends>
 
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->

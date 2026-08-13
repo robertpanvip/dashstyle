@@ -26,6 +26,11 @@ dependencies {
         webstorm("2025.3")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
         bundledPlugin("JavaScript")
+        // CSS / Vue bundled plugins：与 plugin.xml 的 <depends> 对齐，
+        // 既保证编译 classpath 里有 CssRuleset / Vue SFC 等类，
+        // 也保证 buildPlugin 阶段把 plugin.xml 里写的模块 ID 校验通过（不会提示缺模块）。
+        bundledPlugin("com.intellij.css")
+        bundledPlugin("org.jetbrains.plugins.vue")
     }
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
