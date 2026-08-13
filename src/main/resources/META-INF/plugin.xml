@@ -106,7 +106,10 @@
         <!-- ========================= 代码检查（#1 未使用 class / #2 重复 declarations） ========================= -->
         <!-- 注意：<localInspection> 的 shortName 在整个插件里必须唯一（哪怕 implementationClass / language 不同）。
              下面按语言维度分别赋予唯一 shortName；Kotlin 侧 Inspection 类不再 override getShortName()，
-             直接继承 LocalInspectionTool 默认返回 XML 声明的 shortName，避免代码与 XML 漂移。-->
+             直接继承 LocalInspectionTool 默认返回 XML 声明的 shortName，避免代码与 XML 漂移。
+             另：SCSS/LESS 的官方 language id 在不同发行版里常出现 id 不匹配（如 SCSS 插件没启用、LESS id 变成 Less），
+             因此增加 language="ANY" 兜底注册 → 所有文件的 PSI 遍历都会激活我们的 inspection，
+             具体要不要处理，Kotlin 代码里会通过 CssRuleset / file suffix 判断，不影响其他语言。-->
         <localInspection
                 language="CSS"
                 displayName="Unused CSS Module class"
@@ -132,6 +135,14 @@
                 level="WEAK WARNING"
                 implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
         <localInspection
+                language="ANY"
+                displayName="Unused CSS Module class (fallback)"
+                groupName="DashStyle"
+                shortName="DashStyle.UnusedCssClass.Any"
+                enabledByDefault="true"
+                level="WEAK WARNING"
+                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+        <localInspection
                 language="CSS"
                 displayName="Duplicate CSS declarations (single file)"
                 groupName="DashStyle"
@@ -152,6 +163,14 @@
                 displayName="Duplicate CSS declarations (single file)"
                 groupName="DashStyle"
                 shortName="DashStyle.DuplicateCss.Less"
+                enabledByDefault="true"
+                level="WARNING"
+                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+        <localInspection
+                language="ANY"
+                displayName="Duplicate CSS declarations (single file, fallback)"
+                groupName="DashStyle"
+                shortName="DashStyle.DuplicateCss.Any"
                 enabledByDefault="true"
                 level="WARNING"
                 implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
