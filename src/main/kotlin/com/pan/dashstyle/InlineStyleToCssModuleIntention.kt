@@ -1,7 +1,6 @@
 package com.pan.dashstyle
 
 import com.intellij.codeInsight.intention.impl.BaseIntentionAction
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
@@ -12,118 +11,57 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.InputValidatorEx
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
 import com.intellij.psi.css.CssFile
-import com.intellij.psi.css.CssStylesheet
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlTag
-import com.intellij.psi.xml.XmlText
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
-import com.intellij.lang.javascript.psi.*
+import com.intellij.lang.javascript.psi.JSObjectLiteralExpression
+import com.intellij.lang.javascript.psi.ecmal4.JSAttribute
+import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
+import com.intellij.lang.css.CSSLanguage
+import com.intellij.lang.javascript.JavascriptLanguage
+import com.intellij.lang.xml.XMLLanguage
+import com.intellij.lang.Language
 import com.intellij.openapi.diagnostic.Logger
-import javax.swing.Icon
 
 /**
- * 核心快速修复：将 JSX/Vue 中的 `style={{ key: value }}` 或 Vue `:style="{ ... }"`
- * 内联对象 → 提取为 CSS Module 中的 class，支持：
- *   - 语义推断默认类名 + 输入框可重命名
- *   - 自动定位目标 CSS Module（Vue <style module> 或 React TSX 的 *.module.css import）
- *   - 生成标准 kebab-case class 并追加到 CSS 末尾
- *   - 原位置改为 `className={styles.xxx}` / `:class="$style.xxx"` / `:class="[$style.xxx]"`
+ * Alt+Enter 快速修复：把 JSX/Vue 里的 inline style 对象提取为 CSS Module class。
  */
+@Suppress("UnstableApiUsage")
 class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
     companion object {
         private val LOG = Logger.getInstance(InlineStyleToCssModuleIntention::class.java)
         private val VALID_JSX_STYLE_RE = Regex("""^\s*style\s*=\s*""")
         private val VALID_VUE_STYLE_RE = Regex("""^\s*(?:v-bind:)?style\s*=\s*""")
-        // CSS 类名规则 (kebab-case + camelCase 都允许，但默认 kebab)
         private val CLASS_NAME_RE = Regex("""^[_a-zA-Z][_a-zA-Z0-9-]*$""")
+        private val MODULE_EXTS = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
     }
 
-    override fun getText(): String = "Extract inline style to CSS Module (Rename)"
+    override fun getText(): String = "Extract inline style to CSS Module..."
     override fun getFamilyName(): String = "DashStyle: Inline Style → CSS Module"
-    override fun getIcon(element: PsiElement?): Icon = AllIcons.Actions.RefactoringBulb
 
-    // ================================================================
-    // 可用性探测：光标必须在 style={...} / :style="..." 属性上
-    // ================================================================
-    override fun isAvailable(project: Project, editor: Editor, element: PsiElement): Boolean {
-        return locateStyleAttribute(element) != null
+    override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean {
+        val offset = editor.caretModel.offset
+        val at = file.findElementAt(offset) ?: return false
+        return locateStyleAttribute(at) != null
     }
 
-    private fun locateStyleAttribute(cursor: PsiElement): StyleAttrLoc? {
-        var cur: PsiElement? = cursor
-        for (depth in 0..6) {
-            if (cur == null) break
-            val text = cur.text
-            // JSX/TSX: JSXAttribute 节点，name==style
-            if (cur is JSAttribute) {
-                if (cur.name == "style" && cur.value != null) {
-                    return StyleAttrLoc(
-                        attrPsi = cur, attributeText = text,
-                        sourceLanguage = StyleAttrLoc.Lang.JSX_TSX,
-                        attributeElement = cur
-                    )
-                }
-            }
-            // Vue template: XmlAttribute :style / v-bind:style / style
-            if (cur is XmlAttribute) {
-                val attrName = cur.name
-                if (attrName == "style" || attrName == ":style" || attrName == "v-bind:style") {
-                    return StyleAttrLoc(
-                        attrPsi = cur, attributeText = text,
-                        sourceLanguage = StyleAttrLoc.Lang.VUE,
-                        attributeElement = cur
-                    )
-                }
-            }
-            // 退而求其次：文本层面探测（用于 PSI 树不完整时）
-            if (text != null && text.length in 6..20) {
-                if (VALID_JSX_STYLE_RE.matches(text)) {
-                    return StyleAttrLoc(
-                        attrPsi = cur, attributeText = text,
-                        sourceLanguage = StyleAttrLoc.Lang.JSX_TSX,
-                        attributeElement = cur
-                    )
-                }
-                if (VALID_VUE_STYLE_RE.matches(text)) {
-                    return StyleAttrLoc(
-                        attrPsi = cur, attributeText = text,
-                        sourceLanguage = StyleAttrLoc.Lang.VUE,
-                        attributeElement = cur
-                    )
-                }
-            }
-            cur = cur.parent
-        }
-        return null
-    }
-
-    data class StyleAttrLoc(
-        val attrPsi: PsiElement,
-        val attributeText: String,
-        val sourceLanguage: Lang,
-        val attributeElement: PsiElement
-    ) {
-        enum class Lang { JSX_TSX, VUE }
-    }
-
-    // ================================================================
-    // 主执行：推断 + 重命名对话框 + 提取 + 写回
-    // ================================================================
-    override fun invoke(project: Project, editor: Editor, element: PsiElement) {
-        val loc = locateStyleAttribute(element) ?: return
+    override fun invoke(project: Project, editor: Editor, file: PsiFile) {
+        val offset = editor.caretModel.offset
+        val at = file.findElementAt(offset) ?: return
+        val loc = locateStyleAttribute(at) ?: return
 
         val styleObjText = extractObjectLiteral(loc) ?: run {
             Messages.showWarningDialog(project,
-                "Cannot extract style: attribute value isn't a plain object literal `{...}`.",
+                "Cannot extract: the cursor must be on a plain object style attribute (`style={{...}}` or `:style=\"{...}\"`).",
                 "Extract to CSS Module")
             return
         }
 
-        // (1) 转 CSS 声明块 (复用 JsonToCssCopyPastePreProcessor 的核心逻辑)
         val cssDeclarations = try {
             JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(styleObjText)
         } catch (t: Throwable) {
@@ -135,102 +73,155 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         }
         if (cssDeclarations.isBlank()) return
 
-        // (2) 推断候选类名 + 对话框
         val candidates = SemanticClassNameInferrer.inferCandidates(
             styleAttrElement = loc.attrPsi,
             cssDeclarations = cssDeclarations,
-            contextFileElement = element
+            contextFileElement = file
         )
         val defaultName = SemanticClassNameInferrer.topCandidate(candidates)
-
-        val hint = candidates.take(5).joinToString(", ") { c ->
-            "${c.name} (${c.score} from ${c.source})"
+        val hint = candidates.take(5).joinToString("\n  - ", prefix = "  - ") { c ->
+            "${c.name}  (${c.score} pts, from ${c.source})"
         }
+
         val chosenName = askRenameDialog(project, defaultName, hint) ?: return
 
-        // (3) 定位目标 CSS 容器 (文件或 Vue <style module> 段)
-        val target = locateTargetCssModule(project, loc) ?: run {
+        val target = locateTargetCssModule(project, file, loc) ?: run {
             Messages.showErrorDialog(project,
                 "Cannot find target CSS Module location.\n" +
-                        "For .vue files, ensure `<style module>` or `<style module=\"style\">` exists.\n" +
-                        "For React/TSX, add `import styles from './Xxx.module.css'` in the same file.",
+                        "Vue: add a `<style module>` block to the SFC.\n" +
+                        "React/TSX: add `import styles from './Xxx.module.(css|scss|less)'` to the file.",
                 "Extract to CSS Module")
             return
         }
 
-        // (4) 双写回：在目标 CSS 末尾追加 `.classname { cssDeclarations }`，
-        //     然后把原 style={...} 属性替换为对应的 className/class 绑定。
         WriteCommandAction.writeCommandAction(project)
             .withName("Extract inline style to CSS Module")
             .run<Nothing> {
-                target.appendClass(project, chosenName, cssDeclarations)
-                replaceStyleAttributeWithClass(project, loc, chosenName, target.bindSyntax(loc.sourceLanguage))
+                val ruleText = formatRule(chosenName, cssDeclarations)
+                target.appendRule(project, chosenName, ruleText)
+                replaceStyleAttributeWithClass(loc, chosenName, target)
             }
 
-        // (5) 打开/聚焦目标文件 (仅针对真实 css/scss/less 文件，Vue 内部的 style 不跳转)
         if (target is FileTarget) {
             val vf = LocalFileSystem.getInstance().findFileByPath(target.absolutePath)
             if (vf != null && vf.isValid) {
                 ApplicationManager.getApplication().invokeLater {
-                    val fd = OpenFileDescriptor(project, vf, Math.max(0, target.approximateNewLines - 1), 0)
+                    val fd = OpenFileDescriptor(project, vf, 0)
                     FileEditorManager.getInstance(project).openTextEditor(fd, true)
                 }
             }
         }
 
+        val declCount = cssDeclarations.lineSequence().filter { it.contains(':') }.count()
         Messages.showInfoMessage(
             project,
-            "Extracted `.${chosenName}` with ${cssDeclarations.lineSequence().filter { it.contains(':') }.count()} declarations:\n\n${cssDeclarations.trim()}",
+            "Extracted `.${chosenName}` ($declCount declarations) to $target.\n\n${cssDeclarations.trim()}",
             "Extract to CSS Module OK"
         )
     }
 
     // ================================================================
-    // 步骤 1: 提取 style 属性的对象字面量文本（去 JSXExpressionContainer / Vue 字符串壳）
+    // 共用 helper：先于 inner class 声明，避免前向引用问题
     // ================================================================
-    private fun extractObjectLiteral(loc: StyleAttrLoc): String? {
-        val attrEl = loc.attributeElement
-        return when (attrEl) {
-            is JSAttribute -> {
-                val v = attrEl.value ?: return null
-                // JSX: style={ {...} } —— 外层是 JSXExpressionContainer
-                val exprContainer = PsiTreeUtil.findChildOfType(v, JSExpression::class.java)
-                    ?: return null
-                val inner = if (exprContainer is JSObjectLiteralExpression) exprContainer.text
-                else PsiTreeUtil.findChildOfType(exprContainer, JSObjectLiteralExpression::class.java)?.text
-                inner
-            }
-            is XmlAttribute -> {
-                // Vue: :style="{ color:'red' }" 或 :style="{...}" —— 值为字符串或表达式
-                val v = attrEl.valueElement ?: return null
-                val raw = v.value ?: v.text?.trim('"', '\'')
-                if (raw != null && raw.startsWith('{') && raw.endsWith('}')) raw else null
-            }
-            else -> {
-                // Fallback：基于文本的正则提取
-                val t = loc.attributeText
-                val m = Regex("""\s*=\s*(\{[\s\S]*\})\s*$""").find(t)
-                if (m != null) {
-                    var s = m.groupValues[1]
-                    // JSX style={{ ... }}，外面还有一层 {}
-                    if (s.startsWith("{") && s.endsWith("}")) {
-                        val inner = s.drop(1).dropLast(1)
-                        val trimmed = inner.trim()
-                        if (trimmed.startsWith("{")) return trimmed
-                    }
-                    return s
-                } else null
-            }
+    private fun appendRuleToPsi(project: Project, target: PsiElement, ruleText: String) {
+        val factory = PsiFileFactory.getInstance(project)
+        val lang = (target as? PsiFile)?.language ?: CSSLanguage.INSTANCE
+        val tmp = try {
+            factory.createFileFromText("__dashstyle_tmp__.css", lang, ruleText)
+        } catch (_: Throwable) {
+            factory.createFileFromText("__dashstyle_tmp__.css", PlainTextLanguage.INSTANCE, ruleText)
         }
+        val last = target.lastChild
+        if (last != null) target.addAfter(tmp.firstChild, last) else target.add(tmp.firstChild)
+    }
+
+    private fun findEmbeddedCssInStyleTag(el: PsiElement): PsiFile? {
+        if (el is PsiFile && (el is CssFile || el.virtualFile?.extension == "css")) return el
+        for (c in el.children) {
+            val r = findEmbeddedCssInStyleTag(c)
+            if (r != null) return r
+        }
+        return null
     }
 
     // ================================================================
-    // 步骤 2: 类名重命名输入框（Rename 风格 + 校验器 + 候选提示）
+    // 定位 style 属性（两层：JSX 的 JSAttribute / Vue 的 XmlAttribute，外加文本级 fallback）
+    // ================================================================
+    data class StyleAttrLoc(
+        val attrPsi: PsiElement,
+        val sourceLanguage: Lang,
+        val jsxAttribute: JSAttribute? = null,
+        val xmlAttribute: XmlAttribute? = null
+    ) {
+        enum class Lang { JSX_TSX, VUE }
+    }
+
+    private fun locateStyleAttribute(cursor: PsiElement): StyleAttrLoc? {
+        var cur: PsiElement? = cursor
+        for (depth in 0..8) {
+            if (cur == null) break
+            when (cur) {
+                is JSAttribute -> {
+                    if (cur.name == "style" && cur.values.isNotEmpty())
+                        return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = cur)
+                }
+                is XmlAttribute -> {
+                    val n = cur.name
+                    if (n == "style" || n == ":style" || n == "v-bind:style")
+                        return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE, xmlAttribute = cur)
+                }
+            }
+            val t = cur.text
+            if (!t.isNullOrEmpty() && t.length in 5..40) {
+                if (VALID_JSX_STYLE_RE.matches(t))
+                    return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX)
+                if (VALID_VUE_STYLE_RE.matches(t))
+                    return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE)
+            }
+            cur = cur.parent
+        }
+        return null
+    }
+
+    // ================================================================
+    // 提取 { key: value, ... } 文本
+    // ================================================================
+    private fun extractObjectLiteral(loc: StyleAttrLoc): String? {
+        if (loc.jsxAttribute != null) {
+            val pair: JSAttributeNameValuePair? = loc.jsxAttribute.getValueByName(JSAttributeNameValuePair.DEFAULT)
+                ?: loc.jsxAttribute.values.firstOrNull()
+            val valueNode = pair?.valueNode?.psi ?: return null
+            val obj = PsiTreeUtil.findChildOfType(valueNode, JSObjectLiteralExpression::class.java)
+            if (obj != null) return obj.text
+            // 兜底：整个 valueNode.text 可能是 { {...} } (JSXExpressionContainer)
+            return unwrapBracesOnce(valueNode.text)
+        }
+        if (loc.xmlAttribute != null) {
+            val v = loc.xmlAttribute.value
+                ?: loc.xmlAttribute.valueElement?.text?.trim('"', '\'')
+            if (v != null && v.startsWith('{') && v.endsWith('}')) return v
+        }
+        val t = loc.attrPsi.text
+        val m = Regex("""=\s*(\{[\s\S]*\})\s*$""").find(t) ?: return null
+        return unwrapBracesOnce(m.groupValues[1])
+    }
+
+    private fun unwrapBracesOnce(s: String): String {
+        val t = s.trim()
+        if (t.startsWith("{") && t.endsWith("}")) {
+            val inner = t.substring(1, t.length - 1).trim()
+            if (inner.startsWith("{") && inner.endsWith("}")) return inner
+        }
+        return t
+    }
+
+    // ================================================================
+    // Rename 对话框
     // ================================================================
     private fun askRenameDialog(project: Project, default: String, hint: String): String? {
         return Messages.showInputDialog(
             project,
-            "Choose a CSS class name (kebab-case recommended).\n\nSemantic suggestions by score:\n$hint",
+            "Choose a CSS class name (kebab-case recommended).\n\nSemantic candidates:\n$hint",
             "Rename extracted CSS class",
             Messages.getQuestionIcon(),
             default,
@@ -242,245 +233,210 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                     when {
                         input.isNullOrBlank() -> "Class name cannot be empty."
                         !CLASS_NAME_RE.matches(input) ->
-                            "Invalid class name (use letters, digits, `-` or `_`, must start with letter/_)."
+                            "Invalid class name (use letters/digits/-/_; must start with letter/_)."
                         else -> null
                     }
             }
         )
     }
 
+    private fun formatRule(className: String, declarations: String): String {
+        val indented = declarations.lineSequence().mapNotNull { line ->
+            val t = line.trim()
+            if (t.isBlank()) null else "  $t"
+        }.joinToString("\n", postfix = "\n")
+        return "\n.${className} {\n${indented}}\n"
+    }
+
     // ================================================================
-    // 步骤 3: 定位目标 CSS Module 位置
+    // 目标 CSS 定位
     // ================================================================
     sealed class CssModuleTarget {
-        abstract fun appendClass(project: Project, className: String, declarations: String)
-        abstract fun bindSyntax(sourceLang: StyleAttrLoc.Lang): String
+        protected var ruleCount = 0
+        abstract fun appendRule(project: Project, className: String, ruleText: String)
+        abstract fun classNameAccessExpr(className: String): String
     }
 
-    data class FileTarget(
+    inner class FileTarget(
         val absolutePath: String,
-        val importVariableName: String = "styles",
-        var approximateNewLines: Int = 0
+        val importVariableName: String
     ) : CssModuleTarget() {
-        override fun appendClass(project: Project, className: String, declarations: String) {
+        override fun appendRule(project: Project, className: String, ruleText: String) {
             val vf = LocalFileSystem.getInstance().findFileByPath(absolutePath) ?: return
             val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return
-            appendClassToPsi(project, psiFile, className, declarations, alsoUpdate = { lines ->
-                approximateNewLines = lines
-            })
+            this@InlineStyleToCssModuleIntention.appendRuleToPsi(project, psiFile, ruleText)
+            ruleCount++
         }
-        override fun bindSyntax(sourceLang: StyleAttrLoc.Lang): String =
-            if (sourceLang == StyleAttrLoc.Lang.VUE) "$importVariableName.$className"
-            else importVariableName
+        override fun classNameAccessExpr(className: String): String =
+            if (className.all { it.isLetterOrDigit() || it == '_' })
+                "$importVariableName.$className"
+            else
+                "$importVariableName[\"$className\"]"
+        override fun toString(): String = "file $absolutePath (via $importVariableName)"
     }
 
-    data class VueStyleModuleTarget(
+    inner class VueStyleModuleTarget(
         val styleTag: XmlTag,
-        val styleVariableName: String = "\$style"  // `module="style"` → \$style，`module=""` → 其他
+        val styleVar: String = "\$style"
     ) : CssModuleTarget() {
-        override fun appendClass(project: Project, className: String, declarations: String) {
-            // 往 styleTag 的末尾（最后一个 XmlText 内）追加样式块
-            val children = styleTag.children
-            val anchor: PsiElement? = children.lastOrNull { it !is PsiWhiteSpace && it !is PsiComment }
-            val stylePsiFile = styleTag.containingFile
-            // 如果有 VueEmbedded CSS 文件，使用 CssStylesheet 来保证格式正确
-            val embedded = findEmbeddedCssInStyleTag(styleTag)
+        override fun appendRule(project: Project, className: String, ruleText: String) {
+            val embedded = this@InlineStyleToCssModuleIntention.findEmbeddedCssInStyleTag(styleTag)
             if (embedded != null) {
-                appendClassToPsi(project, embedded, className, declarations, alsoUpdate = {})
+                this@InlineStyleToCssModuleIntention.appendRuleToPsi(project, embedded, ruleText)
             } else {
-                // fallback: 在 style 的 XmlText 中插入
-                val rawTag = styleTag
-                val insertPoint = anchor ?: rawTag
-                val snippet = "\n.${className} {\n${indentDeclarations(declarations, "  ")}}\n"
+                // fallback：以文本形式拼到 styleTag 内部末尾
                 val factory = PsiFileFactory.getInstance(project)
-                val snippetPsi = factory.createFileFromText(
-                    "__tmp__.css",
-                    com.intellij.css.CssLanguage.INSTANCE, snippet
+                val tmp = factory.createFileFromText(
+                    "__tmp__.css", CSSLanguage.INSTANCE, ruleText
                 )
-                rawTag.addBefore(snippetPsi.firstChild, null)
+                val ruleElem = tmp.firstChild ?: return
+                styleTag.add(ruleElem)
             }
+            ruleCount++
         }
-        override fun bindSyntax(sourceLang: StyleAttrLoc.Lang): String = styleVariableName
+        override fun classNameAccessExpr(className: String): String =
+            if (className.all { it.isLetterOrDigit() || it == '_' })
+                "$styleVar.$className"
+            else
+                "$styleVar['$className']"
+        override fun toString(): String = "Vue <style module> ($styleVar)"
     }
 
-    private fun locateTargetCssModule(project: Project, loc: StyleAttrLoc): CssModuleTarget? {
-        val srcFile = loc.attrPsi.containingFile
-        val vFile = srcFile.virtualFile
+    private fun locateTargetCssModule(project: Project, file: PsiFile, loc: StyleAttrLoc): CssModuleTarget? {
+        val vFile = file.virtualFile
         val ext = vFile?.extension?.lowercase()
 
-        // Vue: 同文件中寻找 <style module> / <style module="...">
+        // Vue：优先同文件 <style module>，其次任何 <style>
         if (ext == "vue") {
-            val styleTags = PsiTreeUtil.findChildrenOfType(srcFile, XmlTag::class.java)
+            val styles = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
                 .filter { it.name.equals("style", true) }
-            // 优先 module 不为空的
-            val withModule = styleTags.firstOrNull { it.getAttribute("module") != null }
-            if (withModule != null) {
-                val modName = withModule.getAttributeValue("module")
-                val alias = if (modName.isNullOrBlank()) "\$style" else "\$$modName"
-                return VueStyleModuleTarget(withModule, alias)
+            val mod = styles.firstOrNull { it.getAttribute("module") != null }
+            if (mod != null) {
+                val modValue = mod.getAttributeValue("module")
+                val alias = if (modValue.isNullOrBlank()) "\$style" else "\$$modValue"
+                return VueStyleModuleTarget(mod, alias)
             }
-            // 退化：任意 style (即使没 module 也可作为本地类)
-            val anyStyle = styleTags.firstOrNull()
-            if (anyStyle != null) return VueStyleModuleTarget(anyStyle, "\$style")
+            val any = styles.firstOrNull()
+            if (any != null) return VueStyleModuleTarget(any, "\$style")
         }
 
-        // React / TSX / JSX: 找 import styles from './Xxx.module.css' (或 .scss / .less)
-        val moduleExts = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
-        val imports = PsiTreeUtil.findChildrenOfType(srcFile, ES6ImportDeclaration::class.java)
+        // React/TSX：ES6 import 默认绑定 styles from './xxx.module.css|scss|less|sass'
+        val imports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
         for (imp in imports) {
-            val from = imp.from?.text?.trim('"', '\'') ?: continue
-            if (moduleExts.none { from.endsWith(it, ignoreCase = true) }) continue
-            // imp 的第一个 ImportSpecifier / defaultImport
-            val alias = imp.importSpecifiers.firstOrNull()?.name
-                ?: imp.firstChild?.children?.firstOrNull { it is JSVariable }?.text
-                ?: imp.text.split(Regex("\\s+")).getOrNull(1)?.takeIf { it.firstOrNull()?.isLetter() == true }
+            val moduleText = imp.importModuleText ?: continue
+            val from = moduleText.trim('"', '\'')
+            if (MODULE_EXTS.none { from.endsWith(it, ignoreCase = true) }) continue
+
+            // 取默认绑定：优先 named import 之前的默认 import 部分
+            val named = imp.namedImports
+            val bindings = imp.importedBindings
+            val defaultBinding = bindings.firstOrNull { b ->
+                named == null || !PsiTreeUtil.isAncestor(named, b, false)
+            } ?: bindings.firstOrNull()
+            val alias = defaultBinding?.name
+                ?: imp.importSpecifiers.firstOrNull()?.name
                 ?: "styles"
-            val resolved = imp.importDeclarations.firstOrNull()?.reference?.resolve()?.containingFile
-                ?: run {
-                    // 按相对路径从源文件目录出发找
-                    val parentDir = vFile?.parent ?: return@run null
-                    val childPath = (parentDir.path + "/" + from).removePrefix("./").removePrefix(parentDir.path + "/../")
-                    LocalFileSystem.getInstance().findFileByPath(
-                        parentDir.path + "/" + from.trimStart('/')
-                    )?.let { PsiManager.getInstance(project).findFile(it) }
-                }
-            if (resolved != null && resolved.virtualFile != null) {
-                return FileTarget(resolved.virtualFile.path, alias)
+
+            val resolvedPsi: PsiFile? = run {
+                // 先通过默认绑定解析
+                val viaRef = defaultBinding?.reference?.resolve()?.containingFile
+                if (viaRef != null) return@run viaRef
+                // 按相对路径解析
+                val parent = vFile?.parent ?: return@run null
+                val normFrom = from.trimStart('/')
+                val candidate = findFileByRelativePath_(parent, normFrom)
+                    ?: parent.findChild(normFrom.substringAfterLast('/'))
+                candidate?.let { PsiManager.getInstance(project).findFile(it) }
+            }
+            if (resolvedPsi?.virtualFile != null) {
+                return FileTarget(resolvedPsi.virtualFile!!.path, alias)
             }
         }
-        // 兜底：如果同目录有同名 Xxx.module.css，直接用
+
+        // 兜底：同目录下有没有 Xxx.module.* 文件（和源文件同名）
         if (vFile != null) {
-            val parentDir = vFile.parent
+            val parent = vFile.parent
             val base = vFile.nameWithoutExtension
-            for (ext in moduleExts) {
-                val candidate = parentDir?.findChild("$base$ext")
-                if (candidate != null && candidate.isValid) {
-                    return FileTarget(candidate.path, "styles")
+            if (parent != null) {
+                for (suf in MODULE_EXTS) {
+                    val c = parent.findChild("$base$suf")
+                    if (c != null && c.isValid) return FileTarget(c.path, "styles")
                 }
             }
         }
         return null
     }
 
-    private fun findEmbeddedCssInStyleTag(styleTag: XmlTag): PsiFile? {
-        // 向下一层一层找，Vue 通常把 CSS 包成 VirtualFile，父在 XmlTag 内部
-        fun walk(el: PsiElement): PsiFile? {
-            if (el is PsiFile && (el.fileType.defaultExtension == "css" ||
-                        el is CssFile || el is CssStylesheet)) return el
-            for (c in el.children) {
-                val r = walk(c); if (r != null) return r
-            }
-            return null
+    private fun findFileByRelativePath_(base: VirtualFile, rel: String): VirtualFile? {
+        var cur: VirtualFile? = base
+        for (seg in rel.replace('\\', '/').split('/')) {
+            if (seg.isEmpty() || seg == ".") continue
+            if (seg == "..") { cur = cur?.parent; continue }
+            cur = cur?.findChild(seg) ?: return null
         }
-        return walk(styleTag)
+        return cur
     }
 
     // ================================================================
-    // 步骤 4: 追加类到目标 PSI 文件 (纯 WriteAction)
-    // ================================================================
-    private fun appendClassToPsi(
-        project: Project,
-        targetPsi: PsiElement,
-        className: String,
-        declarations: String,
-        alsoUpdate: (Int) -> Unit
-    ) {
-        val factory = PsiFileFactory.getInstance(project)
-        val indented = indentDeclarations(declarations, "  ")
-        val ruleText = "\n.${className} {\n${indented}}\n"
-        // 用 CSS 语言来 parse，避免作为普通文本插错位置
-        val lang = (targetPsi as? PsiFile)?.language
-            ?: com.intellij.css.CssLanguage.INSTANCE
-        val tmpPsi = try {
-            factory.createFileFromText("__dashstyle_tmp__.css", lang, ruleText)
-        } catch (_: Throwable) {
-            factory.createFileFromText("__dashstyle_tmp__.css", PlainTextLanguage.INSTANCE, ruleText)
-        }
-        // 在目标尾部（最后一个非空规则或最后一个子节点）之后插入
-        val leaf = targetPsi.lastChild
-        if (leaf != null) targetPsi.addAfter(tmpPsi.firstChild, leaf)
-        else targetPsi.add(tmpPsi.firstChild)
-        alsoUpdate(ruleText.lineSequence().count())
-    }
-
-    private fun indentDeclarations(css: String, indent: String): String {
-        return css.lineSequence().mapNotNull { line ->
-            val t = line.trim()
-            if (t.isBlank()) null else "$indent$t"
-        }.joinToString("\n", postfix = "\n")
-    }
-
-    // ================================================================
-    // 步骤 5: 把原 style 属性替换为 class/className 绑定
+    // 把原 style={...} 替换成 className=... / :class=...
     // ================================================================
     private fun replaceStyleAttributeWithClass(
-        project: Project,
         loc: StyleAttrLoc,
         className: String,
-        bindVar: String
+        target: CssModuleTarget
     ) {
-        val attrEl = loc.attributeElement
-        val file = attrEl.containingFile
+        val access = target.classNameAccessExpr(className)
+        val project = loc.attrPsi.project
         val factory = PsiFileFactory.getInstance(project)
+
         when (loc.sourceLanguage) {
             StyleAttrLoc.Lang.JSX_TSX -> {
-                // className={styles.Xxx} 或 camelCase className={styles.fooBar}（变量用驼峰，CSS kebab 通过 []）
-                val kebabIsSimple = CLASS_NAME_RE.matches(className) && !className.contains('-')
-                val access = if (kebabIsSimple) "$bindVar.${className}" else "$bindVar[\"${className}\"]"
-                val newAttr = "className={${access}}"
-                // JSAttribute 直接操作：改 name + value
-                if (attrEl is JSAttribute) {
-                    // 通过 JSX file 生成 JSAttribute
-                    val tmp = factory.createFileFromText(
-                        "__tmp__.tsx", com.intellij.lang.javascript.JavascriptLanguage.INSTANCE,
-                        "const _ = () => <div $newAttr/>"
-                    )
-                    val newAttrPsi = PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)!!
-                    attrEl.replace(newAttrPsi)
-                    return
-                }
-                attrEl.replaceViaText(file, factory, newAttr, "jsx")
+                val newAttrText = "className={$access}"
+                val snippet = "const _ = () => <div $newAttrText/>"
+                val jsLang = Language.findInstance(JavascriptLanguage::class.java)
+                val tmp = factory.createFileFromText("__tmp__.tsx", jsLang, snippet)
+                val newAttr = PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
+                if (newAttr != null) loc.attrPsi.replace(newAttr)
+                else fallbackReplace(loc.attrPsi, newAttrText)
             }
             StyleAttrLoc.Lang.VUE -> {
-                // Vue: class="xxx" 非 module，module 需写 :class="$style.xxx" / :class="[$style.xxx, ...]"
-                val access = if (!className.contains('-')) "$bindVar.$className"
-                else "$bindVar['$className']"
-                val newAttr = ":class=\"$access\""
-                if (attrEl is XmlAttribute) {
-                    val tmpTag = "<div $newAttr/>"
-                    val tmp = factory.createFileFromText(
-                        "__tmp__.vue", com.intellij.lang.xml.XMLLanguage.INSTANCE, tmpTag
-                    )
-                    val newPsi = PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)?.attributes?.first()!!
-                    attrEl.replace(newPsi)
-                    return
-                }
-                attrEl.replaceViaText(file, factory, newAttr, "xml")
+                val newAttrText = ":class=\"$access\""
+                val snippet = "<template><div $newAttrText/></template>"
+                val xmlLang = Language.findInstance(XMLLanguage::class.java)
+                val tmp = factory.createFileFromText("__tmp__.vue", xmlLang, snippet)
+                val tag = PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)
+                val newAttr = tag?.attributes?.firstOrNull()
+                if (newAttr != null) loc.attrPsi.replace(newAttr)
+                else fallbackReplace(loc.attrPsi, newAttrText)
             }
         }
     }
 
-    /** 对于 PSI 类型不可靠的情况，文本级替换后重新解析 */
-    private fun PsiElement.replaceViaText(
-        file: PsiFile,
-        factory: PsiFileFactory,
-        newAttrText: String,
-        kind: String
-    ) {
+    /** PSI 替换失败时的最后兜底：按照 attr 在 parent 中的文本区间替换 */
+    private fun fallbackReplace(attrPsi: PsiElement, newAttr: String) {
         try {
-            val oldRange = this.textRangeInParent
-            val parent = this.parent
-            val parentText = parent.text
-            val replacement = parentText.replaceRange(oldRange.startOffset, oldRange.endOffset, newAttrText)
-            val lang = if (kind == "xml") com.intellij.lang.xml.XMLLanguage.INSTANCE
-            else com.intellij.lang.javascript.JavascriptLanguage.INSTANCE
-            val wrap = if (kind == "xml") "<div $replacement/>" else "const _ = () => <div $replacement/>"
-            val tmp = factory.createFileFromText("__dashstyle_attr__.$kind", lang, wrap)
-            val target = if (kind == "xml") PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)?.attributes?.first()
-            else PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
-            if (target != null) this.replace(target)
+            val parent = attrPsi.parent ?: return
+            val range = attrPsi.textRangeInParent
+            if (range.length <= 0) return
+            val parentNewText = parent.text.replaceRange(
+                IntRange(range.startOffset, range.endOffset - 1), newAttr
+            )
+            // 用新文本临时生成 psi，替换 parent
+            val factory = PsiFileFactory.getInstance(attrPsi.project)
+            val lang = parent.containingFile?.language ?: PlainTextLanguage.INSTANCE
+            val isVue = parent.containingFile?.virtualFile?.extension?.lowercase() == "vue"
+            val tmp = factory.createFileFromText(
+                "__fallback__.txt", lang,
+                if (isVue) "<div $parentNewText/>" else "const _ = () => <div $parentNewText/>"
+            )
+            val targetReplacement = when (attrPsi) {
+                is JSAttribute -> PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
+                is XmlAttribute -> PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)?.attributes?.firstOrNull()
+                else -> null
+            }
+            if (targetReplacement != null) attrPsi.replace(targetReplacement)
         } catch (t: Throwable) {
-            LOG.warn("replaceViaText fallback failed", t)
+            LOG.warn("fallbackReplace failed", t)
         }
     }
 }

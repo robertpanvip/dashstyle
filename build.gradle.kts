@@ -4,8 +4,9 @@
 // 因此 build.gradle.kts 里只写常规的 repositories 占位（mavenCentral + intellijPlatform.defaultRepositories）
 plugins {
     id("java")
-    // WebStorm-2025.3 SDK 里的 kotlin-stdlib 是 Kotlin 2.2 metadata；必须用 2.0+ 的编译器才能读取。
-    id("org.jetbrains.kotlin.jvm") version "2.0.21"
+    // WebStorm-2025.3 自身是 Kotlin 2.2 metadata。plugin 端使用 2.1.0 编译器，
+    // 配合 freeCompilerArgs `-Xsuppress-version-warnings` 容忍更老的 meta 读入。
+    id("org.jetbrains.kotlin.jvm") version "2.1.0"
     id("org.jetbrains.intellij.platform") version "2.10.5"
 }
 
@@ -29,7 +30,7 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5:2.0.21")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5:2.1.0")
 }
 
 intellijPlatform {
@@ -51,9 +52,12 @@ tasks {
     withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         kotlinOptions {
             jvmTarget = "17"
+            // -Xsuppress-version-warnings：容忍 IDE SDK 中 Kotlin 2.2 metadata 与插件 2.1.0 编译器的
+            //   meta 版本差，仅降级为 warning 而不是 error。
             freeCompilerArgs = freeCompilerArgs + listOf(
                 "-Xjvm-default=all",
-                "-Xfriend-paths=classes/java/main"
+                "-Xfriend-paths=classes/java/main",
+                "-Xsuppress-version-warnings"
             )
         }
     }

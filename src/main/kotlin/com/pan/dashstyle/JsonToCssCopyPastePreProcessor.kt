@@ -19,8 +19,8 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
 
     // 公开入口：Intention / Inspection 复用同一套转换规则
     object Util {
-        private val threadLocalGson = ThreadLocal.withInitial { Gson() }
-        private val sharedProcessor = JsonToCssCopyPastePreProcessor()
+        internal val threadLocalGson = ThreadLocal.withInitial { Gson() }
+        internal val sharedProcessor = JsonToCssCopyPastePreProcessor()
 
         /**
          * 接受任何 "像 style 对象" 的文本：
@@ -335,13 +335,13 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
         if (el is JsonNull) return null
 
         if (el is JsonPrimitive) {
-            val raw = if (el.isBoolean) {
-                // CSS 没有 bool 值属性，除非是特殊属性（但都很少），跳过
-                return null
-            } else if (el.isNumber) {
-                el.asNumber.toString()
-            } else {
-                el.asString
+            val raw = when {
+                el.isBoolean -> {
+                    // CSS 没有 bool 值属性，跳过
+                    return null
+                }
+                el.isNumber -> el.asNumber.toString()
+                else -> el.asString
             }
             return formatPrimitiveValue(origKey, kebabKey, raw)
         }
@@ -393,13 +393,11 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
 
     private fun formatShorthandArray(origKey: String, kebabKey: String, arr: JsonArray): String? {
         return arr.mapNotNull {
-            when {
-                it.isJsonPrimitive -> {
-                    val raw = if (it.isNumber) it.asNumber.toString() else it.asString
-                    formatPrimitiveValue(origKey, kebabKey, raw)
-                }
-                else -> null
-            }
+            if (it.isJsonPrimitive) {
+                val p = it.asJsonPrimitive
+                val raw = if (p.isNumber) p.asNumber.toString() else p.asString
+                formatPrimitiveValue(origKey, kebabKey, raw)
+            } else null
         }.joinToString(" ").ifBlank { null }
     }
 
@@ -410,14 +408,12 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
             for ((k, v) in item.entrySet()) {
                 val func = k
                 if (func !in TRANSFORM_FUNCTIONS) continue
-                val arg = when {
-                    v.isJsonPrimitive -> {
-                        val raw = if (v.isNumber) v.asNumber.toString() else v.asString
-                        // translate/rotate 类：非角度、无单位的数字加 px（角度 deg 单位的不要）
-                        addDefaultUnitToTransformArg(func, raw)
-                    }
-                    else -> v.toString()
-                }
+                val arg = if (v.isJsonPrimitive) {
+                    val p = v.asJsonPrimitive
+                    val raw = if (p.isNumber) p.asNumber.toString() else p.asString
+                    // translate/rotate 类：非角度、无单位的数字加 px（角度 deg 单位的不要）
+                    addDefaultUnitToTransformArg(func, raw)
+                } else v.toString()
                 parts += "$func($arg)"
             }
         }

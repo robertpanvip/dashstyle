@@ -4,6 +4,7 @@ import com.intellij.lang.ecmascript6.psi.ES6ImportSpecifierAlias
 import com.intellij.lang.javascript.psi.JSCallExpression
 import com.intellij.lang.javascript.psi.JSVariable
 import com.intellij.openapi.util.Key
+import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.CachedValue
@@ -42,7 +43,8 @@ class Util {
 
         fun isUseCssModuleFromVue(initializer: JSCallExpression): Boolean {
             val methodExpr = initializer.methodExpression
-            var resolved = methodExpr?.reference?.resolve() ?: return false
+            val resolved0: PsiElement? = methodExpr?.reference?.resolve() ?: return false
+            var resolved: PsiElement? = resolved0
             if (resolved is ES6ImportSpecifierAlias) resolved = resolved.findAliasedElement()
             val cf = resolved?.containingFile ?: return false
             val virtualFile = cf.virtualFile ?: cf.originalFile?.virtualFile
