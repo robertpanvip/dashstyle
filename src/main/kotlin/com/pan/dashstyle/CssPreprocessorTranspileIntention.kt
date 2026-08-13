@@ -32,26 +32,30 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
     override fun getFamilyName(): String = "DashStyle: Convert preprocessor code"
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean {
-        val styleScope = resolveStyleScope(file, editor.caretModel.offset)
-        return styleScope != null
+        val scope = runCatching { resolveStyleScope(file, editor.caretModel.offset) }.getOrNull()
+        return scope != null
     }
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
-        val scope = resolveStyleScope(file, editor.caretModel.offset) ?: return
-        val fromFormat = when (scope) {
-            is StyleScope.CssFile -> formatByExt(scope.file.name)
-            is StyleScope.VueStyle -> {
-                val lang = scope.tag.getAttribute("lang")?.value ?: scope.tag.getAttributeValue("lang")
-                (lang?.lowercase() ?: "scss").let {
-                    when (it) {
-                        "scss" -> Format.SCSS
-                        "less" -> Format.LESS
-                        "sass" -> Format.SCSS
-                        else -> Format.SCSS
+        val scope = runCatching { resolveStyleScope(file, editor.caretModel.offset) }.getOrNull() ?: return
+        val fromFormat = runCatching {
+            when (scope) {
+                is StyleScope.CssFile -> formatByExt(scope.file.name)
+                is StyleScope.VueStyle -> {
+                    val lang = runCatching {
+                        scope.tag.getAttribute("lang")?.value ?: scope.tag.getAttributeValue("lang")
+                    }.getOrNull()
+                    (lang?.lowercase() ?: "scss").let {
+                        when (it) {
+                            "scss" -> Format.SCSS
+                            "less" -> Format.LESS
+                            "sass" -> Format.SCSS
+                            else -> Format.SCSS
+                        }
                     }
                 }
             }
-        }
+        }.getOrElse { Format.SCSS }
         val options = listOf(Format.SCSS, Format.LESS, Format.CSS_NESTING)
         val labels = options.map { it.label }.toTypedArray()
         val idx = Messages.showChooseDialog(
@@ -66,13 +70,13 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
         if (idx < 0) return
         val to = options[idx]
         if (to == fromFormat) return
-        val sourceText = scope.text()
+        val sourceText = runCatching { scope.text() }.getOrNull() ?: return
         val (transpiled, keptCount) = transpile(sourceText, fromFormat, to)
 
-        WriteCommandAction.writeCommandAction(project).withName("Convert ${fromFormat.label} → ${to.label}")
-            .run<Nothing> {
-                scope.replace(transpiled)
-            }
+        runCatching {
+            WriteCommandAction.writeCommandAction(project).withName("Convert ${fromFormat.label} → ${to.label}")
+                .run<Nothing> { scope.replace(transpiled) }
+        }
 
         val msg = buildString {
             append("Transpiled ${fromFormat.label} → ${to.label}.")
@@ -96,14 +100,16 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
         fun replace(newText: String) {
             when (this) {
                 is CssFile -> {
-                    val doc = com.intellij.psi.PsiDocumentManager.getInstance(file.project).getDocument(file)
-                        ?: return
+                    val doc = runCatching {
+                        com.intellij.psi.PsiDocumentManager.getInstance(file.project).getDocument(file)
+                    }.getOrNull() ?: return
                     doc.replaceString(0, doc.textLength, newText)
                 }
                 is VueStyle -> {
-                    val doc = com.intellij.psi.PsiDocumentManager.getInstance(scopeFile.project).getDocument(scopeFile)
-                        ?: return
-                    val value = tag.value
+                    val doc = runCatching {
+                        com.intellij.psi.PsiDocumentManager.getInstance(scopeFile.project).getDocument(scopeFile)
+                    }.getOrNull() ?: return
+                    val value = runCatching { tag.value }.getOrNull()
                     if (value != null) {
                         val tr = value.textRange
                         doc.replaceString(tr.startOffset, tr.endOffset, newText)
@@ -116,7 +122,7 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
                         if (firstGT >= 0 && lastLT >= 0 && lastLT > firstGT) {
                             val start = tagRange.startOffset + firstGT + 1
                             val end = tagRange.startOffset + lastLT
-                            doc.replaceString(start, end, newText)
+                            runCatching { doc.replaceString(start, end, newText) }
                         }
                     }
                 }
@@ -125,16 +131,20 @@ class CssPreprocessorTranspileIntention : BaseIntentionAction() {
     }
 
     private fun resolveStyleScope(file: PsiFile, offset: Int): StyleScope? {
-        if (file.name.endsWith(".css") || file.name.endsWith(".scss") || file.name.endsWith(".sass") || file.name.endsWith(".less")) {
+        val name = runCatching { file.name }.getOrNull().orEmpty()
+        if (name.endsWith(".css") || name.endsWith(".scss") || name.endsWith(".sass") || name.endsWith(".less")) {
             return StyleScope.CssFile(file)
         }
-        if (file is XmlFile && file.name.endsWith(".vue")) {
-            val at = file.findElementAt(offset) ?: return null
+        val isVue = runCatching {
+            (file is XmlFile && name.endsWith(".vue")) || name.endsWith(".vue")
+        }.getOrDefault(false)
+        if (isVue) {
+            val at = runCatching { file.findElementAt(offset) }.getOrNull() ?: return null
             val style = PsiTreeUtil.getParentOfType(at, XmlTag::class.java)
-                ?: return null
-            if (style.name.equals("style", ignoreCase = true)) return StyleScope.VueStyle(style, file)
+            if (style != null && runCatching { style.name.equals("style", ignoreCase = true) }.getOrDefault(false))
+                return StyleScope.VueStyle(style, file)
             val styles = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
-                .filter { it.name.equals("style", true) }
+                .filter { runCatching { it.name.equals("style", true) }.getOrDefault(false) }
             return styles.firstOrNull()?.let { StyleScope.VueStyle(it, file) }
         }
         return null
