@@ -34,9 +34,9 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor {
         return object : PsiElementVisitor() {
             override fun visitFile(file: PsiFile) {
-                // CSS/SCSS/LESS 文件
-                if (file is StylesheetFile) {
-                    inspectStyleScope(file.stylesheet, file, holder, ScopeKind.FILE(file))
+                // CSS/SCSS/LESS 文件（兼容不同版本的 Scss/Less File 实现，用反射+后缀兜底）
+                if (isStylesheetLike(file)) {
+                    inspectStyleScope(stylesheetRoot(file), file, holder, ScopeKind.FILE(file))
                     return
                 }
                 // Vue <style> 标签（每个 style 独立检查，避免不同块混用）
@@ -47,6 +47,24 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 }
             }
         }
+    }
+
+    private fun isStylesheetLike(file: PsiFile): Boolean {
+        if (file is StylesheetFile) return true
+        val rc = file.javaClass.name
+        if (rc.contains("StylesheetFile", true) || rc.contains("CssFile", true) ||
+            rc.contains("ScssFile", true) || rc.contains("LessFile", true) ||
+            rc.contains("SassFile", true)) return true
+        val ext = file.virtualFile?.extension?.lowercase()
+        return ext in setOf("css", "scss", "sass", "less")
+    }
+
+    private fun stylesheetRoot(file: PsiFile): PsiElement {
+        return (file as? StylesheetFile)?.stylesheet
+            ?: runCatching {
+                val m = file.javaClass.methods.firstOrNull { it.name == "getStylesheet" && it.parameterCount == 0 }
+                m?.invoke(file) as? PsiElement
+            }.getOrNull() ?: file
     }
 
     // ================================================================
@@ -77,28 +95,17 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         if (groups.isEmpty()) return
 
         for ((_, group) in groups) {
-            for (entry in group.drop(1)) {
-                // 高亮整个 block，而非 selector，因为问题出在 declarations 内容
+            // 重复组的每一处都高亮 + 带 QuickFix（之前只高亮 group.drop(1)，用户把光标放在第一个 ruleset 上
+            // 时看不到任何 warning，导致「没实现」的错觉；现在整组所有位置都显式标黄。）
+            val fixes: Array<LocalQuickFix> =
+                arrayOf(ExtractCommonRuleQuickFix(group.map { it.ruleset }, group.first().declarations))
+            val count = group.size
+            val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
+                (if (group.first().declarations.size > 3) "\n  ..." else "")
+            val msg = "$count rules share identical declarations:\n$commonDecl"
+            for (entry in group) {
                 val range = entry.ruleset.block ?: continue
-                val count = group.size
-                val commonDecl = group.first().declarations.joinToString("\n", limit = 3) {
-                    "  ${it.text}"
-                } + (if (group.first().declarations.size > 3) "\n  ..." else "")
-                val msg = "$count rules share identical declarations:\n$commonDecl"
-                val fixable = when (kind) {
-                    is ScopeKind.FILE -> true
-                    is ScopeKind.VUE_STYLE -> true
-                }
-                val fixes: Array<LocalQuickFix> = if (fixable)
-                    arrayOf(ExtractCommonRuleQuickFix(group.map { it.ruleset }, group.first().declarations))
-                else
-                    emptyArray()
-                holder.registerProblem(
-                    range,
-                    msg,
-                    ProblemHighlightType.GENERIC_ERROR_OR_WARNING,
-                    *fixes
-                )
+                holder.registerProblem(range, msg, ProblemHighlightType.GENERIC_ERROR_OR_WARNING, *fixes)
             }
         }
     }

@@ -46,14 +46,23 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean {
         val offset = editor.caretModel.offset
-        val at = file.findElementAt(offset) ?: return false
-        return locateStyleAttribute(at) != null
+        val at = file.findElementAt(offset)
+        // 兜底：取 offset-1 / offset+1 的元素避免光标夹在两个 Psi 之间
+        if (at != null && locateStyleAttribute(at, file, offset) != null) return true
+        val prev = (offset - 1).coerceAtLeast(0).let { file.findElementAt(it) }
+        if (prev != null && prev !== at && locateStyleAttribute(prev, file, offset) != null) return true
+        val next = (offset + 1).coerceAtMost((file.textLength - 1).coerceAtLeast(0)).let { file.findElementAt(it) }
+        if (next != null && next !== at && next !== prev && locateStyleAttribute(next, file, offset) != null) return true
+        return false
     }
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
         val offset = editor.caretModel.offset
-        val at = file.findElementAt(offset) ?: return
-        val loc = locateStyleAttribute(at) ?: return
+        val loc = listOf(offset, (offset - 1).coerceAtLeast(0), (offset + 1).coerceAtMost((file.textLength - 1).coerceAtLeast(0)))
+            .asSequence().mapNotNull { file.findElementAt(it) }
+            .firstNotNullOfOrNull { locateStyleAttribute(it, file, offset) }
+            ?: run { Messages.showWarningDialog(project,
+                "No style attribute found under cursor.", "Extract to CSS Module"); return }
 
         val styleObjText = extractObjectLiteral(loc) ?: run {
             Messages.showWarningDialog(project,
@@ -160,23 +169,23 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         enum class Lang { JSX_TSX, VUE }
     }
 
-    private fun locateStyleAttribute(cursor: PsiElement): StyleAttrLoc? {
+    private fun locateStyleAttribute(cursor: PsiElement, file: PsiFile? = null, caretOffset: Int = -1): StyleAttrLoc? {
         var cur: PsiElement? = cursor
-        for (depth in 0..10) {
+        for (depth in 0..30) {
             if (cur == null) break
             val className = cur.javaClass.name
             when {
-                // JSX/TSX 属性：新版 JSX 有多种具体 class（JSAttribute/JSXAttribute/impl.*JsxAttribute），
-                // 不直接 is 类型判断，统一用反射式属性名判定，兼容 WebStorm 2025.2+ 的 JSX PSI 结构差异。
+                // JSX/TSX 属性：新版 JSX 有多种具体 class（JSAttribute/JSXAttribute/JsxAttribute/JsxAttributeImpl...），
+                // 统一反射获取 name；如果拿不到但 className 命中关键字段，也进一步按 .text 前缀判断。
                 className.contains("JSAttribute", ignoreCase = true) ||
-                    className.contains("JSXAttribute", ignoreCase = true) -> {
+                    className.contains("JSXAttribute", ignoreCase = true) ||
+                    className.contains("JsxAttribute", ignoreCase = true) -> {
                     val attrName = runCatching {
                         cur.javaClass.methods.firstOrNull { m ->
                             m.name == "getName" && m.parameterCount == 0
-                        }?.invoke(cur) as? String
-                    }.getOrNull()
-                    if (attrName == "style") {
-                        // values.isNotEmpty（存在 value）就直接返回。
+                        }?.invoke(cur) as? CharSequence
+                    }?.getOrNull()?.toString()
+                    if (attrName == "style" || attrName?.endsWith(":style") == true || (attrName.isNullOrBlank() && cur.text.trimStart().startsWith("style"))) {
                         val hasValue = runCatching {
                             val valuesM = cur.javaClass.methods.firstOrNull { m ->
                                 m.name == "getValues" && m.parameterCount == 0
@@ -193,15 +202,56 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                         return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE, xmlAttribute = cur)
                 }
             }
-            // 兜底：如果整个 attr 的文本以 style= 开头 → 直接认（防止用户光标落内部 value 节点 Psi）
+            // 兜底：当前节点文本或其祖先文本包含 style=...（支持光标在 value 内部节点深处）
             val t = cur.text
-            if (!t.isNullOrEmpty()) {
-                val isJsxLike = t.startsWith("style") && VALID_JSX_STYLE_RE.matches(t.trimIndent().lines().firstOrNull() ?: "")
-                if (isJsxLike) return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX)
-                val isVueLike = VALID_VUE_STYLE_RE.matches(t.trimIndent().lines().firstOrNull() ?: "")
-                if (isVueLike) return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE)
+            if (!t.isNullOrEmpty() && t.length in 4..4096) {
+                val trimFirst = t.trimIndent().lines().firstOrNull().orEmpty()
+                if (VALID_JSX_STYLE_RE.containsMatchIn(trimFirst) || VALID_JSX_STYLE_RE.containsMatchIn(t))
+                    return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX)
+                if (VALID_VUE_STYLE_RE.containsMatchIn(trimFirst) || VALID_VUE_STYLE_RE.containsMatchIn(t))
+                    return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE)
             }
             cur = cur.parent
+        }
+
+        // 最后兜底：如果 caretOffset 合法，在 file 的 Document 文本里按字符范围找覆盖 offset 的 style=... 片段，
+        // 再按那个范围的 startOffset 反查 PsiElement 再跑一次 locateStyleAttribute。
+        if (caretOffset >= 0 && file != null) {
+            val doc = PsiDocumentManager.getInstance(file.project).getDocument(file)
+            if (doc != null && caretOffset < doc.textLength) {
+                val rawText = doc.text
+                // 往左找最近的 'style' 起始（最多往前查 80 个字符）
+                val leftBound = (caretOffset - 120).coerceAtLeast(0)
+                val rightBound = (caretOffset + 40).coerceAtMost(rawText.length)
+                val window = rawText.substring(leftBound, rightBound)
+                val jsxMatch = Regex("""\bstyle\s*=""").find(window)
+                    ?: Regex("""\bstyle\s*=\s*\{""").find(window)
+                val vueMatch = Regex("""(v-bind)?:style\s*=""").find(window)
+                val match = jsxMatch ?: vueMatch
+                if (match != null) {
+                    val absStart = leftBound + match.range.first
+                    val psi = file.findElementAt(absStart)
+                    if (psi != null) {
+                        val found = run locate@{
+                            var c: PsiElement? = psi
+                            for (d in 0..20) {
+                                if (c == null) break
+                                val attrName = runCatching {
+                                    c.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }?.invoke(c) as? CharSequence
+                                }?.getOrNull()?.toString()
+                                if (c is XmlAttribute) return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.VUE, xmlAttribute = c)
+                                if (attrName == "style") return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = c)
+                                val rc = c.javaClass.name
+                                if ((rc.contains("JSAttribute", true) || rc.contains("JsxAttribute", true)) && c.text.trimStart().startsWith("style"))
+                                    return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = c)
+                                c = c.parent
+                            }
+                            null
+                        }
+                        if (found != null) return found
+                    }
+                }
+            }
         }
         return null
     }

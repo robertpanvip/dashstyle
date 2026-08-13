@@ -40,17 +40,34 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor {
         return object : PsiElementVisitor() {
 
-            // ---------- Case A: 访问 JS/TS 文件时，扫描 import 绑定，定位目标 CSS，再遍历 CSS ----------
-            // ---------- Case B: 访问 StylesheetFile 时，反向查找所有引用它的 sourceFile，扫描 usages ----------
+            // ----------
+            // 重要：ProblemsHolder.registerProblem 只能对「当前正在被 inspection 会话访问的 file」 范围内的 psi 节点生效，
+            //        跨文件（从 JSFile.visitFile 里 holder.registerProblem(cssFile.ruleset)）会被 IDE 静默丢弃。
+            //        → JSFile / VueFile 侧仅作为 reverse-lookup 的缓存预热，不再调用 holder；
+            //        真正的置灰统一放到 processStylesheetFile（CSS/SCSS/LESS 文件直接打开时触发）。
+            // ----------
             override fun visitFile(file: PsiFile) {
                 when {
-                    file is JSFile -> processJsFile(file, holder)
-                    file is XmlFile && file.name.endsWith(".vue") -> processVueFile(file, holder)
-                    file is StylesheetFile -> processStylesheetFile(file, holder)
-                    else -> { /* 其他文件类型跳过 */ }
+                    isStylesheetFileLike(file) -> processStylesheetFile(file, holder)
+                    else -> { /* JS/Vue 不直接置灰，避免跨文件问题 */ }
                 }
             }
         }
+    }
+
+    /** StylesheetFile 在不同 IDE 版本 FQN 不同，这里兼容： instanceof StylesheetFile
+     *  或 任何名字包含 StylesheetFile/CssFile/ScssFile/LessFile/SassFile 的 PSI File 类型 */
+    private fun isStylesheetFileLike(file: PsiFile): Boolean {
+        if (file is StylesheetFile) return true
+        val rc = file.javaClass.name
+        if (rc.contains("StylesheetFile", ignoreCase = true) ||
+            rc.contains("CssFile", ignoreCase = true) ||
+            rc.contains("ScssFile", ignoreCase = true) ||
+            rc.contains("LessFile", ignoreCase = true) ||
+            rc.contains("SassFile", ignoreCase = true)) return true
+        val ext = file.virtualFile?.extension?.lowercase()
+        if (ext in setOf("css", "scss", "sass", "less")) return true
+        return false
     }
 
     // ================================================================
@@ -130,7 +147,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
     // ================================================================
     // Case B：当直接打开 *.module.css/.scss/.less 文件时，反向找所有引用它的 sourceFiles，然后并集扫描 usage
     // ================================================================
-    private fun processStylesheetFile(cssFile: StylesheetFile, holder: ProblemsHolder) {
+    private fun processStylesheetFile(cssFile: PsiFile, holder: ProblemsHolder) {
         val vf = cssFile.virtualFile ?: return
         if (!MODULE_EXTS.any { vf.name.endsWith(it, ignoreCase = true) }) return
 
@@ -152,14 +169,15 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         if (referencingSources.isEmpty()) return  // 没被任何 JS/Vue import → 非 CSS Module，不置灰
 
         val container = CssModuleResolver.CssContainer.ImportedFile(cssFile, vf, "", null)
-        val classes = CssModuleResolver.collectAllClasses(container)
+        val classes = runCatching { CssModuleResolver.collectAllClasses(container) }.getOrDefault(emptyList())
         if (classes.isEmpty()) return
 
         val used = mutableSetOf<String>()
         var hasDynamic = false
         for ((srcFile, bindingNameHint) in referencingSources) {
             val effectiveContainer = CssModuleResolver.CssContainer.ImportedFile(cssFile, vf, bindingNameHint.ifBlank { "styles" }, null)
-            val (u, dyn) = CssModuleResolver.scanUsages(srcFile, effectiveContainer)
+            val (u, dyn) = runCatching { CssModuleResolver.scanUsages(srcFile, effectiveContainer) }
+                .getOrDefault(mutableSetOf<String>() to false)
             if (dyn) { hasDynamic = true; break }
             used += u
         }
@@ -170,7 +188,8 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
         for (entry in classes) {
             if (entry.kebabName in used) continue
-            val selector = entry.ruleset.selectorList ?: continue
+            val selector = runCatching { entry.ruleset.selectorList }.getOrNull() ?: continue
+            if (!selector.isPhysical || selector.containingFile != cssFile) continue
             holder.registerProblem(
                 selector,
                 "CSS class `.${entry.kebabName}` is not used anywhere",
@@ -181,7 +200,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
     }
 
     /** 在整个 project 范围内反查：所有通过 ES6 import 引入当前 cssFile 的 JS/Vue 源文件 */
-    private fun findReferencingSourceFiles(cssFile: StylesheetFile): List<Pair<PsiFile, String>> {
+    private fun findReferencingSourceFiles(cssFile: PsiFile): List<Pair<PsiFile, String>> {
         val project = cssFile.project
         val cssVf = cssFile.virtualFile ?: return emptyList()
         val cssPath = cssVf.path
