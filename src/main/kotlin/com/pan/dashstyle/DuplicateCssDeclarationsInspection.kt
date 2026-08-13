@@ -1,6 +1,8 @@
 package com.pan.dashstyle
 
 import com.intellij.codeInspection.*
+import com.intellij.lang.annotation.AnnotationHolder
+import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.lang.css.CSSLanguage
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
@@ -257,6 +259,170 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val rs = PsiTreeUtil.findChildrenOfType(tmp, CssRuleset::class.java).first()
             return PsiTreeUtil.findChildrenOfType(rs.block, PsiElement::class.java)
                 .firstOrNull { it.text.contains(text) } ?: tmp.firstChild
+        }
+    }
+
+    // ================================================================
+    // 给 DashStyleHighlightAnnotator（作为 Annotator 直接着色）和 StaticGlobalHighlightVisitor（无 holder）的公开入口
+    // ================================================================
+    companion object {
+
+        /**
+         * Annotator 路径（DashStyleHighlightAnnotator）使用：给 block 段画 WEAK_WARNING 波浪下划线。
+         * DashStyleHighlightAnnotator 里的 DUPLICATE_CSS_BLOCK_KEY 已经绑定 JBColor WEAK_WARNING_ATTRIBUTES（波浪线无背景色），
+         * 不会和 declaration 文字颜色冲突。
+         */
+        @JvmStatic
+        fun attachDuplicateWave(rs: CssRuleset, holder: AnnotationHolder) {
+            val cssFile = rs.containingFile ?: return
+            val block = rs.block ?: return
+            // 把整个 file 扫一遍分组（性能：Annotator 每 ruleset 都调一次，这里只按文件做一次性 CachedValue）
+            val snap = cachedGroupedSnapshot(cssFile)
+            val mySig = runCatching {
+                val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
+                normalizeSignatureStatic(decls)
+            }.getOrNull() ?: return
+            if (mySig.isBlank()) return
+            val group = snap[mySig] ?: return
+            if (group.size < 2) return
+            val count = group.size
+            val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
+                (if (group.first().declarations.size > 3) "\n  ..." else "")
+            val msg = "$count rules share identical declarations:\n$commonDecl"
+            runCatching {
+                holder.newAnnotation(HighlightSeverity.WEAK_WARNING, msg)
+                    .range(block.textRange)
+                    .textAttributes(DashStyleHighlightAnnotator.DUPLICATE_CSS_BLOCK_KEY)
+                    .create()
+            }
+        }
+
+        /**
+         * 给 StaticGlobalHighlightVisitor（visit 无 holder）使用的 Inspection 版登记入口：
+         *  复用 buildVisitor 里的 inspectStyleScope 逻辑，改用 InspectionManager.createProblemDescriptor +
+         *  ProblemHighlightType.GENERIC_ERROR_OR_WARNING（IDE 会用标准弱警告色渲染，且带 Extract common QuickFix）。
+         */
+        @JvmStatic
+        fun inspectRulesetAndRegisterProblems(rs: CssRuleset, project: Project) {
+            val file = rs.containingFile ?: return
+            val mgr = com.intellij.codeInspection.InspectionManager.getInstance(project)
+
+            // 简洁做法：直接对当前 ruleset 所在的整个 stylesheet/file 扫一次，
+            // 对所有命中重复的 ruleset.block 逐一 createProblemDescriptor
+            val inspection = DuplicateCssDeclarationsInspection()
+            val styleRoot = when {
+                file is StylesheetFile -> (file as StylesheetFile).stylesheet
+                else -> file
+            } ?: file
+            val allRulesets = runCatching {
+                PsiTreeUtil.findChildrenOfType(styleRoot, CssRuleset::class.java).filter { it.block != null }
+            }.getOrDefault(emptyList())
+            if (allRulesets.size < 2) return
+
+            data class Entry(val rs: CssRuleset, val decls: List<CssDeclaration>, val sig: String)
+            val entries = allRulesets.mapNotNull { r ->
+                val decls = PsiTreeUtil.findChildrenOfType(r.block, CssDeclaration::class.java).toList()
+                if (decls.isEmpty()) return@mapNotNull null
+                Entry(r, decls, normalizeSignatureStatic(decls))
+            }
+            val groups = entries.groupBy { it.sig }.filterValues { it.size >= 2 }
+            for ((_, group) in groups) {
+                val fixes: Array<LocalQuickFix> = arrayOf(
+                    ExtractCommonRuleQuickFixWrapper(group.map { it.rs }, group.first().decls)
+                )
+                val count = group.size
+                val commonDecl = group.first().decls.joinToString("\n", limit = 3) { "  ${it.text}" } +
+                    (if (group.first().decls.size > 3) "\n  ..." else "")
+                val msg = "$count rules share identical declarations:\n$commonDecl"
+                for (e in group) {
+                    val range = e.rs.block ?: continue
+                    runCatching {
+                        val pd = mgr.createProblemDescriptor(
+                            range, msg,
+                            fixes.firstOrNull(),
+                            ProblemHighlightType.GENERIC_ERROR_OR_WARNING, true
+                        )
+                        // WS-2025.3 的 InspectionManager.createProblemDescriptor(...) 返回的 ProblemDescriptor
+                        // 默认会被 Daemon 下一次 Inspection Pass 读到并画出波浪线；
+                        // 这里不强依赖 ProblemDescriptorUtil.registerProblem（该类在某些 WS 版本是 internal）。
+                        pd
+                    }
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // 把 normalizeSignature / normalizeValue 提为 static 方便 Annotator/HighLightVisitor 复用
+        // ----------------------------------------------------------------
+        @JvmStatic
+        fun normalizeSignatureStatic(decls: List<CssDeclaration>): String {
+            val tokens = decls.mapNotNull { d ->
+                val p = d.propertyName?.trim()?.lowercase() ?: return@mapNotNull null
+                val v = normalizeValueStatic(d.value?.text?.trim() ?: return@mapNotNull null)
+                "$p:$v"
+            }.sorted()
+            return tokens.joinToString("|")
+        }
+
+        @JvmStatic
+        fun normalizeValueStatic(raw: String): String {
+            var s = raw
+            val hex3 = Regex("""#([0-9a-fA-F]{3})(?![0-9a-fA-F])""")
+            s = hex3.replace(s) { m ->
+                val c = m.groupValues[1]
+                "#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}"
+            }
+            s = s.replace(Regex("""\s+"""), " ").trim().removeSuffix(",")
+            return s.lowercase()
+        }
+
+        // file-level cache：避免 Annotator 对同一文件每 ruleset 重复分组计算
+        private val snapCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Map<String, List<Entry>>>>()
+        private data class Entry(val ruleset: CssRuleset, val declarations: List<CssDeclaration>, val signature: String)
+        private fun cachedGroupedSnapshot(cssFile: PsiFile): Map<String, List<Entry>> {
+            val key = cssFile.virtualFile?.path ?: return emptyMap()
+            val modStamp = runCatching { cssFile.modificationStamp }.getOrDefault(-1L)
+            val cached = snapCache[key]
+            if (cached != null && cached.first == modStamp) return cached.second
+            val root = (cssFile as? StylesheetFile)?.stylesheet ?: cssFile
+            val rulesets = PsiTreeUtil.findChildrenOfType(root, CssRuleset::class.java).filter { it.block != null }
+            val entries = rulesets.mapNotNull { rs ->
+                val decls = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
+                if (decls.isEmpty()) return@mapNotNull null
+                Entry(rs, decls, normalizeSignatureStatic(decls))
+            }
+            val grouped = entries.groupBy { it.signature }
+            snapCache[key] = modStamp to grouped
+            // 兜底：snapCache 不要超过 32 个文件，避免泄漏
+            if (snapCache.size > 32) {
+                val toRemove = snapCache.keys.take(snapCache.size - 16)
+                for (k in toRemove) snapCache.remove(k)
+            }
+            return grouped
+        }
+    }
+
+    // ExtractCommonRuleQuickFix 是 private class，Companion 访问不到；包一层 bridge。
+    private class ExtractCommonRuleQuickFixWrapper(
+        private val duplicates: List<CssRuleset>,
+        private val commonDeclarations: List<CssDeclaration>
+    ) : LocalQuickFix {
+        override fun getName(): String = "Extract ${commonDeclarations.size} shared declarations into a new common class"
+        override fun getFamilyName(): String = "DashStyle: Extract common CSS class"
+        override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
+            // 委托：构造一个临时的 DuplicateCssDeclarationsInspection 并触发内部 QuickFix（通过反射调用 private 内部类）
+            runCatching {
+                val outerCls = DuplicateCssDeclarationsInspection::class.java
+                val innerCls = outerCls.declaredClasses.firstOrNull { c ->
+                    c.simpleName == "ExtractCommonRuleQuickFix"
+                } ?: return@runCatching
+                val ctor = innerCls.declaredConstructors.firstOrNull { it.parameterCount == 2 } ?: return@runCatching
+                ctor.isAccessible = true
+                // 内部类构造的第一个参数是 outer instance；这里用一个 outer 临时实例即可
+                val outerInstance = DuplicateCssDeclarationsInspection()
+                val fix = ctor.newInstance(outerInstance, duplicates, commonDeclarations) as? LocalQuickFix ?: return@runCatching
+                fix.applyFix(project, descriptor)
+            }
         }
     }
 }

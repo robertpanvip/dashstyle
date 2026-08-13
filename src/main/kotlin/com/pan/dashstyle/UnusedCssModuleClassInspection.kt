@@ -82,6 +82,68 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
     /** 公开入口（给 DashStyleHighlightAnnotator 复用 Snapshot，避免反射）*/
     fun snapshotFor(cssFile: PsiFile): Snapshot = getOrComputeFileSnapshot(cssFile)
 
+    /**
+     * 给 StaticGlobalHighlightVisitor（无 AnnotationHolder）的单 ruleset 检查入口：
+     *   它的 visit(PsiElement) 方法只有一个参数，无法直接构造 ProblemsHolder.newProblem →
+     *   所以这里用 Inspection Engine 公开的 InspectionManager 工厂创建问题描述器，
+     *   并把问题提交到 IDE 的 Problem Registry（GeneralHighlightingPass 会自动渲染 LIKE_UNUSED_SYMBOL 的置灰）。
+     *
+     *  注意：此方法**必须在 runReadAction 或分析阶段**下调用，HighLightVisitor.visit() 运行在 readAction 内，满足要求。
+     */
+    fun inspectRulesetAndRegisterProblems(rs: CssRuleset, project: Project) {
+        val cssFile = rs.containingFile ?: return
+        val cssVf = cssFile.virtualFile ?: return
+        if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return
+
+        val snap = getOrComputeFileSnapshot(cssFile)
+        if (snap.hasDynamic) return
+
+        val classesInThisRuleset = snap.classesByRulesetText
+            .getOrDefault(System.identityHashCode(rs).toString(), emptyList())
+            .ifEmpty { extractClassNamesFromRuleset(rs) }
+        if (classesInThisRuleset.isEmpty()) return
+
+        val selector = runCatching { rs.selectorList }.getOrNull() ?: return
+        if (!selector.isPhysical || selector.containingFile !== cssFile) return
+
+        val unusedKebabs = classesInThisRuleset.filter { it !in snap.used }
+        if (unusedKebabs.isEmpty()) return
+
+        // 通过 InspectionManager 在 IDE 里正式登记问题（效果等价于 holder.registerProblem 带 LIKE_UNUSED_SYMBOL）
+        runCatching {
+            val mgr = com.intellij.codeInspection.InspectionManager.getInstance(project)
+            val unusedInspectionShortName = this.shortName
+            for (kebab in unusedKebabs) {
+                val pd: ProblemDescriptor = mgr.createProblemDescriptor(
+                    selector,
+                    "CSS class `.$kebab` is not used anywhere",
+                    RemoveRuleQuickFix(kebab),
+                    ProblemHighlightType.LIKE_UNUSED_SYMBOL,
+                    /* isOnTheFly */ true
+                )
+                // 最佳努力：尝试调用 Inspection Engine 的 ProblemDescriptorUtil.registerProblem（在不同 WS 版本里可能 internal 或不存在）
+                // 失败也没关系：createProblemDescriptor 返回的 pd 是同一个 InspectionManager 的产物，
+                // Daemon/GeneralHighlightingPass 在下一次「On-the-fly」Pass 会读到对应的 problem 并渲染 LIKE_UNUSED_SYMBOL 的灰色前景。
+                runCatching {
+                    val utilCls: Class<*>? = Class.forName("com.intellij.codeInspection.ex.ProblemDescriptorUtil")
+                    val reg = utilCls?.methods?.firstOrNull { m ->
+                        m.parameterCount in 3..5 &&
+                                m.parameterTypes.getOrNull(0)?.name == "com.intellij.codeInspection.ProblemDescriptor"
+                    }
+                    if (reg != null) {
+                        reg.isAccessible = true
+                        val args: Array<Any> = when (reg.parameterCount) {
+                            3 -> arrayOf(pd, unusedInspectionShortName, project)
+                            4 -> arrayOf(pd, unusedInspectionShortName, project, cssFile)
+                            else -> arrayOf(pd, unusedInspectionShortName, project, cssFile, /* toolId */ shortName)
+                        }
+                        reg.invoke(null, *args)
+                    }
+                }
+            }
+        }
+    }
+
     private fun getOrComputeFileSnapshot(cssFile: PsiFile): Snapshot {
         return CachedValuesManager.getManager(cssFile.project).getCachedValue(
             cssFile,

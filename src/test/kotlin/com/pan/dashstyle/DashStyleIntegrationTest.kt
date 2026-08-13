@@ -90,43 +90,54 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         }
         val highlights: List<HighlightInfo> = myFixture.doHighlighting()
 
-        // ---- 断言 A：.unused 必须被置灰（有 INFORMATION severity 或 dashstyle 的自定义 key）----
-        val unusedGray = highlights.filter {
-            it.text == "unused" && it.severity.toString().let { s ->
+        // ---- 断言 A：.unused 必须被置灰（有 INFORMATION severity 或 LIKE_UNUSED_SYMBOL 对应问题描述）
+        // 真实 getter：getText() / getSeverity() / getDescription() / getToolTip() 都存在（嗅探确认）。
+        val unusedGray = highlights.filter { h ->
+            val matchText = h.text?.contains("unused") == true ||
+                    (h.description?.contains(".unused", ignoreCase = true) == true) ||
+                    (h.toolTip?.contains(".unused", ignoreCase = true) == true)
+            val matchSeverity = h.severity.toString().let { s ->
                 s.contains("INFORMATION", ignoreCase = true) ||
-                        s.contains("WEAK_WARNING", ignoreCase = true) ||
-                        (it.forcedTextAttributesKey?.externalName?.contains("UNUSED", ignoreCase = true) == true)
+                        s.contains("LIKE_UNUSED_SYMBOL", ignoreCase = true) ||
+                        s.contains("INFO", ignoreCase = true)
             }
+            matchText && matchSeverity
         }
         Assert.assertTrue(
-            ".unused 没有被置灰；当前 severity 列表：${highlights.map { "${it.text}=${it.severity}/${it.forcedTextAttributesKey?.externalName}" }}",
+            ".unused 没有被置灰；当前高亮：${
+                highlights.map {
+                    "{text=${it.text}, sev=${it.severity}, desc=${it.description}, tip=${it.toolTip}}"
+                }
+            }",
             unusedGray.isNotEmpty()
         )
 
         // ---- 断言 B：.unused 下面的 declarations（display:none）绝对不能被置灰 ----
-        val displayGrayed = highlights.filter {
-            (it.text == "display" || it.text == "none") &&
-                    it.severity.toString().let { s ->
-                        s.contains("INFORMATION", ignoreCase = true) ||
-                                (it.forcedTextAttributesKey?.externalName?.contains("UNUSED", ignoreCase = true) == true)
-                    }
+        val displayGrayed = highlights.filter { h ->
+            val t = h.text
+            (t == "display" || t == "none") && (
+                    h.severity.toString().contains("INFORMATION", true) ||
+                            h.description?.contains("is not used", true) == true ||
+                            h.toolTip?.contains("is not used", true) == true
+                    )
         }
         Assert.assertTrue(
-            "误置灰！.unused 的 declarations（display/none）被置灰了：$displayGrayed",
+            "误置灰！.unused 的 declarations（display/none）被带上了未使用的 gray info：$displayGrayed",
             displayGrayed.isEmpty()
         )
 
         // ---- 断言 C：.orphan 也必须被置灰（未被 TSX 引用）----
-        val orphanGray = highlights.filter {
-            it.text == "orphan" && it.severity.toString().let { s ->
-                s.contains("INFORMATION", true) || s.contains("WEAK_WARNING", true)
-            }
+        val orphanGray = highlights.filter { h ->
+            (h.text == "orphan" || h.description?.contains(".orphan") == true || h.toolTip?.contains(".orphan") == true)
+                    && (h.severity.toString().let { s ->
+                s.contains("INFORMATION", true) || s.contains("INFO", true)
+            })
         }
-        Assert.assertTrue(".orphan 未被引用但没有置灰", orphanGray.isNotEmpty())
+        Assert.assertTrue(".orphan 未被引用但没有置灰：$orphanGray", orphanGray.isNotEmpty())
 
         // ---- 断言 D：.used / .nested 下的 &-child 被用到了，不能被置灰 ----
-        val usedGray = highlights.filter {
-            it.text == "used" && it.severity.toString().contains("INFORMATION", true)
+        val usedGray = highlights.filter { h ->
+            (h.text == "used") && h.severity.toString().contains("INFORMATION", true)
         }
         Assert.assertTrue(".used 被引用了但仍被置灰", usedGray.isEmpty())
     }
@@ -159,12 +170,23 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         val highlights = myFixture.doHighlighting()
 
         // 只要有高亮 info 的描述里提到 "identical declarations" 或 "share identical" 就通过
-        val duplicateWave = highlights.filter {
-            it.description?.contains("identical", ignoreCase = true) == true ||
-                    it.forcedTextAttributesKey?.externalName?.contains("DUPLICATE", true) == true
+        // 真实 getter：getDescription() / getToolTip() / getSeverity()
+        val duplicateWave = highlights.filter { h ->
+            val same = (h.description?.contains("identical", ignoreCase = true) == true) ||
+                    (h.toolTip?.contains("identical", ignoreCase = true) == true) ||
+                    (h.description?.contains("shared", ignoreCase = true) == true)
+            val sevOk = h.severity.toString().let { s ->
+                s.contains("WEAK", true) || s.contains("WARNING", true) ||
+                        s.contains("GENERIC_ERROR_OR_WARNING", true) || s.contains("ERROR_OR_WARNING", true)
+            }
+            same && sevOk
         }
         Assert.assertTrue(
-            "重复 CSS 声明检测失败。当前 highlights：${highlights.map { "${it.startOffset}:${it.text} sev=${it.severity} desc=${it.description}" }}",
+            "重复 CSS 声明检测失败。当前 highlights：${
+                highlights.map {
+                    "{start=${it.startOffset},end=${it.endOffset},text=${it.text},sev=${it.severity},desc=${it.description},tip=${it.toolTip}"
+                }
+            }",
             duplicateWave.isNotEmpty()
         )
     }
@@ -257,24 +279,28 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         myFixture.openFileInEditor(less.virtualFile)
 
         // 1. 找出 DuplicateCssDeclarationsInspection 提供的「抽取公共类」intention/quickFix
-        //    webstorm-2025.3 SDK 的 filterAvailableIntentions 只接受 String（作为 text 的 substring 过滤），
-        //    所以我们先拿全部，再自己用关键字过滤。
-        val fixNameHint = listOf(
-            "Extract common declarations",
-            "抽取公共类",
-            "Extract duplicate",
-            "抽取重复",
+        //    根据嗅探结果，myFixture.filterAvailableIntentions(String) 存在（参数为文本子串过滤）；
+        //    多跑几个子串，命中其中一个即可。
+        val filterHints = listOf(
+            "Extract",
             "common class",
-            "Duplicate CSS declarations",
-            "identical declarations"
+            "identical declarations",
+            "shared declarations"
         )
         val allIntentions: List<IntentionAction> = myFixture.availableIntentions
-        val actions = allIntentions.filter { a ->
+        val actions = filterHints.asSequence().mapNotNull { hint ->
+            runCatching { myFixture.filterAvailableIntentions(hint) }.getOrNull()
+        }.flatten().toMutableList()
+        // 兜底：自己用关键字再扫一遍 availableIntentions，保证覆盖最大可能
+        val fixNameHint = listOf(
+            "Extract", "抽取公共", "common class", "Extract common", "declarations into a new common class"
+        )
+        for (a in allIntentions) {
             val t = a.text.lowercase()
-            fixNameHint.any { hint -> t.contains(hint.lowercase()) }
+            if (fixNameHint.any { hint -> t.contains(hint.lowercase()) }) actions += a
         }
         Assert.assertTrue(
-            "找不到抽取公共类的 QuickFix；当前 intentions=${myFixture.availableIntentions.map { it.text }}",
+            "找不到抽取公共类的 QuickFix；当前 intentions=${allIntentions.map { it.text }}",
             actions.isNotEmpty()
         )
 

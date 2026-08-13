@@ -179,12 +179,13 @@
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
-        <!-- 全局 HighlightVisitor 暂时移除：
-             webstorm-2025.3 SDK 中 HighlightVisitor 接口签名/包路径变更，
-             和 Annotator 多继承一起会导致类加载失败（Cannot create class）。
-             目前 <annotator language=CSS/SCSS/LESS> 三个注册足以覆盖主流预处理器文件；
-             如需 Vue <style> 内嵌 CssRuleset 也置灰，可通过 localInspection 的 registerProblem 来实现。-->
-        <!-- <highlightVisitor implementation="com.pan.dashstyle.DashStyleHighlightAnnotator" order="first"/> -->
+        <!-- 全局 HighlightVisitor：StaticGlobalHighlightVisitor 按 ReflectorSnifferTest 嗅探到的真实签名
+             （com.intellij.codeInsight.daemon.impl.HighlightVisitor，visit 只有 1 个 PsiElement 参数）
+             静态实现，专门负责 Vue/Svelte 等带内嵌 <style module> 场景——这些文件的内嵌 CssRuleset 不在
+             CSS/SCSS/LESS 语言 ID 下，annotator 扩展点的语言过滤会跳过。
+             纯 CSS/SCSS/LESS 文件已经有上面的 3 个 annotator 画灰/画波浪；StaticGlobalHighlightVisitor.suitableForFile
+             会直接返回 false，避免双画叠加。-->
+        <highlightVisitor implementation="com.pan.dashstyle.StaticGlobalHighlightVisitor" order="first"/>
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
         <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，

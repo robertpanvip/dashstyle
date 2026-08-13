@@ -87,4 +87,12 @@ tasks {
             showStandardStreams = true
         }
     }
+
+    // DashStyle 插件目前没有需要搜索的 UI 选项页。buildSearchableOptions 任务需要起一个 headless IDE
+    // 进程做索引，在内存有限的容器里非常容易 crash（JBR exit code 16 = SIGABRT）。
+    // 这里直接禁用不影响插件功能：用户安装后在设置搜索框里搜不到 DashStyle 独有 option 而已
+    // （DashStyle 目前也没有 configurable 页）。
+    buildSearchableOptions {
+        enabled = false
+    }
 }
