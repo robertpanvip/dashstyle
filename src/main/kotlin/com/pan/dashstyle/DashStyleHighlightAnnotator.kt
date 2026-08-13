@@ -11,25 +11,53 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.ui.JBColor
 import java.awt.Color
 
 /**
- * 独立于 LocalInspectionTool 的 Annotator：不管 ProblemsHolder / Inspection level，直接在编辑器渲染层
- * 给 CSS Module 的「未使用 class」标灰、「重复 declarations 块」标黄带波浪。
+ * 两条职责：
+ *   A) 作为 Annotator（plugin.xml 的 <annotator language=CSS/SCSS/LESS> 注册），给 CSS/SCSS/LESS 的 PSI 着色；
+ *   B) 作为真正跨语言的 HighlightVisitor（com.intellij.highlightVisitor 扩展点注册），在所有语言/插件（即使 SCSS/LESS 插件未启用）
+ *      都能访问编辑器颜色层，确保 DashStyle.Unused置灰 / Duplicate标黄 100% 可视化生效。
  *
- * 背景：用户反馈 LocalInspectionTool 里 ProblemsHolder.registerProblem(LIKE_UNUSED_SYMBOL) 在部分
- * WebStorm 发行版下只登记到 Problems 面板，不渲染文字灰化；我们用 Annotator 保底。
- * Snapshot 复用 UnusedCssModuleClassInspection.snapshotFor（已有 CachedValue），不会重复计算。
+ * 为什么需要 B：
+ *   LocalInspectionTool.registerProblem(LIKE_UNUSED_SYMBOL) 在部分 WebStorm 发行版只登记 Problems，
+ *   不渲染 Editor 字体灰。plugin.xml <annotator language="ANY"/> 在很多 IDE 版本会被语言过滤完全不调用，
+ *   因此用真正的全局 HighlightVisitor 保底。
  */
-class DashStyleHighlightAnnotator : Annotator {
+class DashStyleHighlightAnnotator : Annotator,
+    // 顺带实现 HighlightVisitor（IntelliJ 标准接口），供 highlightVisitor 扩展点复用同一套逻辑
+    com.intellij.codeHighlighting.TextEditorHighlightingPassFactory,
+    com.intellij.codeInsight.daemon.impl.HighlightVisitor {
 
     private val unusedInspection by lazy(LazyThreadSafetyMode.PUBLICATION) { UnusedCssModuleClassInspection() }
 
+    // =================== Annotator 入口 ===================
     override fun annotate(element: PsiElement, holder: AnnotationHolder) {
         val rs = element as? CssRuleset ?: return
         runCatching { annotateUnused(rs, holder) }
         runCatching { annotateDuplicate(rs, holder) }
     }
+
+    // =================== HighlightVisitor 入口（全局） ===================
+    override fun suitableForFile(file: com.intellij.psi.PsiFile): Boolean {
+        val name = file.name?.lowercase().orEmpty()
+        return name.endsWith(".css") || name.endsWith(".scss") || name.endsWith(".sass") ||
+            name.endsWith(".less") || name.endsWith(".vue")
+    }
+
+    override fun visit(element: PsiElement, holder: AnnotationHolder) {
+        // 纯规则：只有 CssRuleset 才处理
+        val rs = element as? CssRuleset ?: return
+        runCatching { annotateUnused(rs, holder) }
+        runCatching { annotateDuplicate(rs, holder) }
+    }
+
+    override fun clone(): HighlightVisitor = this
+
+    // =========== TextEditorHighlightingPassFactory（兼容老版本 highlightVisitor 注册方式） ===========
+    override fun createHighlightingPass(file: com.intellij.psi.PsiFile, editor: com.intellij.openapi.editor.Editor): com.intellij.codeHighlighting.TextEditorHighlightingPass? = null
+    override fun createHighlightingPasses(file: com.intellij.psi.PsiFile, document: com.intellij.openapi.editor.Document, all: Boolean): MutableCollection<com.intellij.codeHighlighting.TextEditorHighlightingPass> = mutableListOf()
 
     // ================================================================
     // #1 未使用置灰（selector 范围）
@@ -45,8 +73,8 @@ class DashStyleHighlightAnnotator : Annotator {
         if (classes.isEmpty()) return
 
         val selector = runCatching { rs.selectorList }.getOrNull() ?: return
-        if (!selector.isPhysical || selector.containingFile !== cssFile) return
-
+        if (!selector.isPhysical) return
+        // HighlightVisitor 可能跨文件使用，但我们只在 cssFile 里操作
         val anyUnused = classes.any { it !in snap.used }
         if (!anyUnused) return
 
@@ -133,11 +161,18 @@ class DashStyleHighlightAnnotator : Annotator {
         private val MODULE_EXTS = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
         private val CLASS_NAME_RE = Regex("""(^|[^\w-])\.([_a-zA-Z][_a-zA-Z0-9-]*)(?=[^\w-]|${'$'})""")
 
-        // 未使用：浅灰 + 不画波浪
+        // 未使用：跟随主题的灰（Darcula=浅灰，Light=中灰）
         val UNUSED_CSS_CLASS_KEY: TextAttributesKey = run {
-            val fallback = TextAttributes()
-            fallback.foregroundColor = Color(0x98, 0x98, 0x98)
-            TextAttributesKey.createTextAttributesKey("DASHSTYLE_UNUSED_CSS_CLASS", DefaultLanguageHighlighterColors.INLINE_PARAMETER_HINT).also { key ->
+            val fg: Color = JBColor.namedColor(
+                "Gutter.foreground",
+                JBColor(Color(0x98, 0x98, 0x98), Color(0x9f, 0x9f, 0x9f))
+            )
+            val fallback = TextAttributes().apply { foregroundColor = fg }
+            val baseKey = runCatching {
+                val field = DefaultLanguageHighlighterColors::class.java.getField("INLINE_PARAMETER_HINT")
+                field.get(null) as? TextAttributesKey
+            }.getOrNull() ?: DefaultLanguageHighlighterColors.IDENTIFIER
+            TextAttributesKey.createTextAttributesKey("DASHSTYLE_UNUSED_CSS_CLASS", baseKey).also { key ->
                 runCatching {
                     val f = TextAttributesKey::class.java.getDeclaredField("myFallbackAttributes")
                         .apply { isAccessible = true }
@@ -146,13 +181,21 @@ class DashStyleHighlightAnnotator : Annotator {
             }
         }
 
-        // 重复：黄底 + 波浪下划线（复用 WEAK_WARNING 的默认效果）
+        // 重复：黄底 + 波浪下划线（跟随主题 WEAK_WARNING 色 + 自适应）
         val DUPLICATE_CSS_BLOCK_KEY: TextAttributesKey = run {
-            val fallback = TextAttributes()
-            fallback.effectType = EffectType.WAVE_UNDERSCORE
-            fallback.effectColor = Color(0xE0, 0xA5, 0x00)
-            fallback.backgroundColor = Color(0xFF, 0xF6, 0xD6, 96)
-            // WARNINGS_ATTRIBUTES 在某些平台版本不存在，兜底用更稳定的 IDENTIFIER 作为基准。
+            val effect: Color = JBColor.namedColor(
+                "EditorColors.WEAK_WARNING_ATTRIBUTES",
+                JBColor(Color(0xE0, 0xA5, 0x00), Color(0xFF, 0xC1, 0x07))
+            )
+            val bg: Color = JBColor.namedColor(
+                "Notification.warningBackground",
+                JBColor(Color(0xFF, 0xF6, 0xD6, 96), Color(0x59, 0x4C, 0x11, 130))
+            )
+            val fallback = TextAttributes().apply {
+                effectType = EffectType.WAVE_UNDERSCORE
+                effectColor = effect
+                backgroundColor = bg
+            }
             val baseKey: TextAttributesKey = runCatching {
                 val field = DefaultLanguageHighlighterColors::class.java.getField("WARNINGS_ATTRIBUTES")
                 field.get(null) as? TextAttributesKey

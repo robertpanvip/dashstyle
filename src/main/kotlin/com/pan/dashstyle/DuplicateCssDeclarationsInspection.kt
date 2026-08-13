@@ -175,27 +175,34 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 appendTextToRoot(project, insertionTarget, ruleText)
 
                 // 2) 在每个重复 ruleset 中，删除重复声明，然后按预处理语法插入合并引用：
+                //    - LESS         →  .commonName();  （LESS 里 ruleset 本身就是 mixin，可直接 "." 调用；** Less 不支持 @extend **）
                 //    - SCSS / SASS  →  @extend .commonName;
-                //    - LESS         →  .commonName();  （LESS 里 ruleset 本身就是 mixin，可直接 "." 调用）
                 //    - CSS          →  只删重复声明，保守不做选择器改动（原生 CSS 没有 extend/mixin）。
+                // 注意：preprocessorName 只按虚拟文件后缀判定，不再依赖 ScssFile/LessFile 具体 PSI 类型，
+                //      因此这里 LESS 分支放到第一个并做 endsWith(".less") 双保险，避免任何情况下 LESS 被误判成 SCSS。
                 for (rs in duplicates) {
                     val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
                     val existingAll = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
                     for (d in existingAll) {
                         if (normalizeRuleSig(d) in sigsToRemove) runCatching { d.delete() }
                     }
-                    when (preprocessorName) {
-                        "scss", "sass" -> {
-                            val extText = "@extend .$className;"
-                            val line = createCssLine(project, insertionTarget, extText)
-                            val anchor = rs.block?.firstChild
-                            if (anchor != null) runCatching { rs.block?.addBefore(line, anchor) }
-                        }
-                        "less" -> {
-                            val includeText = ".$className();"
-                            val line = createCssLine(project, insertionTarget, includeText)
-                            val anchor = rs.block?.firstChild
-                            if (anchor != null) runCatching { rs.block?.addBefore(line, anchor) }
+
+                    val thisFileExt = (rs.containingFile?.virtualFile?.name ?: "").lowercase()
+                    val insertAnchor = rs.block?.firstChild
+                    if (insertAnchor != null) {
+                        when {
+                            thisFileExt.endsWith(".less") -> {
+                                val include = ".$className();"
+                                runCatching { rs.block?.addBefore(createCssLine(project, insertionTarget, include), insertAnchor) }
+                            }
+                            preprocessorName == "less" -> {
+                                val include = ".$className();"
+                                runCatching { rs.block?.addBefore(createCssLine(project, insertionTarget, include), insertAnchor) }
+                            }
+                            preprocessorName == "scss" || preprocessorName == "sass" -> {
+                                val extend = "@extend .$className;"
+                                runCatching { rs.block?.addBefore(createCssLine(project, insertionTarget, extend), insertAnchor) }
+                            }
                         }
                     }
                 }
