@@ -3,14 +3,21 @@ package com.pan.dashstyle
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.lang.javascript.psi.JSLiteralExpression
 import com.intellij.lang.javascript.psi.JSReferenceExpression
+import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.ui.JBColor
+import java.awt.Color
 
 /**
  * 鼠标悬浮在 styles.fooBar / styles["foo-bar"] 上时，展示对应的完整 CSS ruleset（声明块）。
  * 对 CssRuleset 本身悬浮，也返回展开后选择器 + 声明代码块。
+ *
+ * 注意：所有 inline style 的颜色都通过 JBColor.namedColor(...) 取当前 IDE 主题配色对应的 key，
+ * 避免在 Darcula / Light / High Contrast 等主题下出现紫字配紫底、或浅字配浅底的不可读问题。
  */
 class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
 
@@ -21,6 +28,52 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
             .replace("'", "&#39;")
+
+        private fun Color.toCssHex(): String =
+            "#%02x%02x%02x".format(red and 0xFF, green and 0xFF, blue and 0xFF)
+
+        // --- 颜色 key：用 JBColor.namedColor 绑定 IDE 现有 LaF key，Darcula/Light/HC 自动切换 ---
+        // 选择器（.foo {）：类似 HTML tag name / hyperlink 颜色
+        private val COLOR_SELECTOR: JBColor by lazy {
+            JBColor.namedColor(
+                "Hyperlink.linkForeground",
+                JBColor(Color(0x6c, 0x5c, 0xe7), Color(0xa2, 0x9b, 0xfe))
+            )
+        }
+        // 属性名（color:）：类似 HTML 属性色
+        private val COLOR_PROPERTY: JBColor by lazy {
+            JBColor.namedColor(
+                "Attributes.attributeForeground",
+                JBColor(Color(0x09, 0x84, 0xe3), Color(0x74, 0xb9, 0xff))
+            )
+        }
+        // 属性值（red）：普通文档前景（跟随主题 label.foreground）
+        private val COLOR_VALUE: JBColor by lazy {
+            JBColor.namedColor(
+                "Label.foreground",
+                JBColor(Color(0x2d, 0x34, 0x36), Color(0xdf, 0xe4, 0xe6))
+            )
+        }
+        // 分号 / 次要字符：label.disabledForeground
+        private val COLOR_PUNCT: JBColor by lazy {
+            JBColor.namedColor("Label.disabledForeground", JBColor(Color(0x63, 0x6e, 0x72), Color(0x95, 0xa5, 0xa6)))
+        }
+        // 空块注释灰：同 COLOR_PUNCT
+        private val COLOR_COMMENT: JBColor by lazy { COLOR_PUNCT }
+        // 分隔线：Separator.separatorColor
+        private val COLOR_SEPARATOR: JBColor by lazy {
+            JBColor.namedColor(
+                "Separator.separatorColor",
+                JBColor(Color(0xec, 0xf0, 0xf1), Color(0x2f, 0x36, 0x40))
+            )
+        }
+        // footer 小字色：同 COLOR_PUNCT
+        private val COLOR_FOOTER: JBColor by lazy { COLOR_PUNCT }
+
+        /** 快速取 TextAttributesKey 在当前 scheme 下的前景（如果用户没自定义 scheme 就退化到 JBColor），主要给 fallback。*/
+        @Suppress("unused")
+        private fun fgOf(key: TextAttributesKey): Color =
+            EditorColorsManager.getInstance().globalScheme.getAttributes(key).foregroundColor ?: COLOR_VALUE
     }
 
     override fun generateDoc(element: PsiElement?, originalElement: PsiElement?): String? {
@@ -48,7 +101,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
                 is CssModuleResolver.CssContainer.ImportedFile ->
                     "in ${resolved.container.virtualFile.path}"
                 is CssModuleResolver.CssContainer.VueStyleTag ->
-                    "in Vue <style${if (resolved.container.moduleAlias != "$" + "style") " module=\"${resolved.container.moduleAlias.drop(1)}\"" else " module"}>"
+                    "in Vue <style${if (resolved.container.moduleAlias != "\$style") " module=\"${resolved.container.moduleAlias.drop(1)}\"" else " module"}>"
                 is CssModuleResolver.CssContainer.LocalObjectLiteral ->
                     "in local object `${resolved.container.variableName}`"
             }
@@ -93,32 +146,42 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
     }
 
     private fun formatRulesetDoc(selector: String, declarations: List<CssDeclaration>, footer: String? = null): String {
+        val monoFont = "font-family:ui-monospace,Menlo,Consolas,monospace"
+        val selCss = "color:${COLOR_SELECTOR.toCssHex()};font-weight:600;$monoFont;margin-bottom:4px"
+        val closeCss = "color:${COLOR_SELECTOR.toCssHex()};font-weight:600;$monoFont;margin-top:4px"
+        val bodyCss = "padding-left:16px;$monoFont;line-height:1.5"
+        val propCss = "color:${COLOR_PROPERTY.toCssHex()}"
+        val valueCss = "color:${COLOR_VALUE.toCssHex()}"
+        val punctCss = "color:${COLOR_PUNCT.toCssHex()}"
+        val emptyCss = "color:${COLOR_COMMENT.toCssHex()};font-style:italic;padding-left:16px;$monoFont"
+        val footerLine = "border-top:1px solid ${COLOR_SEPARATOR.toCssHex()};color:${COLOR_FOOTER.toCssHex()};font-size:11px;padding-top:4px;margin-top:8px"
+
         val body = buildString {
             append("<div style=\"padding:2px 4px\">")
             if (selector.isNotBlank()) {
-                append("<div style=\"color:#6c5ce7;font-weight:600;font-family:ui-monospace,Menlo,Consolas,monospace;margin-bottom:4px\">")
+                append("<div style=\"$selCss\">")
                 append(htmlEscape(selector))
                 append(" {</div>")
             }
             if (declarations.isEmpty()) {
-                append("<div style=\"color:#888;font-style:italic;padding-left:16px;font-family:ui-monospace,Menlo,Consolas,monospace\">/* empty */</div>")
+                append("<div style=\"$emptyCss\">/* empty */</div>")
             } else {
                 for (d in declarations) {
                     val prop = d.propertyName ?: continue
                     val value = d.value?.text ?: continue
-                    append("<div style=\"padding-left:16px;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5\">")
-                    append("<span style=\"color:#0984e3\">${htmlEscape(prop)}</span>")
+                    append("<div style=\"$bodyCss\">")
+                    append("<span style=\"$propCss\">${htmlEscape(prop)}</span>")
                     append(": ")
-                    append("<span style=\"color:#2d3436\">${htmlEscape(value)}</span>")
-                    append("<span style=\"color:#636e72\">;</span>")
+                    append("<span style=\"$valueCss\">${htmlEscape(value)}</span>")
+                    append("<span style=\"$punctCss\">;</span>")
                     append("</div>")
                 }
             }
             if (selector.isNotBlank()) {
-                append("<div style=\"color:#6c5ce7;font-weight:600;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:4px\">}</div>")
+                append("<div style=\"$closeCss\">}</div>")
             }
             if (footer != null) {
-                append("<div style=\"margin-top:8px;color:#95a5a6;font-size:11px;padding-top:4px;border-top:1px solid #ecf0f1\">")
+                append("<div style=\"$footerLine\">")
                 append(htmlEscape(footer))
                 append("</div>")
             }
