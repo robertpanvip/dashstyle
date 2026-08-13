@@ -16,19 +16,15 @@ import java.awt.Color
 
 /**
  * 两条职责：
- *   A) 作为 Annotator（plugin.xml 的 <annotator language=CSS/SCSS/LESS> 注册），给 CSS/SCSS/LESS 的 PSI 着色；
- *   B) 作为真正跨语言的 HighlightVisitor（com.intellij.highlightVisitor 扩展点注册），在所有语言/插件（即使 SCSS/LESS 插件未启用）
- *      都能访问编辑器颜色层，确保 DashStyle.Unused置灰 / Duplicate标黄 100% 可视化生效。
+ *   A) 作为 Annotator（plugin.xml 的 <annotator language=CSS/SCSS/LESS> 注册），给 CSS/SCSS/LESS 的 PSI 着色。
  *
- * 为什么需要 B：
- *   LocalInspectionTool.registerProblem(LIKE_UNUSED_SYMBOL) 在部分 WebStorm 发行版只登记 Problems，
- *   不渲染 Editor 字体灰。plugin.xml <annotator language="ANY"/> 在很多 IDE 版本会被语言过滤完全不调用，
- *   因此用真正的全局 HighlightVisitor 保底。
+ * 之前版本尝试同时实现全局 HighlightVisitor 扩展点（绕过语言过滤保底），但 webstorm-2025.3 SDK 中
+ * HighlightVisitor 接口包路径/方法签名发生了变化导致编译失败。
+ * 目前 plugin.xml 已经按 CSS / SCSS / LESS 三个语言 ID 分别注册 <annotator>，足以覆盖三大主流预处理器场景；
+ * 若后续需要「任何文件类型（含 Vue <style> 内嵌内容）都能触发置灰」，再单独写一个只实现 HighlightVisitor
+ * 接口的独立类（通过反射调用其 visit 方法，避免编译期强依赖接口签名）。
  */
-class DashStyleHighlightAnnotator : Annotator,
-    // 顺带实现 HighlightVisitor（IntelliJ 标准接口），供 highlightVisitor 扩展点复用同一套逻辑
-    com.intellij.codeHighlighting.TextEditorHighlightingPassFactory,
-    com.intellij.codeInsight.daemon.impl.HighlightVisitor {
+class DashStyleHighlightAnnotator : Annotator {
 
     private val unusedInspection by lazy(LazyThreadSafetyMode.PUBLICATION) { UnusedCssModuleClassInspection() }
 
@@ -39,28 +35,12 @@ class DashStyleHighlightAnnotator : Annotator,
         runCatching { annotateDuplicate(rs, holder) }
     }
 
-    // =================== HighlightVisitor 入口（全局） ===================
-    override fun suitableForFile(file: com.intellij.psi.PsiFile): Boolean {
-        val name = file.name?.lowercase().orEmpty()
-        return name.endsWith(".css") || name.endsWith(".scss") || name.endsWith(".sass") ||
-            name.endsWith(".less") || name.endsWith(".vue")
-    }
-
-    override fun visit(element: PsiElement, holder: AnnotationHolder) {
-        // 纯规则：只有 CssRuleset 才处理
-        val rs = element as? CssRuleset ?: return
-        runCatching { annotateUnused(rs, holder) }
-        runCatching { annotateDuplicate(rs, holder) }
-    }
-
-    override fun clone(): HighlightVisitor = this
-
-    // =========== TextEditorHighlightingPassFactory（兼容老版本 highlightVisitor 注册方式） ===========
-    override fun createHighlightingPass(file: com.intellij.psi.PsiFile, editor: com.intellij.openapi.editor.Editor): com.intellij.codeHighlighting.TextEditorHighlightingPass? = null
-    override fun createHighlightingPasses(file: com.intellij.psi.PsiFile, document: com.intellij.openapi.editor.Document, all: Boolean): MutableCollection<com.intellij.codeHighlighting.TextEditorHighlightingPass> = mutableListOf()
-
     // ================================================================
-    // #1 未使用置灰（仅针对 selector 文本内部 .class-name 每个片段画灰，避免整 selectorList 连带声明误染灰色）
+    // #1 未使用置灰：
+    //    - 用 expandSelector 展开后的组合名去 snap.used 判断是否"整个 ruleset 未被引用"
+    //    - 如果整个 ruleset 都没被用 → 把 selectorList 的绝对范围整个前景置灰（范围严格夹紧到 selectorList）
+    //    - 这样兼容 LESS/SCSS 的 &-suffix / &_suffix / 多层嵌套，不会因为原始 selector 里是 &-foo
+    //      而在原文中找不到展开后的 parent-foo 字面量导致匹配失败；也不会越界误染到 declaration 里。
     // ================================================================
     private fun annotateUnused(rs: CssRuleset, holder: AnnotationHolder) {
         val cssFile = rs.containingFile ?: return
@@ -69,38 +49,39 @@ class DashStyleHighlightAnnotator : Annotator,
 
         val snap = runCatching { unusedInspection.snapshotFor(cssFile) }.getOrNull() ?: return
         if (snap.hasDynamic) return
-        val classes = extractClassNamesFromRuleset(rs)
-        if (classes.isEmpty()) return
 
-        val selector = runCatching { rs.selectorList }.getOrNull() ?: return
-        if (!selector.isPhysical) return
-        val unusedKebabs = classes.filter { it !in snap.used }
-        if (unusedKebabs.isEmpty()) return
+        // Step 1: expandSelector 展开所有选择器组合
+        val expandedSelector = runCatching { Util.expandSelector(rs) }.getOrNull().orEmpty()
+        if (expandedSelector.isBlank()) return
+        val expandedClasses = CLASS_NAME_RE.findAll(expandedSelector).mapNotNull { m ->
+            val raw = m.groupValues[2]
+            raw.trim().takeIf { it.isNotEmpty() }
+        }.distinct().toList()
+        if (expandedClasses.isEmpty()) return
 
-        val selectorText = selector.text
-        if (selectorText.isBlank()) return
-        val baseStart = selector.textRange.startOffset
+        // Step 2: 只有当展开后得到的所有类名 全部都不在 used 集合里，才认为整个 ruleset 未被使用。
+        // 如果展开后有多个选择器组合，其中任意组合命中 used，则认为 ruleset 仍在使用中，不置灰避免误伤。
+        val allUnused = expandedClasses.all { cls -> cls !in snap.used }
+        if (!allUnused) return
 
-        for (kebab in unusedKebabs) {
-            // 用正则精确定位选择器文本里所有出现的 .kebab-case 片段（允许前后非单词字符），
-            // 对每个出现的精确子区间单独画灰，不会连带到 :hover 伪类或后续 declarations。
-            val pattern = Regex("""(^|[^\w-])\.(${Regex.escape(kebab)})(?=[^\w-]|${'$'})""")
-            for (mm in pattern.findAll(selectorText)) {
-                val wordGroup = mm.groups[2] ?: continue
-                val relStart = wordGroup.range.first
-                val relEnd = wordGroup.range.last + 1
-                if (relStart < 0 || relEnd > selectorText.length || relEnd <= relStart) continue
-                val absStart = baseStart + relStart
-                val absEnd = baseStart + relEnd
-                // 避免 range 跨越相邻 PsiElement（理论上不会，selector 本身就是一个 leafish PsiElement）
-                runCatching {
-                    val tr = com.intellij.openapi.util.TextRange(absStart, absEnd)
-                    holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
-                        .range(tr)
-                        .textAttributes(UNUSED_CSS_CLASS_KEY)
-                        .create()
-                }
-            }
+        // Step 3: 拿到 selectorList，严格按它的 textRange 画灰（范围不包含 declarations）
+        val selectorList = runCatching { rs.selectorList }.getOrNull() ?: return
+        if (!selectorList.isPhysical) return
+        val slRange = selectorList.textRange
+        if (slRange.length <= 0) return
+
+        // 最终夹紧：不超过 containingFile 的长度（理论上不会越界，但为安全起见）
+        val fileLen = runCatching { cssFile.textLength }.getOrNull() ?: Int.MAX_VALUE
+        val start = slRange.startOffset.coerceAtLeast(0)
+        val end = slRange.endOffset.coerceAtMost(start + 1).coerceAtMost(fileLen)
+        if (end <= start) return
+
+        runCatching {
+            val tr = com.intellij.openapi.util.TextRange(start, end)
+            holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
+                .range(tr)
+                .textAttributes(UNUSED_CSS_CLASS_KEY)
+                .create()
         }
     }
 

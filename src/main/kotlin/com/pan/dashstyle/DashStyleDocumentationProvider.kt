@@ -69,6 +69,13 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
         }
         // footer 小字色：同 COLOR_PUNCT
         private val COLOR_FOOTER: JBColor by lazy { COLOR_PUNCT }
+        // 「选择器展开引擎」Quick Doc 弹窗外层背景：跟随 IDE Panel.background（Darcula=深灰，Light=白，HC=高对比）
+        private val COLOR_PANEL_BG: JBColor by lazy {
+            JBColor.namedColor(
+                "Panel.background",
+                JBColor(Color(0xFF, 0xFF, 0xFF), Color(0x3C, 0x3F, 0x41))
+            )
+        }
 
         /** 快速取 TextAttributesKey 在当前 scheme 下的前景（如果用户没自定义 scheme 就退化到 JBColor），主要给 fallback。*/
         @Suppress("unused")
@@ -155,9 +162,11 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
         val punctCss = "color:${COLOR_PUNCT.toCssHex()}"
         val emptyCss = "color:${COLOR_COMMENT.toCssHex()};font-style:italic;padding-left:16px;$monoFont"
         val footerLine = "border-top:1px solid ${COLOR_SEPARATOR.toCssHex()};color:${COLOR_FOOTER.toCssHex()};font-size:11px;padding-top:4px;margin-top:8px"
+        // 外层背景：跟随 IDE Panel.background，避免 Darcula 下白底、Light 下紫底等突兀感
+        val outerCss = "padding:2px 4px;background-color:${COLOR_PANEL_BG.toCssHex()}"
 
         val body = buildString {
-            append("<div style=\"padding:2px 4px\">")
+            append("<div style=\"$outerCss\">")
             if (selector.isNotBlank()) {
                 append("<div style=\"$selCss\">")
                 append(htmlEscape(selector))

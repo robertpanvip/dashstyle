@@ -179,8 +179,12 @@
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
-        <!-- 全局 HighlightVisitor（绕过语言过滤，保证置灰/波浪在任意版本下都能渲染） -->
-        <highlightVisitor implementation="com.pan.dashstyle.DashStyleHighlightAnnotator" order="first"/>
+        <!-- 全局 HighlightVisitor 暂时移除：
+             webstorm-2025.3 SDK 中 HighlightVisitor 接口签名/包路径变更，
+             和 Annotator 多继承一起会导致类加载失败（Cannot create class）。
+             目前 <annotator language=CSS/SCSS/LESS> 三个注册足以覆盖主流预处理器文件；
+             如需 Vue <style> 内嵌 CssRuleset 也置灰，可通过 localInspection 的 registerProblem 来实现。-->
+        <!-- <highlightVisitor implementation="com.pan.dashstyle.DashStyleHighlightAnnotator" order="first"/> -->
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
         <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，
