@@ -36,6 +36,15 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5:2.1.0")
+    // ============= IDE 集成测试依赖（JUnit4/5 双栈兼容） =============
+    // BasePlatformTestCase / LightPlatformCodeInsightFixtureTestCase 是 JUnit4 风格；
+    // Gradle 这边已经 useJUnitPlatform()（JUnit5 platform），所以需要 vintage 引擎
+    // 来桥接 JUnit4 的 @Test，否则 JUnit4 风格的集成测试永远不会被执行。
+    // 注意：不要再加 kotlin-test-junit，因为它和 kotlin-test-junit5 同时声明了
+    //   capability 'org.jetbrains.kotlin:kotlin-test-framework-impl'，Gradle 会报
+    //   "Cannot select module with conflict on capability"。
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
 }
 
 intellijPlatform {
