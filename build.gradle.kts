@@ -1,35 +1,17 @@
-buildscript {
-    repositories {
-        // 用户要求：腾讯镜像优先
-        maven { url = uri("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/") }
-        maven { url = uri("https://mirrors.cloud.tencent.com/nexus/repository/gradle-plugins/") }
-        // 备用（腾讯镜像同步不完整时回退）
-        maven { url = uri("https://maven.aliyun.com/repository/public/") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin/") }
-        mavenCentral()
-        gradlePluginPortal()
-    }
-    dependencies {
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24")
-        classpath("org.jetbrains.intellij.platform:gradle-intellij-plugin:2.10.5")
-    }
-}
-
 plugins {
     id("java")
+    id("org.jetbrains.kotlin.jvm") version "1.9.24"
+    id("org.jetbrains.intellij.platform") version "2.10.5"
 }
-
-apply(plugin = "org.jetbrains.kotlin.jvm")
-apply(plugin = "org.jetbrains.intellij.platform")
 
 group = "com.pan"
 version = "1.1.1"
 
 repositories {
-    // 用户要求：腾讯镜像优先
+    // 用户要求：腾讯镜像第一优先
     maven { url = uri("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/") }
     maven { url = uri("https://mirrors.cloud.tencent.com/gradle/") }
-    // 备用
+    // 备用：阿里云（腾讯同步不完整时回退）
     maven { url = uri("https://maven.aliyun.com/repository/public/") }
     mavenCentral()
     intellijPlatform {
@@ -37,8 +19,6 @@ repositories {
     }
 }
 
-// Configure Gradle IntelliJ Plugin
-// Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     intellijPlatform {
         webstorm("2025.3")
@@ -71,7 +51,11 @@ tasks {
     withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         kotlinOptions {
             jvmTarget = "17"
-            freeCompilerArgs += listOf("-Xjvm-default=all")
+            // 默认 jvm-default=all + 测试模块的 friend-path（让 test 访问 internal）
+            freeCompilerArgs = freeCompilerArgs + listOf(
+                "-Xjvm-default=all",
+                "-Xfriend-paths=classes/java/main"
+            )
         }
     }
 
@@ -81,9 +65,6 @@ tasks {
 
     test {
         useJUnitPlatform()
-        kotlinOptions {
-            freeCompilerArgs += listOf("-Xfriend-paths=classes/java/main")
-        }
         testLogging {
             events("passed", "skipped", "failed")
             showStandardStreams = true
