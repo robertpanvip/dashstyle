@@ -70,13 +70,17 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
     // ================================================================
     // File-level snapshot（classes + used + hasDynamic），挂 CachedValue
+    // 公开可见，供 DashStyleHighlightAnnotator 复用
     // ================================================================
-    private data class Snapshot(
+    data class Snapshot(
         val used: Set<String>,
         val hasDynamic: Boolean,
         /** key: 暂时不用；我们在 ruleset 级直接重新提取即可 */
         val classesByRulesetText: Map<String, List<String>>
     )
+
+    /** 公开入口（给 DashStyleHighlightAnnotator 复用 Snapshot，避免反射）*/
+    fun snapshotFor(cssFile: PsiFile): Snapshot = getOrComputeFileSnapshot(cssFile)
 
     private fun getOrComputeFileSnapshot(cssFile: PsiFile): Snapshot {
         return CachedValuesManager.getManager(cssFile.project).getCachedValue(

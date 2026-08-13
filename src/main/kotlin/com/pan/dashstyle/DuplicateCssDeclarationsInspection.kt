@@ -174,21 +174,30 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 val ruleText = "\n.$className {\n$declarationsText\n}\n"
                 appendTextToRoot(project, insertionTarget, ruleText)
 
-                // 2) 在每个重复 ruleset 中，删除重复声明，添加 @extend（或使用 CSS 原生并集选择器兜底）
+                // 2) 在每个重复 ruleset 中，删除重复声明，然后按预处理语法插入合并引用：
+                //    - SCSS / SASS  →  @extend .commonName;
+                //    - LESS         →  .commonName();  （LESS 里 ruleset 本身就是 mixin，可直接 "." 调用）
+                //    - CSS          →  只删重复声明，保守不做选择器改动（原生 CSS 没有 extend/mixin）。
                 for (rs in duplicates) {
                     val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
                     val existingAll = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
                     for (d in existingAll) {
-                        if (normalizeRuleSig(d) in sigsToRemove) d.delete()
+                        if (normalizeRuleSig(d) in sigsToRemove) runCatching { d.delete() }
                     }
-                    val useExtend = preprocessorName in setOf("scss", "sass", "less")
-                    if (useExtend) {
-                        val extText = "@extend .$className;"
-                        val line = createCssLine(project, insertionTarget, extText)
-                        val anchor = rs.block?.firstChild
-                        if (anchor != null) rs.block?.addBefore(line, anchor)
+                    when (preprocessorName) {
+                        "scss", "sass" -> {
+                            val extText = "@extend .$className;"
+                            val line = createCssLine(project, insertionTarget, extText)
+                            val anchor = rs.block?.firstChild
+                            if (anchor != null) runCatching { rs.block?.addBefore(line, anchor) }
+                        }
+                        "less" -> {
+                            val includeText = ".$className();"
+                            val line = createCssLine(project, insertionTarget, includeText)
+                            val anchor = rs.block?.firstChild
+                            if (anchor != null) runCatching { rs.block?.addBefore(line, anchor) }
+                        }
                     }
-                    // 原生 CSS 没有 extend — 不再改选择器为并集（那需要对用户语义判断，保守起见只删重复声明，用户自己决定）
                 }
             }
         }
