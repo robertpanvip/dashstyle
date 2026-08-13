@@ -25,7 +25,8 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
     override fun getGroupDisplayName(): String = "DashStyle"
     override fun getDisplayName(): String = "Unused CSS Module class"
-    override fun getShortName(): String = "DashStyleUnusedCssClass"
+    // shortName 直接交给 plugin.xml 的 <localInspection shortName="..."> 声明，
+    // 不再在代码里硬编码，避免 CSS/SCSS/LESS 三条语言注册共用同一个 class 时发生 shortName 冲突。
     override fun isEnabledByDefault(): Boolean = true
 
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor {

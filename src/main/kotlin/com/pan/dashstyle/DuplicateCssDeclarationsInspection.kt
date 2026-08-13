@@ -27,7 +27,8 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
 
     override fun getGroupDisplayName(): String = "DashStyle"
     override fun getDisplayName(): String = "Duplicate CSS declarations (single file)"
-    override fun getShortName(): String = "DashStyleDuplicateCss"
+    // 同 UnusedCssModuleClassInspection：shortName 完全由 plugin.xml 提供，
+    // 保证 CSS / SCSS / LESS 三条语言维度注册的 shortName 各自独立、全局唯一。
     override fun isEnabledByDefault(): Boolean = true
 
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor {

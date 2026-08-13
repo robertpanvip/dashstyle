@@ -104,11 +104,14 @@
                 order="first"/>
 
         <!-- ========================= 代码检查（#1 未使用 class / #2 重复 declarations） ========================= -->
+        <!-- 注意：<localInspection> 的 shortName 在整个插件里必须唯一（哪怕 implementationClass / language 不同）。
+             下面按语言维度分别赋予唯一 shortName；Kotlin 侧 Inspection 类不再 override getShortName()，
+             直接继承 LocalInspectionTool 默认返回 XML 声明的 shortName，避免代码与 XML 漂移。-->
         <localInspection
                 language="CSS"
                 displayName="Unused CSS Module class"
                 groupName="DashStyle"
-                shortName="DashStyleUnusedCssClass"
+                shortName="DashStyle.UnusedCssClass.Css"
                 enabledByDefault="true"
                 level="WEAK WARNING"
                 implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
@@ -116,7 +119,7 @@
                 language="SCSS"
                 displayName="Unused CSS Module class"
                 groupName="DashStyle"
-                shortName="DashStyleUnusedCssClass"
+                shortName="DashStyle.UnusedCssClass.Scss"
                 enabledByDefault="true"
                 level="WEAK WARNING"
                 implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
@@ -124,7 +127,7 @@
                 language="LESS"
                 displayName="Unused CSS Module class"
                 groupName="DashStyle"
-                shortName="DashStyleUnusedCssClass"
+                shortName="DashStyle.UnusedCssClass.Less"
                 enabledByDefault="true"
                 level="WEAK WARNING"
                 implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
@@ -132,7 +135,7 @@
                 language="CSS"
                 displayName="Duplicate CSS declarations (single file)"
                 groupName="DashStyle"
-                shortName="DashStyleDuplicateCss"
+                shortName="DashStyle.DuplicateCss.Css"
                 enabledByDefault="true"
                 level="WARNING"
                 implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
@@ -140,7 +143,7 @@
                 language="SCSS"
                 displayName="Duplicate CSS declarations (single file)"
                 groupName="DashStyle"
-                shortName="DashStyleDuplicateCss"
+                shortName="DashStyle.DuplicateCss.Scss"
                 enabledByDefault="true"
                 level="WARNING"
                 implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
@@ -148,7 +151,7 @@
                 language="LESS"
                 displayName="Duplicate CSS declarations (single file)"
                 groupName="DashStyle"
-                shortName="DashStyleDuplicateCss"
+                shortName="DashStyle.DuplicateCss.Less"
                 enabledByDefault="true"
                 level="WARNING"
                 implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
