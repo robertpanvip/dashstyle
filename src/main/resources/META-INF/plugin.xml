@@ -27,6 +27,19 @@
 
     <change-notes>
         <![CDATA[
+        <h3>1.2.0</h3>
+        <ul>
+            <li>✨ 新增 <code>styles.fooBar</code> member access 跳转/补全（此前仅支持 <code>styles["foo-bar"]</code>）</li>
+            <li>✨ 鼠标悬浮 CSS Module class，显示展开后的完整规则声明（含 kebab 选择器、声明列表、来源位置）</li>
+            <li>✨ 未使用的 CSS Module class 自动置灰，Alt+Enter 可直接删除（遇动态 <code>styles[expr]</code> 自动关闭，不误报）</li>
+            <li>✨ 缺失 class 快速创建：<code>styles.xxx</code> 解析失败时 Alt+Enter，在对应 CSS Module 末尾生成空 class 并把光标定位到大括号内</li>
+            <li>✨ 快速注入 import：写了 <code>styles.xxx</code> 但未 import 时，Alt+Enter 自动扫描同目录候选 <code>*.module.*</code> 并插入 import 语句（Vue <code>&lt;script setup&gt;</code> 兼容）</li>
+            <li>✨ 单文件重复 CSS 声明检测（变黄 + 波浪线），一键抽取公共类并生成 <code>@extend</code> 回所有重复点（SCSS/LESS）</li>
+            <li>✨ 复制 <code>styles.xxx</code> → 粘贴到新文件时自动带上 import（已存在则不重复加）</li>
+            <li>✨ 复制 TSX/Vue 标签 → 自动把关联的 CSS 规则打包过去：目标有 styles import 就追加；否则在同目录新建同名 <code>.module.css</code> 并自动注入 import</li>
+            <li>✨ SCSS / LESS / 原生 CSS Nesting 常用子集互转（变量、嵌套、extend、mixin、插值）；不支持的 construct 保留并加提示注释</li>
+        </ul>
+
         <h3>1.0.8</h3>
         <ul>
             <li>✨ 支持 LESS / SCSS 嵌套规则（nested rulesets）</li>
@@ -44,19 +57,106 @@
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.css-openapi</depends>
+    <depends>com.intellij.modules.xml</depends>
     <depends>JavaScript</depends>
+
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
-    <!-- 关键：声明你的 ReferenceContributor -->
     <extensions defaultExtensionNs="com.intellij">
+        <!-- ========================= 引用 & 跳转 ========================= -->
         <psi.referenceContributor
-                implementation="com.pan.dashstyle.StyleStringKeyReferenceContributor"
-               />
-        <!-- 这个才是存在的 EP -->
+                implementation="com.pan.dashstyle.StyleStringKeyReferenceContributor"/>
+
+        <!-- styles.xxx member access 也能跳转/补全 -->
+        <psi.referenceContributor
+                implementation="com.pan.dashstyle.StyleMemberAccessReferenceContributor"/>
+
+        <!-- ========================= 悬浮文档（#4） ========================= -->
+        <lang.documentationProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                order="first"/>
+        <lang.documentationProvider
+                language="JavaScript"
+                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                order="first"/>
+        <lang.documentationProvider
+                language="TypeScript"
+                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                order="first"/>
+        <lang.documentationProvider
+                language="TypeScript JSX"
+                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                order="first"/>
+        <lang.documentationProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                order="first"/>
+        <lang.documentationProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                order="first"/>
+
+        <!-- ========================= 代码检查（#1 未使用 class / #2 重复 declarations） ========================= -->
+        <localInspection
+                language="CSS"
+                displayName="Unused CSS Module class"
+                groupName="DashStyle"
+                shortName="DashStyleUnusedCssClass"
+                enabledByDefault="true"
+                level="WEAK WARNING"
+                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+        <localInspection
+                language="SCSS"
+                displayName="Unused CSS Module class"
+                groupName="DashStyle"
+                shortName="DashStyleUnusedCssClass"
+                enabledByDefault="true"
+                level="WEAK WARNING"
+                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+        <localInspection
+                language="LESS"
+                displayName="Unused CSS Module class"
+                groupName="DashStyle"
+                shortName="DashStyleUnusedCssClass"
+                enabledByDefault="true"
+                level="WEAK WARNING"
+                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+        <localInspection
+                language="CSS"
+                displayName="Duplicate CSS declarations (single file)"
+                groupName="DashStyle"
+                shortName="DashStyleDuplicateCss"
+                enabledByDefault="true"
+                level="WARNING"
+                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+        <localInspection
+                language="SCSS"
+                displayName="Duplicate CSS declarations (single file)"
+                groupName="DashStyle"
+                shortName="DashStyleDuplicateCss"
+                enabledByDefault="true"
+                level="WARNING"
+                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+        <localInspection
+                language="LESS"
+                displayName="Duplicate CSS declarations (single file)"
+                groupName="DashStyle"
+                shortName="DashStyleDuplicateCss"
+                enabledByDefault="true"
+                level="WARNING"
+                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+
+        <!-- ========================= 复制粘贴处理器 ========================= -->
         <copyPastePreProcessor
                 implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
+        <copyPastePreProcessor
+                implementation="com.pan.dashstyle.CssModuleImportCopyPasteProcessor"/>
+        <copyPastePreProcessor
+                implementation="com.pan.dashstyle.CssBundleCopyPastePostProcessor"/>
 
-        <!-- ✨ Inline Style → CSS Module 快速修复：在 JSX/Vue 的 style 属性上按 Alt+Enter 触发 -->
+        <!-- ========================= 快速修复 / 意向动作 ========================= -->
         <intentionAction>
             <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
             <category>DashStyle</category>
@@ -69,6 +169,40 @@
                 <li>Appends the rule to <code>&lt;style module&gt;</code> (.vue) or the imported
                     <code>*.module.css</code>/<code>.scss</code>/<code>.less</code> file.</li>
               </ul>
+            ]]></description>
+            <bindToCode>true</bindToCode>
+        </intentionAction>
+
+        <intentionAction>
+            <className>com.pan.dashstyle.CreateMissingCssClassIntention</className>
+            <category>DashStyle</category>
+            <description><![CDATA[
+              When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
+              creates <code>.foo-bar { }</code> at the end of the target CSS Module (or Vue
+              <code>&lt;style module&gt;</code>) and places the caret inside the braces.
+            ]]></description>
+            <bindToCode>true</bindToCode>
+        </intentionAction>
+
+        <intentionAction>
+            <className>com.pan.dashstyle.AddCssModuleImportIntention</className>
+            <category>DashStyle</category>
+            <description><![CDATA[
+              When the qualifier <code>styles</code> is unresolved (no import), scans sibling
+              <code>*.module.(css|scss|less)</code> candidates and prepends the matching
+              <code>import styles from './Foo.module.css'</code>; works inside Vue
+              <code>&lt;script setup&gt;</code> blocks.
+            ]]></description>
+            <bindToCode>true</bindToCode>
+        </intentionAction>
+
+        <intentionAction>
+            <className>com.pan.dashstyle.CssPreprocessorTranspileIntention</className>
+            <category>DashStyle</category>
+            <description><![CDATA[
+              Convert a CSS / SCSS / LESS file or Vue <code>&lt;style lang="..."&gt;</code> block between SCSS, LESS, and native CSS Nesting
+              (shared subset of features: variables, nesting, @extend, mixins, interpolation).
+              Unsupported constructs are preserved with an explicit comment warning.
             ]]></description>
             <bindToCode>true</bindToCode>
         </intentionAction>

@@ -84,7 +84,7 @@ class LessAmpersandExpansionTest {
     // ===================== 3. 类名拼接 &.className =====================
 
     @Test
-    fun `expandAmpersand - &.class 拼接类`() {
+    fun `expandAmpersand - 和 点 class 拼接`() {
         assertEquals(".parent.active", Util.expandAmpersand("&.active", ".parent"))
     }
 
@@ -111,7 +111,7 @@ class LessAmpersandExpansionTest {
     }
 
     @Test
-    fun `expandAmpersand - & > & 直接子元素`() {
+    fun `expandAmpersand - 和 子箭头 和 直接子元素`() {
         assertEquals(".parent > .parent", Util.expandAmpersand("& > &", ".parent"))
     }
 

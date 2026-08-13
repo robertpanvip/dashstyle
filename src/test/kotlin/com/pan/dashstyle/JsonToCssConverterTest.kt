@@ -245,7 +245,7 @@ class JsonToCssConverterTest {
     }
 
     @Test
-    fun `convert - vw/vh 单位`() {
+    fun `convert - vw 和 vh 单位`() {
         val result = convertJsonToCss("""{"width": "100vw", "height": "100vh"}""")
         assertTrue(result.contains("width: 100vw"))
         assertTrue(result.contains("height: 100vh"))
