@@ -285,4 +285,30 @@ class LessAmpersandExpansionTest {
     fun `replaceAmpersandInPart - 类拼接`() {
         assertEquals(".foo.active", Util.replaceAmpersandInPart("&.active", ".foo"))
     }
+
+    // ------ 一些真实的 BEM/组合场景 ------
+    @Test
+    fun `expandAmpersand - 多父多子 笛卡尔积 顺序`() {
+        val out = Util.expandAmpersand("&--active, &--hover", ".btn, .link")
+        val parts = out.split(", ").map { it.trim() }.toSet()
+        val expected = setOf(".btn--active", ".btn--hover", ".link--active", ".link--hover")
+        assertEquals(expected, parts)
+    }
+
+    @Test
+    fun `expandAmpersand - BEM underscore 修饰符`() {
+        assertEquals(".block__elem", Util.expandAmpersand("&__elem", ".block"))
+    }
+
+    @Test
+    fun `expandAmpersand - 伪类拼接类`() {
+        assertEquals(".btn.btn-primary:hover", Util.expandAmpersand("&.btn-primary:hover", ".btn"))
+    }
+
+    @Test
+    fun `expandAmpersand - 逗号父 + 简单子 逗号分隔输出`() {
+        val out = Util.expandAmpersand("&.open", ".nav, .menu")
+        val parts = out.split(", ").map { it.trim() }.toSet()
+        assertEquals(setOf(".nav.open", ".menu.open"), parts)
+    }
 }

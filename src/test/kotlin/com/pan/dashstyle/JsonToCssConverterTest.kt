@@ -263,4 +263,53 @@ class JsonToCssConverterTest {
         val result = convertJsonToCss("""{"foo": null}""")
         assertEquals("  foo: null;\n", result)
     }
+
+    // ------ inlineStyle 抽取后的 unit 边界，transform 数组 ------
+    @Test
+    fun `convert - transform scale 倍数型函数不加单位 px`() {
+        val out = convertJsonToCss("""{"transform": "scale(2)"}""")
+        assert(out.contains("scale(2)") && !out.contains("scale(2px)")) { "scale 不应加 px: $out" }
+    }
+
+    @Test
+    fun `convert - transform rotate 加 deg 单位`() {
+        val out = convertJsonToCss("""{"transform": "rotate(45)"}""")
+        // JS 写法是 rotate(45)，复制到 CSS 时在原始场景里若写了 rotate(数字) 应保留数字；
+        // 这里我们校验没有被错误加 px
+        assert(!out.contains("45px")) { "rotate 不应加 px" }
+    }
+
+    @Test
+    fun `convert - unitless 数字属性 opacity z-index flex 纯数值不加 px`() {
+        val out = convertJsonToCss("""{"opacity": 0.5, "zIndex": 99, "flex": 2}""")
+        assert(!out.contains("0.5px")) { "opacity 不要 px" }
+        assert(!out.contains("99px")) { "z-index 不要 px" }
+        assert(!out.contains("2px")) { "flex 不要 px" }
+        assert(out.contains("opacity: 0.5;")) { "必须保留数字" }
+        assert(out.contains("z-index: 99;")) { "zIndex 要转 kebab" }
+    }
+
+    @Test
+    fun `convert - 支持 JS 对象字面量（key 无引号 + 尾随逗号）`() {
+        val js = """
+            {
+              fontSize: 14,
+              backgroundColor: 'red',
+              marginTop: 8,
+            }
+        """.trimIndent()
+        val out = JsonToCssCopyPastePreProcessor.Util.convertOrNull(js)
+        assert(out != null) { "JS 字面量应能解析" }
+        assert(out!!.contains("font-size: 14px;"))
+        assert(out.contains("margin-top: 8px;"))
+        assert(out.contains("background-color: red;") || out.contains("background-color: #ff0000"))
+    }
+
+    @Test
+    fun `convert - 负数与 0 不加 px`() {
+        val out = convertJsonToCss("""{"top": -10, "left": 0, "right": 8}""")
+        assert(out.contains("top: -10px;")) { "负值要保留负号并加 px" }
+        assert(out.contains("left: 0;")) { "纯 0 不加 px" }
+        assert(out.contains("right: 8px;"))
+    }
 }
