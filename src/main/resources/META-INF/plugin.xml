@@ -55,5 +55,22 @@
         <!-- 这个才是存在的 EP -->
         <copyPastePreProcessor
                 implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
+
+        <!-- ✨ Inline Style → CSS Module 快速修复：在 JSX/Vue 的 style 属性上按 Alt+Enter 触发 -->
+        <intentionAction>
+            <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
+            <category>DashStyle</category>
+            <description><![CDATA[
+              Extracts the inline style object (<code>style={{ ... }}</code> in React/TSX
+              or <code>:style=&quot;{ ... }&quot;</code> in Vue) into a CSS Module class.<br/>
+              <ul>
+                <li>Automatic semantic class name inference (from component name, siblings, and style property semantics).</li>
+                <li>Rename-style input dialog lets you tweak the name before committing.</li>
+                <li>Appends the rule to <code>&lt;style module&gt;</code> (.vue) or the imported
+                    <code>*.module.css</code>/<code>.scss</code>/<code>.less</code> file.</li>
+              </ul>
+            ]]></description>
+            <bindToCode>true</bindToCode>
+        </intentionAction>
     </extensions>
 </idea-plugin>

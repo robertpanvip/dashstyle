@@ -3,18 +3,35 @@ package com.pan.dashstyle
 import com.intellij.lang.ecmascript6.psi.ES6ImportSpecifierAlias
 import com.intellij.lang.javascript.psi.JSCallExpression
 import com.intellij.lang.javascript.psi.JSVariable
+import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiFile
 import com.intellij.psi.css.CssRuleset
+import com.intellij.psi.util.CachedValue
+import com.intellij.psi.util.CachedValueProvider
+import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlTag
-import kotlin.text.contains
 
 class Util {
     companion object {
+        // ================================================================
+        // 性能优化：Regex 预编译（避免每次调用时重新构造 Pattern）
+        // ================================================================
+        private val RE_LESS_INTERP = Regex("""@\{([^}]+)\}""")
+        private val RE_SASS_INTERP = Regex("""#\{\s*(\$[^}]+?)\s*\}""")
+        private val RE_SASS_ATROOT = Regex("""@at-root\s+(?:\([^)]*\)\s+)?""")
+        private val RE_CLASS_SELECTOR = Regex("""\.([a-zA-Z_][a-zA-Z0-9_-]*)""")
+        private val RE_SASS_PLACEHOLDER = Regex("""%[a-zA-Z_][\w-]*""")
+        private val RE_COMMA_SPLIT = Regex(""",\s*""")
+
+        private val EXPAND_SELECTOR_KEY: Key<CachedValue<String>> =
+            Key.create("dashstyle.expanded.selector.v2")
+
         fun findScriptTag(file: PsiFile): XmlTag? {
             return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
                 .firstOrNull { it.name.equals("script", ignoreCase = true) }
         }
+
         fun findModuleStyleTag(file: PsiFile): XmlTag? {
             return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
                 .firstOrNull { tag ->
@@ -22,161 +39,171 @@ class Util {
                             tag.getAttribute("module") != null
                 }
         }
-        fun isUseCssModuleFromVue(initializer: JSCallExpression): Boolean {
-            // 获取被调用的表达式（如 useCssModule 或别名 css）
-            val methodExpr = initializer.methodExpression
-            // 检查这个引用是否来自 'vue' 导入
-            var resolved = methodExpr?.reference?.resolve();
-            if (resolved == null) return false;
-            if (resolved is ES6ImportSpecifierAlias) {
-                resolved = resolved.findAliasedElement()
-            }
-            if (resolved == null) return false
-            val cf = resolved.containingFile
-            val virtualFile = cf?.virtualFile ?: cf?.originalFile?.virtualFile
 
-            val filePath = virtualFile?.path?.lowercase()
-            if (filePath == null) {
-                return false
-            }
+        fun isUseCssModuleFromVue(initializer: JSCallExpression): Boolean {
+            val methodExpr = initializer.methodExpression
+            var resolved = methodExpr?.reference?.resolve() ?: return false
+            if (resolved is ES6ImportSpecifierAlias) resolved = resolved.findAliasedElement()
+            val cf = resolved?.containingFile ?: return false
+            val virtualFile = cf.virtualFile ?: cf.originalFile?.virtualFile
+            val filePath = virtualFile?.path?.lowercase() ?: return false
             return filePath.contains("node_modules/@vue")
         }
 
-        // 查找文件中的指定标签（如 "template" 或 "style"）
         fun findTagInFile(file: PsiFile, tagName: String): XmlTag? {
             return PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
                 .firstOrNull { it.name.equals(tagName, ignoreCase = true) }
         }
 
-        // 辅助函数：在指定容器中搜索同名变量声明
         fun findVariableDeclarationByName(name: String, scriptTag: XmlTag?): JSVariable? {
-            if (scriptTag === null) {
-                return null;
-            }
-            if (name.isBlank()) return null
+            if (scriptTag === null || name.isBlank()) return null
 
-            val topLevelBlocks = PsiTreeUtil.collectElements(scriptTag, { ele ->
-                return@collectElements ele.text.trim()
-                    .isNotEmpty() && ele.parent.javaClass.simpleName == "VueScriptSetupEmbeddedContentImpl"
-            })
-
-            // 从所有嵌入块中查找变量，取最后一个匹配的
-            val allMatchingVars = topLevelBlocks.flatMap { block ->
-                PsiTreeUtil.findChildrenOfType(block, JSVariable::class.java)
-                    .filter { it.name == name }
+            val topLevelBlocks = PsiTreeUtil.collectElements(scriptTag) { ele ->
+                ele.text.trim().isNotEmpty() &&
+                        ele.parent.javaClass.simpleName == "VueScriptSetupEmbeddedContentImpl"
             }
 
-            return allMatchingVars.maxByOrNull { it.textOffset }
-        }
-
-         fun kebabToCamel(name: String): String {
-            return name.split("-").mapIndexed { index, part ->
-                if (index == 0) part else part.replaceFirstChar { it.uppercase() }
-            }.joinToString("")
-        }
-
-         fun camelToKebab(name: String): String {
-            return buildString {
-                name.forEach { ch ->
-                    if (ch.isUpperCase()) {
-                        append("-")
-                        append(ch.lowercaseChar())
-                    } else {
-                        append(ch)
-                    }
+            return topLevelBlocks
+                .flatMap { block ->
+                    PsiTreeUtil.findChildrenOfType(block, JSVariable::class.java)
+                        .filter { it.name == name }
                 }
-            }.removePrefix("-")  // 防止首字母大写时多出一个前导 -
+                .maxByOrNull { it.textOffset }
         }
 
+        // ================================================================
+        // 命名转换（性能优化版：无额外对象分配的 buildString）
+        // ================================================================
+        fun kebabToCamel(name: String): String {
+            if ('-' !in name) return name
+            return buildString(name.length) {
+                var up = false
+                for (ch in name) {
+                    if (ch == '-') { up = true; continue }
+                    append(if (up) ch.uppercaseChar() else ch)
+                    up = false
+                }
+            }
+        }
+
+        fun camelToKebab(name: String): String {
+            var hasUpper = false
+            for (ch in name) if (ch.isUpperCase()) { hasUpper = true; break }
+            if (!hasUpper) return name
+            return buildString(name.length + 4) {
+                name.forEach { ch ->
+                    if (ch.isUpperCase()) { append('-'); append(ch.lowercaseChar()) }
+                    else append(ch)
+                }
+            }.removePrefix("-")
+        }
+
+        // ================================================================
+        // expandSelector + PSI 缓存（性能优化）
+        // 同一 ruleset 在 PSI 修改前只计算一次；父子关系递归天然命中
+        // ================================================================
         fun expandSelector(ruleset: CssRuleset): String {
-            val raw = ruleset.selectorList?.text ?: return ""
-
-            val parent = PsiTreeUtil.getParentOfType(
-                ruleset,
-                CssRuleset::class.java,
-                true
-            ) ?: return raw
-
-            val parentSelector = expandSelector(parent)
-
-            return expandAmpersand(raw, parentSelector)
+            val project = ruleset.project
+            return CachedValuesManager.getManager(project).getCachedValue(
+                ruleset, EXPAND_SELECTOR_KEY,
+                {
+                    val raw = ruleset.selectorList?.text.orEmpty()
+                    val result = if (raw.isEmpty()) raw else {
+                        val parent = PsiTreeUtil.getParentOfType(
+                            ruleset, CssRuleset::class.java, true
+                        )
+                        val normalized = normalizeSelector(raw)
+                        if (parent == null) normalized
+                        else expandAmpersand(normalized, expandSelector(parent))
+                    }
+                    CachedValueProvider.Result.create(result, ruleset)
+                }, false
+            )
         }
 
         /**
-         * 扩展选择器中的 & 符号，支持 Less/SCSS 的各种 & 用法：
-         * 1. 基本替换: & → .parent
-         * 2. 后缀拼接: &-bar → .parent-bar
-         * 3. 下划线后缀: &_bar → .parent_bar
-         * 4. 多 & 组合: & + &, & &, & > &
-         * 5. 类拼接: &.active → .parent.active
-         * 6. 伪类: &:hover → .parent:hover
-         * 7. 多选择器逗号分隔: .a, .b { &-c {} } → .a-c, .b-c
-         * 8. Less 变量插值占位符: @{var} 保留原文（无法在无上下文时解析）
+         * Sass / SCSS / 原生 CSS 嵌套 归一化：
+         *  - @at-root (with/without ...) selector → selector
+         *  - %placeholder → 占位标记（不参与类名补全）
+         *  - 只做结构变换，不改变 & 关系
+         */
+        private fun normalizeSelector(raw: String): String {
+            var s = raw.trim()
+            if (s.isEmpty()) return s
+            if (s.contains("@at-root")) s = RE_SASS_ATROOT.replace(s, "")
+            if (s.contains('%')) s = RE_SASS_PLACEHOLDER.replace(s) { m -> "__P_${m.value.drop(1)}__" }
+            return s
+        }
+
+        /**
+         * 从展开后的选择器中一次性抽取所有 class 名（getVariants/resolve 都用）。
+         */
+        fun extractClassNames(expandedSelector: String): List<String> {
+            if (expandedSelector.isEmpty()) return emptyList()
+            var s = expandedSelector
+            if ("__P_" in s) s = s.replace(Regex("""__P_([A-Za-z0-9_-]+?)__"""), "%$1")
+            return RE_CLASS_SELECTOR.findAll(s).map { it.groupValues[1] }.toList()
+        }
+
+        /**
+         * Less / SCSS / 原生 CSS 嵌套 & 扩展：
+         * 1. 基本 &
+         * 2. &-suffix / &_suffix
+         * 3. 多 & 组合
+         * 4. 多父 × 多子 笛卡尔积
+         * 5. Less @{var} / Sass #{$var} 占位保护
+         * 6. 无 & 的标准嵌套（原生 CSS Nesting）
          */
         fun expandAmpersand(rawSelector: String, parentSelector: String): String {
-            // 先处理 Less/SCSS 变量插值 @{...}，暂时用占位符保护，最后还原
-            val placeholders = mutableMapOf<String, String>()
-            var processedSelector = rawSelector
-            val varPattern = Regex("""@\{([^}]+)\}""")
-            var matchResult = varPattern.find(processedSelector)
-            var counter = 0
-            while (matchResult != null) {
-                val placeholder = "__VAR_PLACEHOLDER_${counter}__"
-                placeholders[placeholder] = matchResult.value
-                processedSelector = processedSelector.replaceRange(matchResult.range, placeholder)
-                counter++
-                matchResult = varPattern.find(processedSelector)
-            }
-
-            val expanded = if (!processedSelector.contains("&")) {
-                // 处理多父选择器的情况：逗号分隔的每个父选择器都要拼接子选择器
-                val parentParts = parentSelector.split(",").map { it.trim() }
-                val childParts = processedSelector.split(",").map { it.trim() }
-                val combinations = mutableListOf<String>()
-                for (p in parentParts) {
-                    for (c in childParts) {
-                        combinations.add("$p $c")
-                    }
+            val placeholders = LinkedHashMap<String, String>()
+            var processed = rawSelector
+            fun protect(pattern: Regex) {
+                var mr = pattern.find(processed)
+                while (mr != null) {
+                    val ph = "__VPH_${placeholders.size}__"
+                    placeholders[ph] = mr.value
+                    processed = processed.replaceRange(mr.range, ph)
+                    mr = pattern.find(processed)
                 }
-                combinations.joinToString(", ")
+            }
+            protect(RE_LESS_INTERP)
+            protect(RE_SASS_INTERP)
+
+            val expanded = if ('&' !in processed) {
+                val parents = splitByComma(parentSelector)
+                val children = splitByComma(processed)
+                val out = ArrayList<String>(parents.size * children.size)
+                for (p in parents) for (c in children) out += "$p $c"
+                out.joinToString(", ")
             } else {
-                // 处理多父选择器 (逗号分隔)
-                val parentParts = parentSelector.split(",").map { it.trim() }
-                val results = mutableListOf<String>()
-
-                for (parentPart in parentParts) {
-                    val childParts = processedSelector.split(",").map { it.trim() }
-                    for (childPart in childParts) {
-                        results.add(replaceAmpersandInPart(childPart, parentPart))
-                    }
-                }
-                results.joinToString(", ")
+                val parents = splitByComma(parentSelector)
+                val children = splitByComma(processed)
+                val out = ArrayList<String>(parents.size * children.size)
+                for (p in parents) for (c in children) out += replaceAmpersandInPart(c, p)
+                out.joinToString(", ")
             }
 
-            // 还原变量插值占位符
-            var finalResult = expanded
-            for ((placeholder, original) in placeholders) {
-                finalResult = finalResult.replace(placeholder, original)
-            }
-            return finalResult
+            var final = expanded
+            for ((ph, orig) in placeholders) final = final.replace(ph, orig)
+            return final
+        }
+
+        private fun splitByComma(s: String): List<String> {
+            return RE_COMMA_SPLIT.split(s).filter { it.isNotEmpty() }
         }
 
         internal fun replaceAmpersandInPart(childPart: String, parentPart: String): String {
-            val result = StringBuilder()
-            var i = 0
+            if ('&' !in childPart) return childPart
+            val result = StringBuilder(childPart.length + parentPart.length)
             val n = childPart.length
-
+            var i = 0
             while (i < n) {
                 if (childPart[i] == '&') {
-                    // 无论 & 后面跟什么，都执行替换：&-suffix / &_suffix / &.class / &:pseudo / &
-                    result.append(parentPart)
-                    i++ // 跳过 &，后面的 -._: 等字符在下次循环中正常追加
+                    result.append(parentPart); i++
                 } else {
-                    result.append(childPart[i])
-                    i++
+                    result.append(childPart[i]); i++
                 }
             }
-
             return result.toString()
         }
     }
