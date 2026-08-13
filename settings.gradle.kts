@@ -1,13 +1,3 @@
-pluginManagement {
-    repositories {
-        // Gradle Plugin Portal + 国内镜像（腾讯第一优先，符合用户要求；阿里云 fallback）
-        maven { url = uri("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/") }
-        maven { url = uri("https://mirrors.cloud.tencent.com/nexus/repository/gradle-plugins/") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin/") }
-        maven { url = uri("https://maven.aliyun.com/repository/public/") }
-        gradlePluginPortal()
-        mavenCentral()
-    }
-}
-
+// 注意：仓库 / 镜像策略由根目录 `_local_init.gradle.kts` 统一管理（腾讯镜像 + JB 专用仓 + 官仓兜底）
+// 这里保持最小化声明，避免重复配置
 rootProject.name = "DashStyle"
