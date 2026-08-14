@@ -1,20 +1,54 @@
-<svg width="16" height="16" viewBox="0 0 40 40"
-     xmlns="http://www.w3.org/2000/svg">
-
-<rect x="1.5" y="1.5" width="37" height="37" rx="6"
-      fill="url(#bg)"/>
-
-<rect x="9" y="13" width="7" height="14" rx="1" fill="white"/>
-<rect x="24" y="13" width="7" height="14" rx="1" fill="white"/>
-
-<rect x="17" y="19" width="6" height="2" rx="1" fill="white"/>
-<defs>
-    <linearGradient id="bg" x1="2.94192" y1="4.89955" x2="37.7772" y2="39.7345"
-                    gradientUnits="userSpaceOnUse">
-        <stop offset="0.15937" stop-color="#3BEA62"/>
-        <stop offset="0.5404" stop-color="#3C99CC"/>
-        <stop offset="0.93739" stop-color="#6B57FF"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
+  <!-- 图标设计理念：CSS 大括号 + kebab-case (dash) 虚线
+       颜色采用 IntelliJ 插件市场流行的蓝紫渐变，
+       16x16 在小尺寸下依然清晰可辨识 -->
+  <defs>
+    <linearGradient id="dash-bg" x1="1" y1="1" x2="15" y2="15" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6C8CFF"/>
+      <stop offset="55%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#A855F7"/>
     </linearGradient>
-</defs>
-</svg>
+    <linearGradient id="dash-fg" x1="3" y1="4" x2="13" y2="12" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E9D5FF"/>
+    </linearGradient>
+  </defs>
 
+  <!-- 圆角方形底板 -->
+  <rect x="0.6" y="0.6" width="14.8" height="14.8" rx="3.6" fill="url(#dash-bg)"/>
+
+  <!-- 左侧 CSS 大括号 '{'  (简化版，像 C 形但有两个凸点) -->
+  <path d="M5.2 3.4
+           L3.2 3.4
+           C2.6 3.4, 2.2 3.8, 2.2 4.4
+           L2.2 7.6
+           C2.2 7.9, 2.35 8.15, 2.6 8.3
+           L3.5 8.8
+           C3.8 9, 3.8 9, 3.5 9.2
+           L2.6 9.7
+           C2.35 9.85, 2.2 10.1, 2.2 10.4
+           L2.2 11.6
+           C2.2 12.2, 2.6 12.6, 3.2 12.6
+           L5.2 12.6"
+        stroke="url(#dash-fg)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- 右侧 CSS 大括号 '}' -->
+  <path d="M10.8 3.4
+           L12.8 3.4
+           C13.4 3.4, 13.8 3.8, 13.8 4.4
+           L13.8 7.6
+           C13.8 7.9, 13.65 8.15, 13.4 8.3
+           L12.5 8.8
+           C12.2 9, 12.2 9, 12.5 9.2
+           L13.4 9.7
+           C13.65 9.85, 13.8 10.1, 13.8 10.4
+           L13.8 11.6
+           C13.8 12.2, 13.4 12.6, 12.8 12.6
+           L10.8 12.6"
+        stroke="url(#dash-fg)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- 中间的 dash (kebab-case 连字符风格：圆点-短横-圆点，呼应 CSS 补全 + 连字符) -->
+  <circle cx="7" cy="8" r="0.9" fill="url(#dash-fg)"/>
+  <rect x="8.2" y="7.3" width="3.6" height="1.4" rx="0.7" fill="url(#dash-fg)"/>
+
+</svg>

@@ -1,8 +1,12 @@
 package com.pan.dashstyle
 
 import com.google.gson.Gson
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
+import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
+import com.google.gson.JsonPrimitive
 import com.intellij.codeInsight.editorActions.CopyPastePreProcessor
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.RawText
@@ -11,19 +15,354 @@ import com.intellij.psi.PsiFile
 import com.intellij.psi.xml.XmlTag
 import org.jetbrains.annotations.NotNull
 
+/**
+ * 顶层常量池（绕过 IntelliJ Platform instrumentCode 的影响）。
+ *
+ * **背景**：
+ * IntelliJ Platform Gradle 插件的 `instrumentCode` 任务会对实现了 IDE 扩展点（如 `CopyPastePreProcessor`）
+ * 的类写字节码（主要是 `@NotNull/@Nullable` 参数检查）。如果把 `UNITLESS`/`SHORTHAND_ARRAY` 等纯数据 Set
+ * 写成「CopyPastePreProcessor 子类的 companion object 成员」，在某些 worker（单独跑
+ * `JsonToCssConverterTest` 时）里会观测到「companion `<clinit>` 尚未来得及跑完 → set 返回空 →
+ * `isUnitless` 全 false → 所有数字都被加 px」的诡异行为（与 DebugFailFast3 单独跑能全绿形成鲜明对比）。
+ *
+ * 把这些纯函数/常量池拆出来作为**顶层 object**，JVM 加载时不依附于任何 IDE 扩展点子类，
+ * 不管 IDE 怎么重写扩展类字节码，这里都不会受影响。
+ */
+internal object JsonToCssConversionTables {
+    /** 不需要加 px 单位的 CSS 属性（camelCase 和 kebab-case 两份） */
+    private val UNITLESS = setOf(
+        "flex", "flex-grow", "flex-grow-shrink", "flex-shrink", "flex-basis",
+        "order", "z-index", "opacity", "font-weight", "line-height",
+        "column-count", "columns", "grid-row-start", "grid-row-end",
+        "grid-column-start", "grid-column-end", "grid-row", "grid-column",
+        "grid-area", "grid-row-gap", "grid-column-gap", "grid-gap", "gap",
+        "aspect-ratio", "animation-iteration-count", "orphans", "widows", "tab-size"
+    )
+    private val UNITLESS_CAMEL = setOf(
+        "flex", "flexGrow", "flexShrink", "flexBasis",
+        "order", "zIndex", "opacity", "fontWeight", "lineHeight",
+        "columnCount", "columns", "gridRowStart", "gridRowEnd",
+        "gridColumnStart", "gridColumnEnd", "gridRow", "gridColumn",
+        "gridArea", "gridRowGap", "gridColumnGap", "gridGap", "gap",
+        "aspectRatio", "animationIterationCount", "orphans", "widows", "tabSize"
+    )
+
+    fun isUnitless(key: String, kebabKey: String): Boolean =
+        key in UNITLESS_CAMEL
+            || kebabKey in UNITLESS
+            || kebabKey.startsWith("animation-iteration")
+            || kebabKey.startsWith("border-image-outset")
+
+    val SHORTHAND_ARRAY: Set<String> = setOf(
+        "padding", "margin", "border-radius", "border-width", "border-style", "border-color",
+        "gap", "grid-gap", "grid-row-gap", "grid-column-gap", "inset"
+    )
+    val SHORTHAND_ARRAY_CAMEL: Set<String> = setOf(
+        "padding", "margin", "borderRadius", "borderWidth", "borderStyle", "borderColor",
+        "gap", "gridGap", "gridRowGap", "gridColumnGap", "inset"
+    )
+
+    val TRANSFORM_FUNCTIONS: Set<String> = setOf(
+        "translateX", "translateY", "translateZ",
+        "scale", "scaleX", "scaleY", "scaleZ", "scale3d",
+        "rotate", "rotateX", "rotateY", "rotateZ",
+        "skew", "skewX", "skewY", "perspective", "matrix", "matrix3d",
+        "translate3d", "rotate3d"
+    )
+    val TRANSFORM_UNITLESS_FUNCS: Set<String> = setOf(
+        "scale", "scaleX", "scaleY", "scaleZ", "scale3d", "matrix", "matrix3d"
+    )
+    val TRANSFORM_ANGLE_FUNCS: Set<String> = setOf(
+        "rotate", "rotateX", "rotateY", "rotateZ", "skew", "skewX", "skewY"
+    )
+
+    // ----------------------------------------------------------------
+    // 纯函数核心：normalize + convert 两步
+    // 独立成顶层 object，不触碰 CopyPastePreProcessor（IDE 扩展点类）
+    // 从而规避 IntelliJ Platform `instrumentCode` / PluginClassLoader 导致的
+    // "扩展子类加载时其 companion / 成员常量未初始化" 问题。
+    // ----------------------------------------------------------------
+
+    /**
+     * 从完整的 React style={{...}} 或 JS 对象字面量中提取可解析的"严格 JSON" 字符串。
+     * 与 normalizePastedStyleExpression 等价（纯函数，不依赖 IDE 类）。
+     */
+    @JvmStatic
+    fun normalizeStyleExpression(raw: String): String? {
+        val t = raw.trim()
+        val doubleBrace = Regex("""^\s*[a-zA-Z_$][\w$]*\s*=\s*\{\{\s*([\s\S]*)\s*\}\}\s*$""")
+        val singleBrace = Regex("""^\s*[a-zA-Z_$][\w$]*\s*=\s*\{\s*([\s\S]*)\s*\}\s*$""")
+        val core = when {
+            doubleBrace.matches(t) -> doubleBrace.find(t)!!.groupValues[1]
+            singleBrace.matches(t) -> singleBrace.find(t)!!.groupValues[1]
+            t.startsWith("{") && t.endsWith("}") -> t.substring(1, t.length - 1)
+            else -> return null
+        }.trim()
+
+        val strictCandidate = "{$core}"
+        val gson = threadLocalGsonForJson.get()
+        if (looksLikeStrictJsonInternal(gson, strictCandidate)) return strictCandidate
+
+        return try {
+            val relaxedToStrict = jsLiteralToStrictJson("{$core}")
+            if (looksLikeStrictJsonInternal(gson, relaxedToStrict)) relaxedToStrict else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * 纯函数：接受 JSON 字符串 → 输出 CSS 声明块（`  property: value;\n` 多行）。
+     * 不触碰任何 IDE 扩展点子类；`Util.convertJsonToCss` / IDE 扩展点 preprocessOnPaste 均走它。
+     */
+    @JvmStatic
+    fun convertJsonStringToCss(jsonStr: String): String? {
+        val gson = threadLocalGsonForJson.get()
+        val obj = try {
+            gson.fromJson(jsonStr, JsonObject::class.java)
+        } catch (_: Exception) {
+            return null
+        }
+
+        val lines = mutableListOf<String>()
+        for ((key, element) in obj.entrySet()) {
+            val kebabKey = camelToKebabStableInternal(key)
+            val valueCss = formatCssValueInternal(key, kebabKey, element) ?: continue
+            lines.add("  $kebabKey: $valueCss;")
+        }
+        return if (lines.isNotEmpty()) lines.joinToString("\n") + "\n" else ""
+    }
+
+    // ---------- private helpers ----------
+
+    private val threadLocalGsonForJson = ThreadLocal.withInitial { Gson() }
+
+    private fun looksLikeStrictJsonInternal(gson: Gson, text: String): Boolean {
+        val trimmed = text.trim()
+        if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false
+        return try {
+            gson.fromJson(trimmed, JsonObject::class.java)
+            true
+        } catch (_: JsonParseException) {
+            false
+        }
+    }
+
+    /**
+     * 将 JS 对象字面量（key 可不带引号、单引号、有注释和尾随逗号）转成合法 JSON 字符串。
+     * 公开入口：可供插件其它模块复用。
+     */
+    @JvmStatic
+    fun jsLiteralToStrictJson(js: String): String {
+        val sb = StringBuilder(js.length + 16)
+        var i = 0
+        val n = js.length
+        while (i < n) {
+            val ch = js[i]
+            when {
+                ch == '/' && js.getOrNull(i + 1) == '/' -> {
+                    i += 2
+                    while (i < n && js[i] != '\n') i++
+                }
+                ch == '/' && js.getOrNull(i + 1) == '*' -> {
+                    i += 2
+                    while (i < n - 1 && !(js[i] == '*' && js[i + 1] == '/')) i++
+                    i += 2
+                }
+                ch == '"' -> {
+                    sb.append(ch); i++
+                    while (i < n) {
+                        val c = js[i]; sb.append(c)
+                        if (c == '\\' && i + 1 < n) { sb.append(js[i + 1]); i += 2; continue }
+                        i++
+                        if (c == '"') break
+                    }
+                }
+                ch == '\'' -> {
+                    sb.append('"'); i++
+                    while (i < n) {
+                        val c = js[i]
+                        when {
+                            c == '\\' && i + 1 < n -> {
+                                val nxt = js[i + 1]
+                                if (nxt == '\'') sb.append('\'') else { sb.append('\\'); sb.append(nxt) }
+                                i += 2
+                            }
+                            c == '"' -> { sb.append('\\'); sb.append('"'); i++ }
+                            c == '\'' -> { sb.append('"'); i++; break }
+                            else -> { sb.append(c); i++ }
+                        }
+                    }
+                }
+                isIdentifierStartInternal(ch) -> {
+                    val start = i
+                    while (i < n && isIdentifierPartInternal(js[i])) i++
+                    val id = js.substring(start, i)
+                    var k = i
+                    while (k < n && js[k].isWhitespace()) k++
+                    if (js.getOrNull(k) == ':' || (js.getOrNull(k) == ']' && js.getOrNull(start - 1) == '[')) {
+                        sb.append('"').append(id).append('"')
+                    } else {
+                        sb.append(id)
+                    }
+                }
+                ch == ',' -> {
+                    var k = i + 1
+                    while (k < n && js[k].isWhitespace()) k++
+                    val nx = js.getOrNull(k)
+                    if (nx == ']' || nx == '}') i++
+                    else { sb.append(ch); i++ }
+                }
+                ch.isWhitespace() -> { sb.append(ch); i++ }
+                else -> { sb.append(ch); i++ }
+            }
+        }
+        return sb.toString().replace(Regex("\\bundefined\\b"), "null")
+    }
+
+    private fun isIdentifierStartInternal(c: Char) = c.isLetter() || c == '_' || c == '$'
+    private fun isIdentifierPartInternal(c: Char) = c.isLetterOrDigit() || c == '_' || c == '$'
+
+    private fun camelToKebabStableInternal(name: String): String = buildString {
+        var prevLow = false
+        for (ch in name) {
+            if (ch == '-' || ch == '_') {
+                append('-'); prevLow = false; continue
+            }
+            if (ch.isUpperCase()) {
+                if (prevLow) append('-')
+                append(ch.lowercaseChar())
+                prevLow = false
+            } else {
+                append(ch)
+                prevLow = ch.isLowerCase() || ch.isDigit()
+            }
+        }
+    }.trimStart('-')
+
+    private fun formatCssValueInternal(origKey: String, kebabKey: String, el: JsonElement): String? {
+        if (el.isJsonNull) return null
+        if (el is JsonNull) return null
+
+        if (el is JsonPrimitive) {
+            val raw = when {
+                el.isBoolean -> return null
+                el.isNumber -> el.asNumber.toString()
+                else -> el.asString
+            }
+            return formatPrimitiveValueInternal(origKey, kebabKey, raw)
+        }
+        if (el is JsonArray) {
+            return when {
+                kebabKey == "transform" && el.all { it.isJsonObject } -> formatTransformArrayInternal(el)
+                origKey in SHORTHAND_ARRAY_CAMEL || kebabKey in SHORTHAND_ARRAY ->
+                    formatShorthandArrayInternal(origKey, kebabKey, el)
+                else -> el.mapNotNull { formatCssValueInternal(origKey, kebabKey, it) }.joinToString(" ").ifBlank { null }
+            }
+        }
+        if (el is JsonObject) {
+            return "/* unsupported object value - please expand manually: ${el.toString().take(48)} */"
+        }
+        return null
+    }
+
+    private fun formatPrimitiveValueInternal(origKey: String, kebabKey: String, v: String): String? {
+        var value = v
+        if (value.isBlank()) return null
+        if (kebabKey == "font-family" && value.contains(' ') && !value.startsWith('\'') && !value.startsWith('"')) {
+            value = "\"$value\""
+        }
+        val numeric = Regex("""^-?\d+(\.\d+)?$""")
+        if (numeric.matches(value)) {
+            if (value == "0") return "0"
+            if (isUnitless(origKey, kebabKey)) return value
+            return "${value}px"
+        }
+        return value
+    }
+
+    private fun formatShorthandArrayInternal(origKey: String, kebabKey: String, arr: JsonArray): String? {
+        return arr.mapNotNull {
+            if (it.isJsonPrimitive) {
+                val p = it.asJsonPrimitive
+                val raw = if (p.isNumber) p.asNumber.toString() else p.asString
+                formatPrimitiveValueInternal(origKey, kebabKey, raw)
+            } else null
+        }.joinToString(" ").ifBlank { null }
+    }
+
+    private fun formatTransformArrayInternal(arr: JsonArray): String? {
+        val parts = mutableListOf<String>()
+        for (item in arr) {
+            if (item !is JsonObject) continue
+            for ((k, v) in item.entrySet()) {
+                val func = k
+                if (func !in TRANSFORM_FUNCTIONS) continue
+                val arg = if (v.isJsonPrimitive) {
+                    val p = v.asJsonPrimitive
+                    val raw = if (p.isNumber) p.asNumber.toString() else p.asString
+                    addDefaultUnitToTransformArgInternal(func, raw)
+                } else v.toString()
+                parts += "$func($arg)"
+            }
+        }
+        return parts.joinToString(" ").ifBlank { null }
+    }
+
+    private fun addDefaultUnitToTransformArgInternal(func: String, raw: String): String {
+        val num = Regex("""^-?\d+(\.\d+)?$""")
+        if (!num.matches(raw)) return raw
+        return when {
+            func in TRANSFORM_UNITLESS_FUNCS -> raw
+            func in TRANSFORM_ANGLE_FUNCS -> "${raw}deg"
+            else -> "${raw}px"
+        }
+    }
+}
+
 class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
 
-    private val gson = Gson()
+    // 公开入口：Intention / Inspection 复用同一套转换规则
+    object Util {
+        /**
+         * 接受任何 "像 style 对象" 的文本：
+         *   - `{ color: 'red', fontSize: 12 }`
+         *   - `style={{ color: "red" }}`
+         *   - 严格 JSON
+         * 返回格式化的 CSS 声明块（每一行 `  property: value;`），失败抛异常。
+         *
+         * **注意**：这里直接调用顶层 object 的纯函数，不实例化 JsonToCssCopyPastePreProcessor（CopyPastePreProcessor
+         *  是 IDE 扩展点类，会被 IntelliJ Platform `instrumentCode` 写字节码、在某些 Gradle test worker 里
+         *  可能观测到异常的初始化顺序问题）。单独跑 JsonToCssConverterTest 这种「只用转换逻辑、不用 IDE 沙箱」
+         *  的场景时依然可靠。
+         */
+        @JvmStatic
+        fun convertJsonToCss(raw: String): String {
+            val normalized = JsonToCssConversionTables.normalizeStyleExpression(raw)
+                ?: throw IllegalArgumentException(
+                    "Not a recognized style object (expected {k:v} literal or style={...})."
+                )
+            return JsonToCssConversionTables.convertJsonStringToCss(normalized)
+                ?: throw IllegalStateException("Failed to parse style JSON after normalization.")
+        }
+
+        /** 仅作宽松解析，不抛错：失败返回 null */
+        @JvmStatic
+        fun convertOrNull(raw: String): String? = runCatching { convertJsonToCss(raw) }.getOrNull()
+
+        // 为了不改动扩展点里已有的 preprocessOnPaste 调用，保留一个处理器单例
+        internal val threadLocalGson = ThreadLocal.withInitial { Gson() }
+        internal val sharedProcessor = JsonToCssCopyPastePreProcessor()
+    }
+
+    private val gson = Util.threadLocalGson.get()
 
     override fun preprocessOnCopy(
         file: PsiFile?,
         startOffsets: IntArray?,
         endOffsets: IntArray?,
         text: String?
-    ): String? {
-        // 我们不处理复制操作，返回 null 表示不干预
-        return null
-    }
+    ): String? = null
 
     @NotNull
     override fun preprocessOnPaste(
@@ -41,14 +380,12 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
             return text
         }
 
-        val trimmed = text.trim()
-        if (!looksLikeJsonStyleObject(trimmed)) {
-            return text
-        }
-        return convertJsonToCss(trimmed)
+        val normalized = normalizePastedStyleExpression(text) ?: return text
+        return convertInlineStyleToCss(normalized) ?: text
     }
-    // 支持 .css / .less / .scss /.styl 文件
-    private val supportedExtensions = setOf(".css", ".less", ".scss", ".styl")
+
+    private val supportedExtensions = setOf(".css", ".less", ".scss", ".styl", ".sass")
+
     private fun isSupportedContext(editor: Editor, file: PsiFile): Boolean {
         val virtualFile = file.virtualFile ?: return false
         val fileName = virtualFile.name.lowercase()
@@ -57,82 +394,31 @@ class JsonToCssCopyPastePreProcessor : CopyPastePreProcessor {
             return true
         }
 
-        // 支持 .vue 文件中的 <style> 标签内部
-        if (fileName.endsWith(".vue")) {
+        if (fileName.endsWith(".vue") || fileName.endsWith(".svelte") || fileName.endsWith(".astro")) {
             val offset = editor.caretModel.offset
-            val elementAtCaret = file.findElementAt(offset) ?: return false
-
-            // 向上查找最近的 XmlTag，看是否是 <style>
-            var current: com.intellij.psi.PsiElement? = elementAtCaret
-            while (current != null) {
-                if (current is XmlTag) {
-                    val tagName = current.name.lowercase()
-                    if (tagName == "style") {
-                        // 可选：进一步检查是否是 <style lang="scss"> 或 lang="less" 等
-                        // 但这里简单判断 name 即可
-                        return true
-                    }
-                    // 如果已经到了 <template> 或 <script> 就不要继续向上找了
-                    if (tagName == "template" || tagName == "script") {
-                        return false
-                    }
+            var elementAtCaret: com.intellij.psi.PsiElement? = file.findElementAt(offset) ?: return false
+            while (elementAtCaret != null) {
+                if (elementAtCaret is XmlTag) {
+                    val tagName = elementAtCaret.name.lowercase()
+                    if (tagName == "style") return true
+                    if (tagName == "template" || tagName == "script") return false
                 }
-                current = current.parent
+                elementAtCaret = elementAtCaret.parent
             }
         }
-
         return false
     }
 
-    private fun looksLikeJsonStyleObject(text: String): Boolean {
-        val trimmed = text.trim()
-        if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-            return false
-        }
-        try {
-            gson.fromJson(trimmed, JsonObject::class.java)
-            return true
-        } catch (_: JsonParseException) {
-            return false
-        }
-    }
+    // ----------------------------------------------------------------
+    // 修复 #1: 从完整的 React style={{...}} 或 JS 对象字面量 {foo: 1, 'bar': 2}
+    // 中提取出可解析的 "宽松 JSON" 字符串，然后转成严格 JSON
+    // ----------------------------------------------------------------
+    internal fun normalizePastedStyleExpression(raw: String): String? =
+        JsonToCssConversionTables.normalizeStyleExpression(raw)
 
-    private fun convertJsonToCss(jsonStr: String): String {
-        val obj = try {
-            gson.fromJson(jsonStr, JsonObject::class.java)
-        } catch (_: Exception) {
-            return jsonStr  // 解析失败时原样返回，避免破坏用户输入
-        }
+    internal fun convertInlineStyleToCss(jsonStr: String): String? =
+        JsonToCssConversionTables.convertJsonStringToCss(jsonStr)
 
-        val lines = mutableListOf<String>()
-
-        for ((key, element) in obj.entrySet()) {
-            // 假设值是字符串；如果 JSON 中有数字/布尔等，可根据需要扩展
-            val valueStr = when {
-                element.isJsonPrimitive -> element.asString
-                else -> element.toString()  // fallback
-            }
-
-            val kebabKey = key.replace(Regex("([a-z])([A-Z])"), "$1-$2").lowercase()
-
-            // 可选增强：纯数字值自动加 px（排除已有单位或百分比等）
-            val finalValue = if (valueStr.matches(Regex("^\\d+$")) &&
-                valueStr != "0" &&
-                !valueStr.contains(Regex("[a-zA-Z%]+"))
-            ) {
-                "${valueStr}px"
-            } else {
-                valueStr
-            }
-
-            lines.add("  $kebabKey: $finalValue;")
-        }
-
-        // 每行前面加两个空格（常见缩进），最后加换行
-        return if (lines.isNotEmpty()) {
-            lines.joinToString("\n") + "\n"
-        } else {
-            ""
-        }
-    }
+    internal fun jsLiteralToStrictJson(js: String): String =
+        JsonToCssConversionTables.jsLiteralToStrictJson(js)
 }
