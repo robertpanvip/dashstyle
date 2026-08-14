@@ -4,7 +4,9 @@ import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
+import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert
@@ -345,5 +347,117 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             val sel = rs.selectorList?.text?.trim()
             Assert.assertEquals("选择器文本应该是 .hello", ".hello", sel)
         }
+    }
+
+    // ========================================================================
+    // 0.1 号 smoke（默认不 @Ignore）：「这就是你说的『在沙箱里嗅探真实类型再静态绑定』最终闭环验证」
+    //   沙箱加载 DashStyle 插件后：
+    //     a) plugin.xml 里声明的 DashStyle.UnusedCssClass.* / DashStyle.DuplicateCss.* inspection shortName
+    //        必须真实出现在 InspectionProfile 里；
+    //     b) UnusedCssModuleClassInspection / DuplicateCssDeclarationsInspection 两个类必须能被
+    //        沙箱 PluginClassLoader 加载 & 实例化（真实环境报的就是 "Cannot create class"）。
+    //   如果这条用例在沙箱里 PASS，基本等价于"你本地 WS-2026.2 真实 IDE 也不会再报 Cannot create class / shortName not unique"。
+    // ========================================================================
+    @Test
+    fun `smoke DashStyle inspections and annotator classes must be loadable in IDE sandbox`() {
+        // ---- A) shortName 是否都在 profile 里（证明 plugin.xml <localInspection> 没冲突且被沙箱读到） ----
+        val expectedShortNames = listOf(
+            "DashStyle.UnusedCssClass.Css",
+            "DashStyle.UnusedCssClass.Scss",
+            "DashStyle.UnusedCssClass.Less",
+            "DashStyle.UnusedCssClass.Any",
+            "DashStyle.DuplicateCss.Css",
+            "DashStyle.DuplicateCss.Scss",
+            "DashStyle.DuplicateCss.Less",
+            "DashStyle.DuplicateCss.Any"
+        )
+        ApplicationManager.getApplication().runReadAction {
+            val profile: Any? = runCatching {
+                // com.intellij.codeInspection.InspectionProfileManager 在不同 WS 版本里包路径
+                // 可能在 internal / analysis-impl 里；直接按类名字符串反射 getInstance(project).currentProfile
+                val mgrCls = (Thread.currentThread().contextClassLoader ?: javaClass.classLoader)
+                    .loadClass("com.intellij.codeInspection.InspectionProfileManager")
+                val getInstance = mgrCls.methods.firstOrNull { m ->
+                    m.name == "getInstance" && m.parameterCount == 1 &&
+                        runCatching { m.parameterTypes[0] == Project::class.java }.getOrDefault(false)
+                } ?: mgrCls.methods.firstOrNull { m -> m.name == "getInstance" && m.parameterCount == 0 }
+                getInstance?.isAccessible = true
+                val mgr = getInstance?.invoke(null, project) ?: getInstance?.invoke(null)
+                val curProfile = mgrCls.methods.firstOrNull { it.name == "getCurrentProfile" && it.parameterCount == 0 }
+                    ?.apply { isAccessible = true }?.invoke(mgr)
+                curProfile
+            }.getOrNull()
+            val registeredShortNames = HashSet<String>()
+            if (profile != null) {
+                runCatching {
+                    val method = profile.javaClass.methods.firstOrNull { m ->
+                        (m.name == "getInspectionTools" || m.name == "getAllInspectionTools") &&
+                            m.parameterTypes.size == 1 && m.parameterTypes[0].isAssignableFrom(Project::class.java)
+                    }
+                    method?.isAccessible = true
+                    val tools = method?.invoke(profile, project) as? Iterable<*> ?: emptyList<Any>()
+                    for (t in tools) {
+                        val sn = t?.javaClass?.methods?.firstOrNull { it.name == "getShortName" && it.parameterCount == 0 }
+                            ?.apply { isAccessible = true }?.invoke(t)?.toString() ?: continue
+                        registeredShortNames += sn
+                    }
+                }
+            }
+            for (sn in expectedShortNames) {
+                Assert.assertTrue(
+                    "plugin.xml 注册的 shortName $sn 没在沙箱 InspectionProfile 里注册（实际：$registeredShortNames）",
+                    sn in registeredShortNames
+                )
+            }
+        }
+
+        // ---- B) 关键类能不能被沙箱 ClassLoader 实例化（你之前报的 Cannot create class 就是这一关过不去） ----
+        val mustLoad = listOf(
+            "com.pan.dashstyle.DashStyleHighlightAnnotator",
+            "com.pan.dashstyle.StaticGlobalHighlightVisitor",
+            "com.pan.dashstyle.CssPreprocessorTranspileIntention",
+            "com.pan.dashstyle.UnusedCssModuleClassInspection",
+            "com.pan.dashstyle.DuplicateCssDeclarationsInspection",
+            "com.pan.dashstyle.DashStyleDocumentationProvider",
+            "com.pan.dashstyle.InlineStyleToCssModuleIntention",
+            "com.pan.dashstyle.ExtractColorsAction"
+        )
+        val cl = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
+        for (cn in mustLoad) {
+            val cls = runCatching { Class.forName(cn, true, cl) }.getOrNull()
+            Assert.assertNotNull("关键类 $cn 无法加载，真实环境里大概率也会报 Cannot create class", cls)
+            // 无参构造实例化（IntentionAction / Inspection / Annotator / HighlightVisitor 都是要求无参构造的）
+            val hasNoArgCtor = cls!!.declaredConstructors.any { it.parameterCount == 0 }
+            if (hasNoArgCtor) {
+                runCatching {
+                    cls.getDeclaredConstructor().also { it.isAccessible = true }.newInstance()
+                }.onFailure { t ->
+                    Assert.fail("关键类 $cn 能 load 但无参构造失败，真实环境 100% 会报 Cannot create class：${t.message}")
+                }
+            }
+        }
+
+        // ---- C) DuplicateCssDeclarationsInspection 的 companion normalize 能跑（签名和我们静态绑的一致） ----
+        val cssFile = myFixture.configureByText("t.css", ".a{padding:0; margin: 0;}")
+        val firstDecl: CssDeclaration? = ApplicationManager.getApplication().runReadAction<CssDeclaration?> {
+            val ruleset = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(cssFile, CssRuleset::class.java)
+                .firstOrNull()
+            val decls = ruleset?.block
+                ?.let { b ->
+                    com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(b, CssDeclaration::class.java).toList()
+                }
+            decls?.firstOrNull()
+        }
+        val sigSameOk = runCatching {
+            DuplicateCssDeclarationsInspection.normalizeSignatureStatic(listOfNotNull(firstDecl))
+        }.isSuccess // 不崩就行
+        Assert.assertTrue("DuplicateCss normalizer 静态绑定签名匹配", sigSameOk)
+
+        // ---- D) UnusedCssModuleClassInspection.shortName 在沙箱里返回 XML 注册的那个（不是 Kotlin 默认类名） ----
+        val unusedShort = UnusedCssModuleClassInspection().shortName
+        Assert.assertTrue(
+            "UnusedCssModuleClassInspection.shortName=$unusedShort 应该是 plugin.xml 注册的 DashStyle.UnusedCssClass.* 其中之一",
+            unusedShort in expectedShortNames
+        )
     }
 }
