@@ -7,10 +7,7 @@ import java.util.regex.Pattern;
 /**
  * 独立的颜色工具验证器（纯 Java，不需要 Gradle / IntelliJ 环境）。
  *
- * 与 Util.kt 中 normalizeColor / suggestColorVarName / scanColorsInText 对应纯 Java 实现：
- *  1. 对同一组输入两边跑，得到的结果应当一致。
- *  2. 这里也做一套简单 micro-benchmark（10k 次重复）方便对比性能优化前后的差异。
- *
+ * 与 Util.kt 中 normalizeColor / suggestColorVarName / scanColorsInText 对应纯 Java 实现。
  * 使用方式（项目根目录执行）：
  *   javac -d /tmp/build src/test/java/com/pan/dashstyle/ColorToolingVerifier.java
  *   java  -cp /tmp/build com.pan.dashstyle.ColorToolingVerifier
@@ -18,7 +15,6 @@ import java.util.regex.Pattern;
 @SuppressWarnings({"unchecked", "rawtypes"})
 public class ColorToolingVerifier {
 
-    // ============== 归一化：与 Util.normalizeColor 对应 ==============
     private static final Pattern RE_HEX8 = Pattern.compile("#([0-9a-fA-F]{8})\\b");
     private static final Pattern RE_HEX6 = Pattern.compile("#([0-9a-fA-F]{6})\\b");
     private static final Pattern RE_HEX3 = Pattern.compile("#([0-9a-fA-F]{3})\\b");
@@ -108,7 +104,6 @@ public class ColorToolingVerifier {
         return out.toArray(new String[0]);
     }
 
-    // ============== 语义变量名：与 Util.suggestColorVarName 对应 ==============
     private static final Map<String, String> NAMED_TO_HEX = new HashMap<>();
     static {
         NAMED_TO_HEX.put("white","ffffff"); NAMED_TO_HEX.put("black","000000");
@@ -168,11 +163,9 @@ public class ColorToolingVerifier {
         return cand;
     }
 
-    // ============== 扫描：与 Util.scanColorsInText 对应 ==============
     private static final Pattern RE_WORD = Pattern.compile("[A-Za-z][A-Za-z0-9-]*");
     private static final Pattern[] STRUCT = {RE_HEX8, RE_HEX6, RE_HEX3, RE_RGBA, RE_HSLA};
 
-    /** 返回 [原始文本, 归一化, start, end] 的 List<int[]> 用并行字符串列表记录；简单起见输出 List<Object[]>. */
     static List<Object[]> scanColorsInText(String text) {
         int n = text.length();
         List<Object[]> out = new ArrayList<>();
@@ -213,7 +206,6 @@ public class ColorToolingVerifier {
         return Character.isLetterOrDigit(ch) || ch == '_' || ch == '-';
     }
 
-    // ============== 验证与微基准 ==============
     private static int failed = 0;
     private static int passed = 0;
     private static void checkEq(String name, Object expected, Object actual) {
@@ -233,7 +225,7 @@ public class ColorToolingVerifier {
         checkEq("rgba alpha% 50", "rgba(10,20,30,0.5)", normalizeColor("rgba(10,20,30,50%)"));
         checkEq("hsl", "hsl(120,50%,50%)", normalizeColor("hsl(120, 50%, 50%)"));
         checkEq("named case-insensitive", "cornflowerblue", normalizeColor("CornFlowerBlue"));
-        checkEq("invalid returns null (2 参数)", null, normalizeColor("rgba(1,2)"));
+        checkEq("invalid returns null (2 args)", null, normalizeColor("rgba(1,2)"));
         checkEq("invalid returns null (#ggg)", null, normalizeColor("#ggg"));
     }
 
@@ -259,24 +251,21 @@ public class ColorToolingVerifier {
         checkEq("scan contains #fff expand #ffffff", true, norms.contains("#ffffff"));
         checkEq("scan contains red", true, norms.contains("red"));
         checkEq("scan contains rgb(255,0,0)", true, norms.contains("rgb(255,0,0)"));
-        // HEX6 只识别一个（不会和 HEX3 重叠）
         String s2 = ".x { color: #abcdef; }";
         checkEq("scan HEX6 only 1", 1, scanColorsInText(s2).size());
-        // 边界：white-space 里 white 应排除
         String s3 = ".a { x: 1; white-space: nowrap; }";
         List<Object[]> o3 = scanColorsInText(s3);
         int c = 0;
         for (Object[] r : o3) if ("white".equals(r[1])) c++;
         checkEq("scan white in white-space excluded", 0, c);
-        // offsets sorted
         List<Object[]> r4 = scanColorsInText(".a{color:#fff;background:blue}");
+        boolean sorted = true;
         for (int i = 1; i < r4.size(); i++) {
             int prev = (Integer) r4.get(i - 1)[2];
             int curr = (Integer) r4.get(i)[2];
-            if (prev > curr) { checkEq("scan offset sorted fail i=" + i, true, false); break; }
+            if (prev > curr) { sorted = false; break; }
         }
-        if (r4.size() >= 2) checkEq("scan offsets sorted (sample)", true, true);
-        // roundtrip substring
+        if (r4.size() >= 2) checkEq("scan offsets sorted (sample)", true, sorted);
         String src = "x: rgba(1,2,3,0.5); y: #12345678;";
         List<Object[]> ro = scanColorsInText(src);
         int ok = 0;
@@ -289,17 +278,16 @@ public class ColorToolingVerifier {
     }
 
     static void runBenchmark() {
-        System.out.println("\n--- micro-bench (颜色工具 10k iterations 热身 2k) ---");
+        System.out.println("\n--- micro-bench (10k iters, warmup 2k) ---");
         String big = buildBigCss(50);
-        // warm
         for (int i = 0; i < 2000; i++) { normalizeColor("#" + Integer.toHexString((i & 0xFFFFFF) | 0xFF000000)); }
         long t0 = System.nanoTime();
         for (int i = 0; i < 10_000; i++) scanColorsInText(big);
         long t1 = System.nanoTime();
         double usPerIter = (t1 - t0) / 10_000.0 / 1000.0;
         System.out.printf(Locale.ROOT,
-            "scanColorsInText( ~%d colors*50 = %d chars, 10k iters): total=%.1f ms, avg=%.1f µs/iter%n",
-            countMatches(big, "#"), big.length(), (t1 - t0) / 1_000_000.0, usPerIter);
+            "scanColorsInText(%d chars, 10k it): total=%.1f ms, avg=%.1f µs/iter%n",
+            big.length(), (t1 - t0) / 1_000_000.0, usPerIter);
     }
 
     private static int countMatches(String s, String sub) {

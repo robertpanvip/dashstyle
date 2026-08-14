@@ -2,22 +2,15 @@ package com.pan.dashstyle;
 
 import java.util.*;
 import java.util.regex.*;
-import java.io.*;
-import java.nio.file.*;
 
 /**
  * 独立验证：JS 字面量 → 严格 JSON、inlineStyle → CSS 转换 (bug 修复验证)
  *
  * 运行:
- *   cd /workspace
  *   javac -d build/test-out src/test/java/com/pan/dashstyle/InlineStyleConverterVerifier.java
  *   java -cp build/test-out com.pan.dashstyle.InlineStyleConverterVerifier
  */
 public class InlineStyleConverterVerifier {
-
-    // ================================================================
-    // 镜像 JsonToCssCopyPastePreProcessor 的核心逻辑 (纯 Java 版)
-    // ================================================================
 
     private static final Set<String> UNITLESS = new HashSet<>(Arrays.asList(
         "flex", "flex-grow", "flex-shrink", "flex-basis", "order", "z-index",
@@ -51,10 +44,6 @@ public class InlineStyleConverterVerifier {
         "rotate","rotateX","rotateY","rotateZ","skew","skewX","skewY"
     ));
 
-    // ---- 简化的迷你 JSON Parser (针对我们的转换，够用即可) ----
-    // 使用外部 JSON 库会增加依赖，我们用简单的 Object/Map/List 手写解析
-    // 注意：这个迷你解析器只接受 "严格 JSON"，也就是 jsLiteralToStrictJson 的输出
-
     static Object parseJson(String s) {
         s = s.trim();
         int[] idx = {0};
@@ -80,7 +69,7 @@ public class InlineStyleConverterVerifier {
     @SuppressWarnings("unchecked")
     static LinkedHashMap<String, Object> parseObj(String s, int[] idx) {
         LinkedHashMap<String, Object> m = new LinkedHashMap<>();
-        idx[0]++; // {
+        idx[0]++;
         skipWs(s, idx);
         if (s.charAt(idx[0]) == '}') { idx[0]++; return m; }
         while (true) {
@@ -101,7 +90,7 @@ public class InlineStyleConverterVerifier {
     }
     static List<Object> parseArr(String s, int[] idx) {
         List<Object> a = new ArrayList<>();
-        idx[0]++; // [
+        idx[0]++;
         skipWs(s, idx);
         if (s.charAt(idx[0]) == ']') { idx[0]++; return a; }
         while (true) {
@@ -157,7 +146,6 @@ public class InlineStyleConverterVerifier {
         try { return Integer.parseInt(num); } catch (Exception ex) { return Long.parseLong(num); }
     }
 
-    // ============== JS Literal -> Strict JSON ==============
     static String jsLiteralToStrictJson(String js) {
         StringBuilder sb = new StringBuilder(js.length()+16);
         int i = 0, n = js.length();
@@ -208,7 +196,6 @@ public class InlineStyleConverterVerifier {
     static boolean isIdentStart(char c) { return Character.isLetter(c) || c=='_' || c=='$'; }
     static boolean isIdentPart(char c) { return Character.isLetterOrDigit(c) || c=='_' || c=='$'; }
 
-    // ============== normalizePastedStyleExpression ==============
     static String normalizePastedStyleExpression(String raw) {
         String t = raw.trim();
         Pattern doubleBrace = Pattern.compile("^\\s*[a-zA-Z_$][\\w$]*\\s*=\\s*\\{\\{\\s*([\\s\\S]*?)\\s*\\}\\}\\s*$");
@@ -229,7 +216,6 @@ public class InlineStyleConverterVerifier {
         try { parseJson(s); return true; } catch (Exception ex) { return false; }
     }
 
-    // ============== CSS 转换 ==============
     static String camelToKebabStable(String name) {
         StringBuilder sb = new StringBuilder();
         boolean prevLow = false;
@@ -271,12 +257,16 @@ public class InlineStyleConverterVerifier {
         List<String> out = new ArrayList<>();
         for (Object o : arr) {
             if (o instanceof Number || o instanceof String || o instanceof Boolean) {
-                String raw = o instanceof Number? String.valueOf(((Number)o).doubleValue()).replaceAll("\\.0$", "") : String.valueOf(o);
+                String raw = o instanceof Number? trimDot0(String.valueOf(((Number)o).doubleValue())) : String.valueOf(o);
                 String f = fmtPrimitiveValue(origKey, kebab, raw);
                 if (f != null) out.add(f);
             }
         }
         return out.isEmpty()? null : String.join(" ", out);
+    }
+
+    static String trimDot0(String s) {
+        return s.endsWith(".0") ? s.substring(0, s.length()-2) : s;
     }
 
     static String fmtTransformArr(List<Object> arr) {
@@ -292,8 +282,7 @@ public class InlineStyleConverterVerifier {
                 String raw;
                 if (v instanceof Number) {
                     double d = ((Number)v).doubleValue();
-                    if (d == Math.floor(d) && !Double.isInfinite(d)) raw = String.valueOf((long)d);
-                    else raw = String.valueOf(d);
+                    raw = (d == Math.floor(d) && !Double.isInfinite(d)) ? String.valueOf((long)d) : String.valueOf(d);
                 } else {
                     raw = String.valueOf(v);
                 }
@@ -313,22 +302,19 @@ public class InlineStyleConverterVerifier {
     @SuppressWarnings("unchecked")
     static String formatCssValue(String origKey, String kebab, Object el) {
         if (el == null) return null;
-        if (el instanceof Boolean) return null; // CSS 无 bool
+        if (el instanceof Boolean) return null;
         if (el instanceof Number) {
             double d = ((Number)el).doubleValue();
-            String raw;
-            if (d == Math.floor(d) && !Double.isInfinite(d)) raw = String.valueOf((long)d);
-            else raw = String.valueOf(d);
+            String raw = (d == Math.floor(d) && !Double.isInfinite(d)) ? String.valueOf((long)d) : String.valueOf(d);
             return fmtPrimitiveValue(origKey, kebab, raw);
         }
         if (el instanceof String) return fmtPrimitiveValue(origKey, kebab, (String)el);
         if (el instanceof List) {
             List<Object> arr = (List<Object>)el;
-            if ("transform".equals(kebab) && arr.stream().allMatch(x -> x instanceof Map)) return fmtTransformArr(arr);
+            if ("transform".equals(kebab) && allMaps(arr)) return fmtTransformArr(arr);
             if (SHORTHAND_ARRAY_CAMEL.contains(origKey) || "padding".equals(kebab) || "margin".equals(kebab) || "border-radius".equals(kebab)) {
                 return fmtShorthandArray(origKey, kebab, arr);
             }
-            // 其它数组：空格拼接
             List<String> items = new ArrayList<>();
             for (Object a : arr) {
                 String f = formatCssValue(origKey, kebab, a);
@@ -340,6 +326,11 @@ public class InlineStyleConverterVerifier {
             return "/* unsupported object - expand manually */";
         }
         return null;
+    }
+
+    static boolean allMaps(List<Object> l) {
+        for (Object o : l) if (!(o instanceof Map)) return false;
+        return !l.isEmpty();
     }
 
     @SuppressWarnings("unchecked")
@@ -357,13 +348,13 @@ public class InlineStyleConverterVerifier {
         return lines.isEmpty()? "" : String.join("\n", lines) + "\n";
     }
 
-    // ============== 断言框架 ==============
     static int passed = 0, failed = 0;
     static List<String> fails = new ArrayList<>();
     static void assertEquals(Object expected, Object actual, String msg) {
         boolean ok = Objects.equals(expected, actual);
         if (expected instanceof Set && actual instanceof String) {
-            Set<String> ex = (Set<String>) expected;
+            @SuppressWarnings({"unchecked","rawtypes"})
+            Set<String> ex = (Set) expected;
             Set<String> ac = new HashSet<>(Arrays.asList(((String)actual).split(", ")));
             ok = Objects.equals(ex, ac);
         }
@@ -377,6 +368,7 @@ public class InlineStyleConverterVerifier {
     }
     static void assertNotNull(Object o, String msg) { if (o != null) passed++; else { failed++; fails.add("FAIL(not null): "+msg); System.out.println("  ✗ FAIL "+msg); } }
     static void assertNull(Object o, String msg) { if (o == null) passed++; else { failed++; fails.add("FAIL(null): "+msg); System.out.println("  ✗ FAIL "+msg); } }
+    static void assertFalse_(boolean cond, String msg) { if (!cond) passed++; else { failed++; fails.add("FAIL(false): "+msg); System.out.println("  ✗ FAIL(false) "+msg); } }
     static void section(String s) { System.out.println("\n━━━ "+s+" ━━━"); }
 
     public static void main(String[] args) {
@@ -384,8 +376,7 @@ public class InlineStyleConverterVerifier {
         System.out.println("║  InlineStyle JSON/JS → CSS 修复验证器            ║");
         System.out.println("╚══════════════════════════════════════════════════╝");
 
-        section("Bug #1: JS 字面量 → JSON (用户最常复制的 style={{...}} 形式)");
-        // 真实 inline-style 代码：用户从 JSX 复制 style={{...}} 或内部对象
+        section("Bug #1: JS 字面量 → JSON");
         String js1 = "{ fontSize: 14, backgroundColor: \"red\", display: \"flex\" }";
         String json1 = jsLiteralToStrictJson(js1);
         assertNotNull(json1, "非严格JSON解析");
@@ -396,31 +387,25 @@ public class InlineStyleConverterVerifier {
         assertNotNull(norm2, "normalize 完整 style={{...}} 形式");
         assertEquals(true, looksLikeStrictJson(norm2), "产出是严格JSON: " + norm2);
 
-        // 单引号字符串
         String js3 = "{ 'font-size': '14px', 'color': 'blue' }";
         String json3 = jsLiteralToStrictJson(js3);
         assertContains(json3, "\"font-size\"", "单引号 key 被转双引号");
         assertContains(json3, "\"blue\"", "单引号 val 被转双引号");
 
-        // 尾随逗号
         String js4 = "{ a: 1, b: 2, }";
         String json4 = jsLiteralToStrictJson(js4);
         assertEquals(true, looksLikeStrictJson(json4), "尾随逗号移除成功 " + json4);
 
-        // 注释
         String js5 = "{ /* padding */ margin: 10, // 行注释\n color: \"red\" }";
         String json5 = jsLiteralToStrictJson(js5);
         assertEquals(true, looksLikeStrictJson(json5), "注释被移除 " + json5);
 
-        // undefined → null
         String js6 = "{ display: undefined, flex: 1 }";
         String json6 = jsLiteralToStrictJson(js6);
         assertContains(json6, "null", "undefined 被替换成 null");
-
         System.out.println("  ✓ JS 字面量解析通过");
 
         section("Bug #2: 之前不生效的真实 inlineStyle 复制转换");
-        // 之前: key无引号 → looksLikeJsonStyleObject() 判 false → 不转换（用户说的最大bug）
         String fromReact = "{ fontSize: 14, display: 'flex', alignItems: 'center', padding: 20, margin: 0 }";
         String jsonFixed = jsLiteralToStrictJson(fromReact);
         String css = convertInlineStyleToCss(jsonFixed);
@@ -433,32 +418,23 @@ public class InlineStyleConverterVerifier {
         System.out.println("  ✓ 修复后的 React inline-style 转换通过!");
 
         section("数值单位修复: 负数/小数/unitless 属性");
-        // 负数之前不加 px
         String negCss = cssOf("{\"marginLeft\": -15}");
         assertContains(negCss, "margin-left: -15px;", "负数 marginLeft 加 -15px ✔");
-
-        // 小数加 px (letterSpacing 是需要 px 的)
         String decCss = cssOf("{\"letterSpacing\": 0.5}");
         assertContains(decCss, "letter-spacing: 0.5px;", "小数 letterSpacing 加 px");
-
-        // unitless: flex, zIndex, opacity, lineHeight, fontWeight 不要 px
         String unitless = cssOf("{\"flex\":1,\"zIndex\":10,\"opacity\":0.5,\"lineHeight\":1.5,\"fontWeight\":600}");
         assertContains(unitless, "flex: 1;", "flex: 1 不加px ✔");
         assertContains(unitless, "z-index: 10;", "zIndex 不加px ✔");
         assertContains(unitless, "opacity: 0.5;", "opacity 不加px ✔");
         assertContains(unitless, "line-height: 1.5;", "line-height 不加px ✔");
         assertContains(unitless, "font-weight: 600;", "font-weight 不加px ✔");
-
-        // 之前的 bug: flex:1 → 变成 1px, 现在修复
         System.out.println("  ✓ 单位规则修复通过 (负数/小数/unitless)");
 
         section("数组简写属性 padding/margin");
         String pad = cssOf("{\"padding\": [10, 20, 30, 40]}");
         assertContains(pad, "padding: 10px 20px 30px 40px;", "padding 数组简写");
-
         String margin = cssOf("{\"margin\": [0, \"auto\"]}");
         assertContains(margin, "margin: 0 auto;", "margin [0,auto]");
-
         String radius = cssOf("{\"borderRadius\": [4, 8]}");
         assertContains(radius, "border-radius: 4px 8px;", "border-radius 数组");
         System.out.println("  ✓ 简写数组属性通过");
@@ -468,24 +444,18 @@ public class InlineStyleConverterVerifier {
         assertContains(transform, "translateX(10px)", "translateX(10px)");
         assertContains(transform, "translateY(-5px)", "translateY(-5px)");
         assertContains(transform, "rotateY(45deg)", "rotateY 加 deg 单位 (不加px)");
-
-        // 已经带单位的跳过
         String transform2 = cssOf("{\"transform\": [{\"scale\": \"1.2\", \"rotate\": \"90deg\"}]}");
-        assertContains(transform2, "scale(1.2)", "scale 数值无角度→加 px? no: scale 是倍数，这里是字符串按已有的来");
+        assertContains(transform2, "scale(1.2)", "scale(1.2) 是字符串原样");
         assertContains(transform2, "rotate(90deg)", "已有 deg 保留");
         System.out.println("  ✓ React transform 数组转换通过");
 
         section("其他: null/boolean/family 引号/稳定 kebab 转换");
         String nullBool = cssOf("{\"display\": null, \"enabled\": true, \"color\": \"red\"}");
         assertContains(nullBool, "color: red;", "正常属性保留");
-        // display:null 跳过，所以没有 display:null 这一行
         assertFalse_(nullBool.contains("enabled:"), "boolean 属性跳过");
         assertFalse_(nullBool.contains("display:"), "null 属性跳过");
-
         String family = cssOf("{\"fontFamily\": \"PingFang SC\"}");
         assertContains(family, "\"PingFang SC\"", "多字字体名加双引号");
-
-        // camelToKebabStable: 已经是 kebab-case 的不变
         String already = cssOf("{\"font-size\": \"14px\", \"z-index\": 9}");
         assertContains(already, "font-size: 14px;", "原已是 kebab-case 不变");
         assertContains(already, "z-index: 9;", "unitless 不加px 且不变");
@@ -511,26 +481,24 @@ public class InlineStyleConverterVerifier {
         assertNotNull(norm, "大段综合 normalize 成功");
         String bigCss = convertInlineStyleToCss(norm);
         assertNotNull(bigCss, "大段综合 CSS 生成成功");
-        System.out.println("  生成结果:");
-        for (String line : bigCss.split("\n")) System.out.println("    " + line);
         String[] expectKeys = {"display","justify-content","align-items","padding","margin-top","z-index","flex","opacity","border-radius","transform","font-family"};
         for (String k : expectKeys) assertContains(bigCss, k+":", "包含 " + k);
         assertFalse_(bigCss.contains("color:"), "undefined 的 color 被跳过");
         assertFalse_(bigCss.contains("/*"), "综合例子没有 unsupported 注释");
         System.out.println("  ✓ 综合场景通过");
 
-        System.out.println("\n" + "═".repeat(52));
+        System.out.println("\n" + pad("═",52));
         System.out.println("  ✓ Passed: " + passed);
         System.out.println("  ✗ Failed: " + failed);
         if (!fails.isEmpty()) { System.out.println("\n失败列表:"); for (int i=0;i<fails.size();i++) System.out.println("  "+(i+1)+". "+fails.get(i)); }
-        System.out.println("═".repeat(52));
+        System.out.println(pad("═",52));
         if (failed == 0) System.out.println("\n🎉 所有 InlineStyle→CSS 修复测试通过！");
         else System.exit(1);
     }
-    static String cssOf(String json) {
-        return convertInlineStyleToCss(json);
+    static String pad(String s, int n) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) sb.append(s);
+        return sb.toString();
     }
-    static void assertFalse_(boolean cond, String msg) {
-        if (!cond) passed++; else { failed++; fails.add("FAIL(false): "+msg); System.out.println("  ✗ FAIL(false) "+msg); }
-    }
+    static String cssOf(String json) { return convertInlineStyleToCss(json); }
 }
