@@ -6,48 +6,19 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * 测试 JsonToCssCopyPastePreProcessor 中的核心转换逻辑
- * 不依赖 IntelliJ 环境，直接测试纯逻辑函数
+ * 测试 JSON / JS 字面量 → CSS 的转换。
+ * 一律调用生产代码：JsonToCssCopyPastePreProcessor.Util.convertJsonToCss / convertOrNull
+ * —— 之前这个类里"内联复制了一份简化版 convertJsonToCss"，
+ * 导致 unitless 判断、宽松 JSON 解析等与生产逻辑不符，现在统一收口。
  */
 class JsonToCssConverterTest {
 
-    // 用反射或直接复制逻辑来测试；这里选择直接内联测试逻辑，保持独立
-    private fun convertJsonToCss(jsonStr: String): String {
-        val gson = com.google.gson.Gson()
-        val obj = try {
-            gson.fromJson(jsonStr, com.google.gson.JsonObject::class.java)
-        } catch (_: Exception) {
-            return jsonStr
-        }
+    private fun convertJsonToCss(jsonStr: String): String =
+        JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(jsonStr)
 
-        val lines = mutableListOf<String>()
+    private fun convertOrNull(raw: String): String? =
+        JsonToCssCopyPastePreProcessor.Util.convertOrNull(raw)
 
-        for ((key, element) in obj.entrySet()) {
-            val valueStr = when {
-                element.isJsonPrimitive -> element.asString
-                else -> element.toString()
-            }
-
-            val kebabKey = key.replace(Regex("([a-z])([A-Z])"), "$1-$2").lowercase()
-
-            val finalValue = if (valueStr.matches(Regex("^\\d+$")) &&
-                valueStr != "0" &&
-                !valueStr.contains(Regex("[a-zA-Z%]+"))
-            ) {
-                "${valueStr}px"
-            } else {
-                valueStr
-            }
-
-            lines.add("  $kebabKey: $finalValue;")
-        }
-
-        return if (lines.isNotEmpty()) {
-            lines.joinToString("\n") + "\n"
-        } else {
-            ""
-        }
-    }
 
     private fun looksLikeJsonStyleObject(text: String): Boolean {
         val trimmed = text.trim()
@@ -170,7 +141,8 @@ class JsonToCssConverterTest {
     @Test
     fun `convert - 数字值 1 number`() {
         val result = convertJsonToCss("""{"flex": 1}""")
-        assertEquals("  flex: 1px;\n", result)
+        // flex 是 unitless（CSS 语义），不应加 px
+        assertEquals("  flex: 1;\n", result)
     }
 
     // ===================== 多属性测试 =====================
@@ -209,7 +181,9 @@ class JsonToCssConverterTest {
     @Test
     fun `convert - 解析失败返回原字符串`() {
         val invalid = "{not valid json"
-        assertEquals(invalid, convertJsonToCss(invalid))
+        // 生产 Util.convertJsonToCss 在解析失败时抛 IllegalArgumentException / IllegalStateException；
+        // 调用 convertOrNull 则返回 null（与 preprocessOnPaste 保持一致，失败不动原字符串）
+        assertEquals(null, convertOrNull(invalid))
     }
 
     @Test
@@ -254,14 +228,17 @@ class JsonToCssConverterTest {
     @Test
     fun `convert - 布尔 JSON 值（少见但要处理）`() {
         val result = convertJsonToCss("""{"enabled": true}""")
-        // boolean 非 JsonPrimitive string，走 toString()
-        assertEquals("  enabled: true;\n", result)
+        // CSS 没有 boolean 属性类型，生产逻辑跳过 boolean 条目，整行不生成
+        assertEquals("", result) // 没有条目 → lines 为空 → 返回 ""，与空对象保持一致
+        assertFalse(result.contains("enabled:"), "布尔条目应被忽略，不应出现在 CSS 里")
     }
 
     @Test
     fun `convert - null JSON 值`() {
         val result = convertJsonToCss("""{"foo": null}""")
-        assertEquals("  foo: null;\n", result)
+        // null 值（JsonNull / JS 里的 undefined 转 null）在生产逻辑里被跳过，不生成 CSS 行
+        assertEquals("", result)
+        assertFalse(result.contains("foo:"), "null 条目应被忽略")
     }
 
     // ------ inlineStyle 抽取后的 unit 边界，transform 数组 ------

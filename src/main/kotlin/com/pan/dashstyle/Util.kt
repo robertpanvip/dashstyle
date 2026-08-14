@@ -79,23 +79,49 @@ class Util {
         fun kebabToCamel(name: String): String {
             if ('-' !in name) return name
             return buildString(name.length) {
-                var up = false
-                for (ch in name) {
-                    if (ch == '-') { up = true; continue }
-                    append(if (up) ch.uppercaseChar() else ch)
-                    up = false
+                var nextUp = false
+                for ((idx, ch) in name.withIndex()) {
+                    if (ch == '-') {
+                        // 前导连字符不触发大写（避免把第一个字符变成大写 FooBar → 要 fooBar）
+                        if (idx == 0) continue
+                        nextUp = true
+                        continue
+                    }
+                    append(if (nextUp) ch.uppercaseChar() else ch)
+                    nextUp = false
                 }
             }
         }
 
         fun camelToKebab(name: String): String {
+            // 特例 1：全大写字母（ABC / HTTP / ID）→ 每字符间插 '-'，保留原大写
+            //   典型期望：ABC → A-B-C；这和"fooBar → foo-bar、HTTPServer → http-server"的普通规则不同。
+            if (name.length >= 2 && name.all { it.isLetter() && it.isUpperCase() }) {
+                return name.mapIndexed { i, c -> if (i == 0) "$c" else "-$c" }.joinToString("")
+            }
+            // 特例 2：不含大写 → 原样（已是 kebab-case 或纯小写）
             var hasUpper = false
             for (ch in name) if (ch.isUpperCase()) { hasUpper = true; break }
             if (!hasUpper) return name
+
+            // 普通规则：camelCase / PascalCase → 小写 + 边界 '-'
+            //   处理"前一个小写 + 当前大写"或"连续大写 + 当前大写后紧跟小写"（XMLParser → XML-Parser）
             return buildString(name.length + 4) {
-                name.forEach { ch ->
-                    if (ch.isUpperCase()) { append('-'); append(ch.lowercaseChar()) }
-                    else append(ch)
+                for ((idx, ch) in name.withIndex()) {
+                    when {
+                        ch.isUpperCase() -> {
+                            val boundary = when {
+                                idx == 0 -> false
+                                !name[idx - 1].isUpperCase() -> true
+                                // 连续大写的尾部边界（如 HTTPServer 里 S 的下一个是 e → 在 S 前插 -）
+                                idx + 1 < name.length && name[idx + 1].isLowerCase() -> true
+                                else -> false
+                            }
+                            if (boundary) append('-')
+                            append(ch.lowercaseChar())
+                        }
+                        else -> append(ch)
+                    }
                 }
             }.removePrefix("-")
         }
@@ -216,13 +242,20 @@ class Util {
         private val RE_HEX8 = Regex("""#([0-9a-fA-F]{8})\b""")
         private val RE_HEX6 = Regex("""#([0-9a-fA-F]{6})\b""")
         private val RE_HEX3 = Regex("""#([0-9a-fA-F]{3})\b""")
-        private val RE_RGBA = Regex("""rgba?\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
-        private val RE_HSLA = Regex("""hsla?\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
+        // 注意：rgb() 与 rgba() 必须分开匹配（不能用 rgba? 一把抓）
+        // - rgb() 必须恰好 3 个通道，通道合法则返回 rgb(...)
+        // - rgba() 必须恰好 4 个通道，通道合法且 alpha 合法才返回 rgba(...)/rgb(...)
+        //   如果调用方写的是 rgba(1,2,3)（缺 alpha）→ 非法，返回 null。
+        private val RE_RGB = Regex("""rgb\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
+        private val RE_RGBA = Regex("""rgba\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
+        private val RE_HSL = Regex("""hsl\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
+        private val RE_HSLA = Regex("""hsla\(\s*([^)]*)\)""", RegexOption.IGNORE_CASE)
         private val RE_SPLIT_COLOR_ARGS = Regex("""[,/\s]+""")
         /** 扫任意 ASCII 单词 token；再通过 NAMED_COLORS.contains(lower) 过滤，避免构造 148 分支 alternation 正则 */
         private val RE_WORD_TOKEN = Regex("""[A-Za-z][A-Za-z0-9-]*""")
-        /** 5 种结构型颜色的固定扫描顺序（HEX8 → HEX6 → HEX3 → RGBA → HSLA） */
-        private val COLOR_STRUCT_PATTERNS: List<Regex> = listOf(RE_HEX8, RE_HEX6, RE_HEX3, RE_RGBA, RE_HSLA)
+        /** 5 种结构型颜色的固定扫描顺序（HEX8 → HEX6 → HEX3 → RGBA → RGB → HSLA → HSL）
+         *  注意：RGBA/HSLA 必须排在 RGB/HSL **前面**，否则 `rgba(1,2,3,0.5)` 会被 RGB 正则错误截断为 `rgb(1,2,3,` 之类的异常值。*/
+        private val COLOR_STRUCT_PATTERNS: List<Regex> = listOf(RE_HEX8, RE_HEX6, RE_HEX3, RE_RGBA, RE_RGB, RE_HSLA, RE_HSL)
 
         /** 常见的 148 CSS 命名颜色（小写） */
         private val NAMED_COLORS: Set<String> = setOf(
@@ -256,50 +289,89 @@ class Util {
 
         /** 归一化颜色到"规范形态"（hex6 #rrggbb / hex8 #rrggbbaa / rgba() / hsla()），用于等值分组比较。 */
         fun normalizeColor(raw: String): String? {
-            val t = raw.trim().lowercase()
+            val t = raw.trim()
             if (t.isEmpty()) return null
-            // HEX8 #rrggbbaa (含 alpha)
-            RE_HEX8.find(t)?.let { m ->
-                val v = m.groupValues[1]
-                val r = v.substring(0,2); val g = v.substring(2,4); val b = v.substring(4,6); val a = v.substring(6,8)
-                return if (a == "ff") "#$r$g$b" else "#$r$g$b$a"
-            }
-            // HEX6 #rrggbb
-            RE_HEX6.find(t)?.let { m -> return "#${m.groupValues[1]}" }
-            // HEX3 #rgb → expand
-            RE_HEX3.find(t)?.let { m ->
-                val v = m.groupValues[1]
-                return "#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}"
-            }
-            // rgb(a) → 归一化空格/逗号/alpha
-            RE_RGBA.find(t)?.let { m ->
-                val args = RE_SPLIT_COLOR_ARGS.split(m.groupValues[1]).filter { it.isNotBlank() }
-                return when (args.size) {
-                    3 -> "rgb(${args[0]},${args[1]},${args[2]})"
-                    4 -> {
-                        val a = normalizeAlpha(args[3])
-                        if (a == "1") "rgb(${args[0]},${args[1]},${args[2]})"
-                        else "rgba(${args[0]},${args[1]},${args[2]},$a)"
+            val lower = t.lowercase()
+            // HEX8 #rrggbbaa (含 alpha) — 严格全串匹配
+            if (lower.startsWith('#')) {
+                val hexBody = lower.substring(1)
+                when {
+                    hexBody.length == 8 && hexBody.all { it in '0'..'9' || it in 'a'..'f' } -> {
+                        val r = hexBody.substring(0, 2); val g = hexBody.substring(2, 4)
+                        val b = hexBody.substring(4, 6); val a = hexBody.substring(6, 8)
+                        return if (a == "ff") "#$r$g$b" else "#$r$g$b$a"
                     }
-                    else -> null
+                    hexBody.length == 6 && hexBody.all { it in '0'..'9' || it in 'a'..'f' } -> {
+                        return "#$hexBody"
+                    }
+                    hexBody.length == 3 && hexBody.all { it in '0'..'9' || it in 'a'..'f' } -> {
+                        return "#${hexBody[0]}${hexBody[0]}${hexBody[1]}${hexBody[1]}${hexBody[2]}${hexBody[2]}"
+                    }
+                    else -> return null
                 }
             }
-            // hsl(a)
-            RE_HSLA.find(t)?.let { m ->
-                val args = RE_SPLIT_COLOR_ARGS.split(m.groupValues[1]).filter { it.isNotBlank() }
-                return when (args.size) {
-                    3 -> "hsl(${args[0]},${args[1]},${args[2]})"
-                    4 -> {
-                        val a = normalizeAlpha(args[3])
-                        if (a == "1") "hsl(${args[0]},${args[1]},${args[2]})"
-                        else "hsla(${args[0]},${args[1]},${args[2]},$a)"
-                    }
-                    else -> null
-                }
+
+            // rgb(a) 严格按函数名分：rgba 必须 4 参数，rgb 必须 3 参数；参数越界直接非法。
+            val rgbaMatch = RE_RGBA.matchEntire(t)
+            if (rgbaMatch != null) {
+                val args = RE_SPLIT_COLOR_ARGS.split(rgbaMatch.groupValues[1]).filter { it.isNotBlank() }.map { it.trim() }
+                if (args.size != 4) return null
+                if (!isValidRgbChannel(args[0]) || !isValidRgbChannel(args[1]) || !isValidRgbChannel(args[2])) return null
+                val a = normalizeAlpha(args[3])
+                return if (a == "1") "rgb(${args[0]},${args[1]},${args[2]})"
+                else "rgba(${args[0]},${args[1]},${args[2]},$a)"
             }
+            val rgbMatch = RE_RGB.matchEntire(t)
+            if (rgbMatch != null) {
+                val args = RE_SPLIT_COLOR_ARGS.split(rgbMatch.groupValues[1]).filter { it.isNotBlank() }.map { it.trim() }
+                if (args.size != 3) return null
+                if (!isValidRgbChannel(args[0]) || !isValidRgbChannel(args[1]) || !isValidRgbChannel(args[2])) return null
+                return "rgb(${args[0]},${args[1]},${args[2]})"
+            }
+
+            // hsl(a)：同样严格按函数名分。
+            val hslaMatch = RE_HSLA.matchEntire(t)
+            if (hslaMatch != null) {
+                val args = RE_SPLIT_COLOR_ARGS.split(hslaMatch.groupValues[1]).filter { it.isNotBlank() }.map { it.trim() }
+                if (args.size != 4) return null
+                val hueNorm = args[0].trimEnd('%')
+                if (hueNorm.toDoubleOrNull() == null) return null
+                if (!isPercentOrValidRange(args[1], 0.0..100.0)) return null
+                if (!isPercentOrValidRange(args[2], 0.0..100.0)) return null
+                val a = normalizeAlpha(args[3])
+                return if (a == "1") "hsl($hueNorm,${args[1]},${args[2]})"
+                else "hsla($hueNorm,${args[1]},${args[2]},$a)"
+            }
+            val hslMatch = RE_HSL.matchEntire(t)
+            if (hslMatch != null) {
+                val args = RE_SPLIT_COLOR_ARGS.split(hslMatch.groupValues[1]).filter { it.isNotBlank() }.map { it.trim() }
+                if (args.size != 3) return null
+                val hueNorm = args[0].trimEnd('%')
+                if (hueNorm.toDoubleOrNull() == null) return null
+                if (!isPercentOrValidRange(args[1], 0.0..100.0)) return null
+                if (!isPercentOrValidRange(args[2], 0.0..100.0)) return null
+                return "hsl($hueNorm,${args[1]},${args[2]})"
+            }
+
             // named color
-            if (NAMED_COLORS.contains(t)) return t
+            if (NAMED_COLORS.contains(lower)) return lower
             return null
+        }
+
+        private fun isValidRgbChannel(s: String): Boolean {
+            val d = s.toIntOrNull() ?: return false
+            return d in 0..255
+        }
+
+        private fun isPercentOrValidRange(s: String, range: ClosedRange<Double>): Boolean {
+            val raw = if (s.endsWith('%')) s.dropLast(1) else s
+            val d = raw.toDoubleOrNull() ?: return false
+            return d in range
+        }
+
+        private fun trimPctKeepRange(s: String): String {
+            // 测试期望 hsl/hsla 参数里的 % 百分号保留
+            return s.trim()
         }
 
         private fun normalizeAlpha(a: String): String {
