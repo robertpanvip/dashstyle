@@ -1,0 +1,116 @@
+name: Test DashStyle Plugin
+
+# 对齐 Json2Typescript 的工作流风格：main 分支 push + 所有 PR 进 main 都会触发
+# 支持手动 workflow_dispatch，方便点按钮试跑
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+
+jobs:
+
+  # ------------------------------------------------------------------
+  # Job 1: 跑 IntelliJ Platform Gradle 插件的编译/打包（compileKotlin /
+  #        compileTestKotlin / buildPlugin）。-x test 跳过 Gradle Test Executor，
+  #        因为它依赖 IntelliJ sandbox，CI 里 JDK 版本组合容易起不来。
+  #        逻辑级单测交给 Job 2 的 3 个独立 Verifier（纯 Java，0 环境依赖）。
+  # ------------------------------------------------------------------
+  plugin-build:
+    name: Plugin compile & buildPlugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Setup Gradle 8.14 (对齐 release.yml)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14
+
+      - name: Compile Kotlin + buildPlugin
+        run: |
+          gradle --no-daemon \
+            compileKotlin \
+            compileTestKotlin \
+            buildPlugin \
+            -x test
+
+      - name: Upload plugin zip + build reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: plugin-build
+          path: |
+            build/distributions/*.zip
+            build/reports/
+            build/classes/
+
+  # ------------------------------------------------------------------
+  # Job 2: 3 个「独立 Verifier」（纯 Java / 0 环境依赖）
+  #   - LessFeatureVerifier            : Less & 选择器展开 / kebab·camel
+  #   - InlineStyleConverterVerifier   : JS字面量 → 严格 JSON / 单位(unitless/
+  #                                      负数/0/transform scale·rotate·translate)
+  #   - ColorToolingVerifier           : 颜色归一化/语义变量名/扫描 + 微基准
+  # 三个 Verifier 都只依赖 JDK stdlib，在任何 temurin JDK ≥ 11 上都能通过。
+  # ------------------------------------------------------------------
+  standalone-verifiers:
+    name: Standalone Java verifiers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: (Sanity) 确认 3 个 Verifier.java 都已经被提交到仓库
+        run: |
+          for f in \
+            src/test/java/com/pan/dashstyle/LessFeatureVerifier.java \
+            src/test/java/com/pan/dashstyle/InlineStyleConverterVerifier.java \
+            src/test/java/com/pan/dashstyle/ColorToolingVerifier.java
+          do
+            if [[ -f "$f" ]]; then
+              echo "✅ found: $f"
+            else
+              echo "❌ MISSING: $f  —— 必须先把 Verifier 源文件 push 到仓库里"
+              exit 2
+            fi
+          done
+
+      - name: Build & run LessFeatureVerifier
+        run: |
+          rm -rf /tmp/ver && mkdir -p /tmp/ver
+          javac -d /tmp/ver src/test/java/com/pan/dashstyle/LessFeatureVerifier.java
+          java -cp /tmp/ver com.pan.dashstyle.LessFeatureVerifier
+
+      - name: Build & run InlineStyleConverterVerifier
+        run: |
+          rm -rf /tmp/ver && mkdir -p /tmp/ver
+          javac -d /tmp/ver src/test/java/com/pan/dashstyle/InlineStyleConverterVerifier.java
+          java -cp /tmp/ver com.pan.dashstyle.InlineStyleConverterVerifier
+
+      - name: Build & run ColorToolingVerifier
+        run: |
+          rm -rf /tmp/ver && mkdir -p /tmp/ver
+          javac -d /tmp/ver src/test/java/com/pan/dashstyle/ColorToolingVerifier.java
+          java -cp /tmp/ver com.pan.dashstyle.ColorToolingVerifier
