@@ -42,9 +42,56 @@ jobs:
         with:
           gradle-version: 8.14
 
+      # ---------------- 关键修复：线上 test.yml 之前 FAIL 的原因 ----------------
+      # IntelliJ Platform Gradle 插件 + WebStorm-2025.3 SDK = 几百 MB 级依赖下载，
+      # GitHub Actions 默认连 repo.maven.apache.org / plugins.gradle.org / jetbrains-repository
+      # 会超时或 429。这里做两道防线：
+      #   A) 在 GRADLE_USER_HOME/init.d/ 里丢一个 mirrors-init.gradle（全局生效，就算后面漏传
+      #      --init-script 也会兜底）
+      #   B) 真正跑 gradle 时仍然显式 --init-script _local_init.gradle.kts（和本地一致）
+      - name: Inject Tencent mirrors to Gradle init.d (global fallback)
+        run: |
+          set -euo pipefail
+          INIT_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}/init.d"
+          mkdir -p "$INIT_DIR"
+          cat > "$INIT_DIR/mirrors-init.gradle" <<'EOF_GRADLE'
+          // Global CI fallback: rewrite well-known Maven repos to Tencent mirrors
+          import org.gradle.api.artifacts.repositories.MavenArtifactRepository
+          allprojects {
+              buildscript {
+                  repositories.withType(MavenArtifactRepository).configureEach {
+                      def u = it.url.toString()
+                      if (u.startsWith("https://repo.maven.apache.org/maven2")) {
+                          it.setUrl("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/")
+                      } else if (u.startsWith("https://plugins.gradle.org/m2")) {
+                          it.setUrl("https://mirrors.cloud.tencent.com/nexus/repository/gradle-plugins/")
+                      }
+                  }
+              }
+              afterEvaluate {
+                  repositories.withType(MavenArtifactRepository).configureEach {
+                      def u = it.url.toString()
+                      if (u.startsWith("https://repo.maven.apache.org/maven2")) {
+                          it.setUrl("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/")
+                      } else if (u.startsWith("https://plugins.gradle.org/m2")) {
+                          it.setUrl("https://mirrors.cloud.tencent.com/nexus/repository/gradle-plugins/")
+                      }
+                  }
+              }
+          }
+          EOF_GRADLE
+          echo "✅ mirrors-init.gradle injected at: $INIT_DIR/mirrors-init.gradle"
+          ls -la "$INIT_DIR"
+
+      - name: (Sanity) Gradle version + init-script loads
+        run: |
+          gradle --no-daemon --init-script _local_init.gradle.kts -v | head -20
+
       - name: Compile Kotlin + buildPlugin
         run: |
           gradle --no-daemon \
+            --init-script _local_init.gradle.kts \
+            --refresh-dependencies \
             compileKotlin \
             compileTestKotlin \
             buildPlugin \
