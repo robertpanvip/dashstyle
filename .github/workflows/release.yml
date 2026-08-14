@@ -79,7 +79,7 @@ jobs:
 
       # 编译 Kotlin
       - name: Build
-        run: gradle build
+        run: gradle buildPlugin
 
 
       # 获取 tag
@@ -100,6 +100,6 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: |
-            build/libs/*.jar
+           build/distributions/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
