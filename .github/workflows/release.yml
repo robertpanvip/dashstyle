@@ -30,12 +30,47 @@ jobs:
       # 安装 JDK
       - name: Setup JDK
         uses: actions/setup-java@v4
+        id: setup_jdk
         with:
           distribution: temurin
           java-version: 21
 
 
-      # 安装 Gradle
+      # gradle.properties 里有两处只适用于本地 trae 开发机的硬编码：
+      #   1) org.gradle.java.home → CI 上无此路径 → setup-gradle provision 完 exit 1
+      #   2) org.gradle.jvmargs 的 proxyHost=127.0.0.1:18080 → CI 无代理 → 解析插件超时
+      # 这里就地做两件事：替换 java.home；清理 jvmargs 里所有代理参数。
+      - name: Patch gradle.properties (java.home + strip CI-broken proxy)
+        run: |
+          set -euo pipefail
+          TARGET="${JAVA_HOME:-${{ steps.setup_jdk.outputs.path }}}"
+          echo "JAVA_HOME=$JAVA_HOME  => patching org.gradle.java.home => $TARGET"
+          if [[ ! -x "$TARGET/bin/java" ]]; then
+            echo "❌ target JDK does not have bin/java: $TARGET"
+            exit 3
+          fi
+          ESCAPED="$(echo "$TARGET" | sed -E 's/[#&/\\]/\\&/g')"
+          sed -i.bak -E \
+            "s|^org.gradle.java.home=.*|org.gradle.java.home=${ESCAPED}|" \
+            gradle.properties
+          python3 - <<'PY'
+          import re
+          p='gradle.properties'
+          with open(p,'r',encoding='utf-8') as f: s=f.read()
+          def strip_proxy(m):
+              line=m.group(0)
+              line=re.sub(r'\s*-Dhttp\.nonProxyHosts=[^\\\s]+','',line)
+              line=re.sub(r'\s*-Dhttps?\.proxy(Host|Port)=[^\\\s]+','',line)
+              return line
+          pattern=re.compile(r'^org\.gradle\.jvmargs=.*(?:\\\n.*)*$', re.MULTILINE)
+          s2=pattern.sub(strip_proxy, s)
+          with open(p,'w',encoding='utf-8') as f: f.write(s2)
+          PY
+          echo "✅ Patched gradle.properties"
+          grep -nE "java\.home|jvmargs|proxy" gradle.properties || true
+
+
+      # 安装 Gradle（和 test.yml 同一套 8.14）
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
