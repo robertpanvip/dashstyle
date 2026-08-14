@@ -32,12 +32,68 @@ jobs:
 
       - name: Setup JDK 17 (Temurin)
         uses: actions/setup-java@v5
+        id: setup_jdk
         with:
           distribution: temurin
           java-version: 17
           cache: gradle
 
-      - name: Setup Gradle 8.14 (对齐 release.yml)
+      # gradle.properties 里有两处「只适用于本地 trae 开发机」的硬编码，
+      # 直接放到 GitHub Actions 海外 runner 会炸：
+      #
+      #   1) org.gradle.java.home=/root/.local/share/mise/installs/java/17.0.2
+      #      → CI 没有这路径，setup-gradle 一 provision 完 Gradle 8.14 就会在内部
+      #        执行 gradle -version 之类的试跑，报：
+      #        "The process '/usr/bin/gradle' failed with exit code 1"
+      #   2) org.gradle.jvmargs 的 -Dhttp.proxyHost=127.0.0.1 -Dhttps.proxyPort=18080
+      #      → CI 没这代理，插件解析 Kotlin 2.1.0 / IntelliJ Platform Gradle Plugin
+      #        之类的 jar 会被代理卡死到超时（12 分钟后才 FAIL）。
+      #
+      # 所以这里就地做两件事：
+      #   A) sed 替换 org.gradle.java.home 为 actions/setup-java 实际装到的 temurin 路径
+      #   B) sed 删除 jvmargs 里所有 proxyHost / proxyPort / nonProxyHosts 参数
+      - name: Patch gradle.properties (java.home + strip CI-broken proxy)
+        run: |
+          set -euo pipefail
+          TARGET="${JAVA_HOME:-${{ steps.setup_jdk.outputs.path }}}"
+          echo "JAVA_HOME=$JAVA_HOME  => patching org.gradle.java.home => $TARGET"
+          if [[ ! -x "$TARGET/bin/java" ]]; then
+            echo "❌ target JDK does not have bin/java: $TARGET"
+            ls -la "$TARGET" 2>&1 | head -20
+            exit 3
+          fi
+          ESCAPED="$(echo "$TARGET" | sed -E 's/[#&/\\]/\\&/g')"
+
+          # 1. 替换 org.gradle.java.home
+          sed -i.bak -E \
+            "s|^org.gradle.java.home=.*|org.gradle.java.home=${ESCAPED}|" \
+            gradle.properties
+
+          # 2. 把 org.gradle.jvmargs 里所有 -D{http,https}.proxy{Host,Port} /
+          #    -Dhttp.nonProxyHosts=... / 行尾续行符先保留，但代理参数必须删除。
+          python3 - <<'PY'
+          import re
+          p='gradle.properties'
+          with open(p,'r',encoding='utf-8') as f: s=f.read()
+          def strip_proxy(m):
+              line=m.group(0)
+              # 顺序: nonProxyHosts / proxyPort / proxyHost
+              line=re.sub(r'\s*-Dhttp\.nonProxyHosts=[^\\\s]+','',line)
+              line=re.sub(r'\s*-Dhttps?\.proxy(Host|Port)=[^\\\s]+','',line)
+              # 修正可能出现的前置空格: '=\   -Xmx...' → '=\\\n  -Xmx...' 保持不变
+              return line
+          # 只匹配 org.gradle.jvmargs=...\(...\\\n  ...\n  ...)* 直到下一行不再以空格续行
+          pattern=re.compile(r'^org\.gradle\.jvmargs=.*(?:\\\n.*)*$', re.MULTILINE)
+          s2=pattern.sub(strip_proxy, s)
+          with open(p,'w',encoding='utf-8') as f: f.write(s2)
+          PY
+
+          echo "✅ Patched gradle.properties. Relevant lines:"
+          grep -nE "java\.home|jvmargs|proxy" gradle.properties || true
+
+      # 继续用 provisioned gradle-version 8.14（和 release.yml 一致）。
+      # 此时 gradle.properties 已替换成本次 runner 真实的 temurin-17 路径。
+      - name: Setup Gradle 8.14
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.14
