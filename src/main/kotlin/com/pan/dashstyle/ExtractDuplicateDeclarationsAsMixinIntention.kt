@@ -323,11 +323,15 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         return text.substring(start, j)
     }
 
-    private fun nextMixinName(sign: List<String>, used: Collection<String>): String {
-        val props = sign.mapNotNull {
+    // mixin 命名：按"第一个 ruleset 里的原始声明顺序"取属性（而不是按字母排序后的），更符合用户写代码时的第一直觉。
+    // 例：第一组 ruleset 写的顺序是 padding → color → 命名为 shared-padding-color（而不是 shared-color-padding）。
+    // 前 1~3 个属性连缀；冲突自动加 2/3... 后缀。
+    private fun nextMixinNameFromPretty(prettyDecls: List<String>, used: Collection<String>): String {
+        val props = prettyDecls.mapNotNull {
             val colon = it.indexOf(':')
             if (colon <= 0) null else it.substring(0, colon).trim().lowercase()
-        }.filter { it.isNotEmpty() }
+        }.filter { it.isNotEmpty() }.distinct()
+
         val base = if (props.isEmpty()) "shared-block" else {
             val tail = props.drop(1).take(2).joinToString("-") { Util.kebabToCamel(it.replace('/', '-')) }
             val first = Util.kebabToCamel(props.first())
@@ -339,6 +343,9 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         while ("$base$i" in used) i++
         return "$base$i"
     }
+
+    // 旧 API：基于签名（sorted props）命名，保留向后兼容（isAvailable 判断仍可以用）
+    private fun nextMixinName(sign: List<String>, used: Collection<String>): String = nextMixinNameFromPretty(sign, used)
 
     // ================================================================
     // 文本级 CSS/Less/SCSS 规则解析：抓顶层 ruleset 的 selector 与 body 起止
@@ -477,13 +484,17 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         return null
     }
 
-    // 把一块声明文本解析成 prop:value; 列表；顺序作为签名的一部分（这里已经在调用方做 sorted）
-    internal fun normalizeDecls(body: String): List<String> {
-        // 去掉 block 注释、行注释
+    // 把一块声明文本解析成 prop:value; 列表。
+    // 返回 Pair(sortedSignature, prettyDeclsOriginalOrder)：
+    //   - sortedSignature：排序后的 ["prop:norm_value"]，用于签名对比（顺序无关）
+    //   - prettyDeclsOriginalOrder：按原始 ruleset 声明顺序写出的 ["prop: valueNorm"]，
+    //     中间固定 1 空格（视觉统一），值做最小空白归一化；用于最终写回 mixin 定义以及 mixin 命名时的属性顺序。
+    internal fun normalizeDeclsWithPretty(body: String): Pair<List<String>, List<String>> {
         val clean = stripComments(body)
         val len = clean.length
         var i = 0
-        val out = mutableListOf<String>()
+        val sign = mutableListOf<String>()   // 签名：排序后的 prop:norm_value
+        val pretty = mutableListOf<String>() // 写回：原文顺序的 prop: valueNorm（统一 1 空格）
         while (i < len) {
             // 跳过空白 / 分号
             while (i < len && (clean[i] == ' ' || clean[i] == '\t' || clean[i] == '\n' || clean[i] == '\r' || clean[i] == ';')) i++
@@ -497,7 +508,6 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
                     continue
                 }
                 if (c == '(') {
-                    // 函数括号，比如 rgb(1,2,3) / linear-gradient(...)——跳过里面的冒号/逗号/分号（实际不会有 ;），主要防止把背景 url("a:b") 误当 prop:value
                     var d = 1
                     i++
                     while (i < len && d > 0) {
@@ -510,8 +520,7 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
                     continue
                 }
                 if (c == '{' || c == '}') {
-                    // 嵌套 ruleset 内部 { ... } —— 跳过这一块，不参与 declaration（如 Less/SCSS 嵌套写法）
-                    val (_, after) = matchBraced(clean, i + 1) ?: return out
+                    val (_, after) = matchBraced(clean, i + 1) ?: return sign.sorted() to pretty
                     i = after
                     continue
                 }
@@ -522,10 +531,10 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
             if (colon in start until i) {
                 val prop = clean.substring(start, colon).trim().lowercase()
                 val rawVal = clean.substring(colon + 1, i).trim()
-                // 值归一化：压缩连续空白、去除尾随分号带来的空字符
-                val value = rawVal.replace(Regex("\\s+"), " ").trim().trimEnd(';').trim()
-                if (prop.isNotEmpty() && value.isNotEmpty()) {
-                    out.add("$prop:$value")
+                val valueNorm = rawVal.replace(Regex("\\s+"), " ").trim().trimEnd(';').trim()
+                if (prop.isNotEmpty() && valueNorm.isNotEmpty()) {
+                    sign.add("$prop:$valueNorm")
+                    pretty.add("$prop: $valueNorm") // 统一 1 空格，视觉一致
                 }
             }
             // 跳到下一个 ;
@@ -539,8 +548,11 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
             }
             if (i < len && clean[i] == ';') i++
         }
-        return out.sorted()
+        return sign.sorted() to pretty
     }
+
+    // 旧 API：只返回签名（向后兼容）
+    internal fun normalizeDecls(body: String): List<String> = normalizeDeclsWithPretty(body).first
 
     private fun stripComments(src: String): String {
         val len = src.length
