@@ -26,8 +26,6 @@ object FlexLayoutResolver {
         val childCount: Int = 3
     )
 
-    data class Box(val x: Int, val y: Int, val w: Int, val h: Int)
-
     fun parseDirection(s: String?, fallback: Direction = Direction.ROW): Direction = when (s?.trim()?.lowercase()) {
         "row" -> Direction.ROW
         "row-reverse" -> Direction.ROW_REVERSE
