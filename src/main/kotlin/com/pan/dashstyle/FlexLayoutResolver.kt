@@ -14,11 +14,13 @@ object FlexLayoutResolver {
     enum class Direction { ROW, ROW_REVERSE, COLUMN, COLUMN_REVERSE }
     enum class Justify { FLEX_START, FLEX_END, CENTER, SPACE_BETWEEN, SPACE_AROUND, SPACE_EVENLY }
     enum class Align { FLEX_START, FLEX_END, CENTER, STRETCH, BASELINE }
+    enum class AlignContent { FLEX_START, FLEX_END, CENTER, STRETCH, SPACE_BETWEEN, SPACE_AROUND, SPACE_EVENLY }
 
     data class Props(
         val direction: Direction = Direction.ROW,
         val justify: Justify = Justify.FLEX_START,
         val align: Align = Align.STRETCH,
+        val alignContent: AlignContent = AlignContent.FLEX_START,
         val gap: Int = 0,
         val wrap: Boolean = false,
         val childCount: Int = 3
@@ -51,6 +53,16 @@ object FlexLayoutResolver {
         else -> fallback
     }
 
+    fun parseAlignContent(s: String?, fallback: AlignContent = AlignContent.STRETCH): AlignContent = when (s?.trim()?.lowercase()) {
+        "flex-start" -> AlignContent.FLEX_START
+        "flex-end" -> AlignContent.FLEX_END
+        "center" -> AlignContent.CENTER
+        "space-between" -> AlignContent.SPACE_BETWEEN
+        "space-around" -> AlignContent.SPACE_AROUND
+        "space-evenly" -> AlignContent.SPACE_EVENLY
+        else -> fallback
+    }
+
     /** 从 gap / row-gap 值里提取第一个数字（px），并钳制到 [0, 40]。 */
     fun parseGap(s: String?): Int {
         val v = s?.trim()?.lowercase() ?: return 0
@@ -65,51 +77,93 @@ object FlexLayoutResolver {
     fun place(props: Props, W: Int, H: Int): List<Box> {
         val n = props.childCount.coerceAtLeast(1)
         val row = props.direction == Direction.ROW || props.direction == Direction.ROW_REVERSE
+        val reverse = props.direction == Direction.ROW_REVERSE || props.direction == Direction.COLUMN_REVERSE
         val P = 4
         val cw = if (row) 26 else 20
         val ch = if (row) 20 else 26
-        val avail = if (row) W else H
-        var gap = props.gap.coerceIn(0, 40)
-        val item = if (row) cw else ch
-        var start = P
-        val total = n * item + (n - 1) * gap
-        when (props.justify) {
-            Justify.CENTER -> start = P + (avail - total) / 2
-            Justify.FLEX_END -> start = avail - P - total
-            Justify.SPACE_BETWEEN -> if (n > 1) gap = (avail - 2 * P - n * item) / (n - 1).coerceAtLeast(1)
-            Justify.SPACE_AROUND -> {
-                gap = (avail - 2 * P - n * item) / n
-                start = P + gap / 2
+        val mainAvail = if (row) W else H
+        val crossAvail = if (row) H else W
+        val itemMain = if (row) cw else ch
+        val itemCross = if (row) ch else cw
+        val gap = props.gap.coerceIn(0, 40)
+        val stretch = props.align == Align.STRETCH
+
+        // ---- 换行行数：wrap 时按主轴能容纳的个数拆多行，否则单行 ----
+        val maxPerLine = if (props.wrap) {
+            ((mainAvail - 2 * P + gap) / (itemMain + gap)).coerceAtLeast(1)
+        } else n
+        val lines = ((n + maxPerLine - 1) / maxPerLine).coerceAtLeast(1)
+
+        // ---- align-content 决定各行在交叉轴上的分布（仅多行时有意义）----
+        val lineBase = ArrayList<Int>(lines)
+        if (lines > 1) {
+            val totalCross = lines * itemCross + (lines - 1) * gap
+            var gapCross = gap
+            var start = P
+            when (props.alignContent) {
+                AlignContent.CENTER -> start = P + (crossAvail - totalCross) / 2
+                AlignContent.FLEX_END -> start = crossAvail - P - totalCross
+                AlignContent.SPACE_BETWEEN -> if (lines > 1) gapCross = (crossAvail - 2 * P - lines * itemCross) / (lines - 1)
+                AlignContent.SPACE_AROUND -> { gapCross = (crossAvail - 2 * P - lines * itemCross) / lines; start = P + gapCross / 2 }
+                AlignContent.SPACE_EVENLY -> { gapCross = (crossAvail - 2 * P - lines * itemCross) / (lines + 1); start = P + gapCross }
+                AlignContent.FLEX_START, AlignContent.STRETCH -> {}
             }
-            Justify.SPACE_EVENLY -> {
-                gap = (avail - 2 * P - n * item) / (n + 1)
-                start = P + gap
-            }
-            Justify.FLEX_START -> {}
+            for (li in 0 until lines) lineBase.add(start + li * (itemCross + gapCross))
         }
+
+        // 单行时：交叉轴上直接用 align-items 摆子项（不引入行带）
+        fun lineBand(li: Int): Pair<Int, Int> {
+            if (lines == 1) return when (props.align) {
+                Align.CENTER, Align.BASELINE -> Pair((crossAvail - itemCross) / 2, itemCross)
+                Align.FLEX_END -> Pair(crossAvail - P - itemCross, itemCross)
+                else -> Pair(P, if (stretch) (crossAvail - 2 * P).coerceAtLeast(1) else itemCross)
+            }
+            return Pair(lineBase[li], itemCross)
+        }
+
         val boxes = ArrayList<Box>(n)
         for (i in 0 until n) {
-            val pos = start + i * (item + gap)
+            val li = i / maxPerLine
+            val posInLine = i % maxPerLine
+            val countInLine = minOf(maxPerLine, n - li * maxPerLine)
+
+            // 主轴：行内按 justify 摆放
+            var gapMain = gap
+            var start = P
+            val totalMain = countInLine * itemMain + (countInLine - 1) * gap
+            when (props.justify) {
+                Justify.CENTER -> start = P + (mainAvail - totalMain) / 2
+                Justify.FLEX_END -> start = mainAvail - P - totalMain
+                Justify.SPACE_BETWEEN -> if (countInLine > 1) gapMain = (mainAvail - 2 * P - countInLine * itemMain) / (countInLine - 1)
+                Justify.SPACE_AROUND -> { gapMain = (mainAvail - 2 * P - countInLine * itemMain) / countInLine; start = P + gapMain / 2 }
+                Justify.SPACE_EVENLY -> { gapMain = (mainAvail - 2 * P - countInLine * itemMain) / (countInLine + 1); start = P + gapMain }
+                Justify.FLEX_START -> {}
+            }
+            var mainPos = start + posInLine * (itemMain + gapMain)
+
+            // 交叉轴：行带内按 align-items 摆放
+            val (base, band) = lineBand(li)
+            val crossPos = when (props.align) {
+                Align.CENTER, Align.BASELINE -> base + (band - itemCross) / 2
+                Align.FLEX_END -> base + band - itemCross
+                Align.STRETCH, Align.FLEX_START -> base
+            }
+
             var x: Int
             var y: Int
             var w = cw
             var h = ch
             if (row) {
-                x = pos
-                when (props.align) {
-                    Align.CENTER, Align.BASELINE -> y = (H - ch) / 2
-                    Align.FLEX_END -> y = H - P - ch
-                    Align.STRETCH -> { y = P; h = (H - 2 * P).coerceAtLeast(1) }
-                    Align.FLEX_START -> y = P
-                }
+                x = mainPos
+                y = crossPos
+                if (stretch) h = band.coerceAtLeast(1)
             } else {
-                y = pos
-                when (props.align) {
-                    Align.CENTER, Align.BASELINE -> x = (W - cw) / 2
-                    Align.FLEX_END -> x = W - P - cw
-                    Align.STRETCH -> { x = P; w = (W - 2 * P).coerceAtLeast(1) }
-                    Align.FLEX_START -> x = P
-                }
+                y = mainPos
+                x = crossPos
+                if (stretch) w = band.coerceAtLeast(1)
+            }
+            if (reverse) {
+                if (row) x = mainAvail - x - w else y = mainAvail - y - h
             }
             boxes.add(Box(x, y, w, h))
         }

@@ -122,6 +122,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
             direction = FlexLayoutResolver.parseDirection(ctx["flex-direction"]),
             justify = FlexLayoutResolver.parseJustify(ctx["justify-content"]),
             align = FlexLayoutResolver.parseAlign(ctx["align-items"]),
+            alignContent = FlexLayoutResolver.parseAlignContent(ctx["align-content"]),
             gap = FlexLayoutResolver.parseGap(ctx["gap"] ?: ctx["row-gap"]),
             wrap = ctx["flex-wrap"]?.equals("wrap", true) == true
         )
@@ -141,6 +142,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
                 val props = when (p) {
                     "justify-content" -> base.copy(justify = FlexLayoutResolver.parseJustify(d.value?.text, base.justify))
                     "align-items" -> base.copy(align = FlexLayoutResolver.parseAlign(d.value?.text, base.align))
+                    "align-content" -> base.copy(alignContent = FlexLayoutResolver.parseAlignContent(d.value?.text, base.alignContent))
                     "flex-direction" -> base.copy(direction = FlexLayoutResolver.parseDirection(d.value?.text, base.direction))
                     "gap", "row-gap" -> base.copy(gap = FlexLayoutResolver.parseGap(d.value?.text))
                     "flex-wrap" -> base.copy(wrap = d.value?.text?.trim()?.equals("wrap", true) == true)
@@ -162,7 +164,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
 
     companion object {
         private val FLEX_PROPS = setOf(
-            "justify-content", "align-items", "flex-direction", "flex-wrap",
+            "justify-content", "align-items", "align-content", "flex-direction", "flex-wrap",
             "gap", "row-gap", "column-gap"
         )
     }

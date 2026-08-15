@@ -70,12 +70,14 @@ object FlexPreviewPopup {
         // ---- 控件 ---------------------------------------------------------
         val justify = JComboBox(arrayOf("flex-start", "flex-end", "center", "space-between", "space-around", "space-evenly"))
         val align = JComboBox(arrayOf("stretch", "flex-start", "flex-end", "center", "baseline"))
+        val alignContent = JComboBox(arrayOf("flex-start", "flex-end", "center", "stretch", "space-between", "space-around", "space-evenly"))
         val direction = JComboBox(arrayOf("row", "row-reverse", "column", "column-reverse"))
         val wrap = JComboBox(arrayOf("nowrap", "wrap"))
         val gap = JSpinner(SpinnerNumberModel(0, 0, 40, 1))
 
         justify.selectedItem = p.justify.cssValue()
         align.selectedItem = p.align.cssValue()
+        alignContent.selectedItem = p.alignContent.cssValue()
         direction.selectedItem = p.direction.cssValue()
         wrap.selectedItem = if (p.wrap) "wrap" else "nowrap"
         gap.value = p.gap
@@ -85,6 +87,7 @@ object FlexPreviewPopup {
                 direction = FlexLayoutResolver.parseDirection(direction.selectedItem as? String, state.props.direction),
                 justify = FlexLayoutResolver.parseJustify(justify.selectedItem as? String, state.props.justify),
                 align = FlexLayoutResolver.parseAlign(align.selectedItem as? String, state.props.align),
+                alignContent = FlexLayoutResolver.parseAlignContent(alignContent.selectedItem as? String, state.props.alignContent),
                 gap = (gap.value as Int).coerceIn(0, 40),
                 wrap = (wrap.selectedItem as? String) == "wrap",
                 childCount = state.props.childCount
@@ -94,6 +97,7 @@ object FlexPreviewPopup {
 
         justify.addActionListener { refreshPreview() }
         align.addActionListener { refreshPreview() }
+        alignContent.addActionListener { refreshPreview() }
         direction.addActionListener { refreshPreview() }
         wrap.addActionListener { refreshPreview() }
         gap.addChangeListener { refreshPreview() }
@@ -124,6 +128,7 @@ object FlexPreviewPopup {
         }
         addRow("justify-content", justify)
         addRow("align-items", align)
+        addRow("align-content", alignContent)
         addRow("flex-direction", direction)
         addRow("flex-wrap", wrap)
         addRow("gap", gap)
@@ -158,6 +163,7 @@ object FlexPreviewPopup {
     fun applyToBlock(block: CssBlock, props: FlexLayoutResolver.Props) {
         setOrAdd(block, "justify-content", props.justify.cssValue())
         setOrAdd(block, "align-items", props.align.cssValue())
+        setOrAdd(block, "align-content", props.alignContent.cssValue())
         setOrAdd(block, "flex-direction", props.direction.cssValue())
         setOrAdd(block, "flex-wrap", if (props.wrap) "wrap" else "nowrap")
         setOrAdd(block, "gap", "${props.gap}px")
@@ -195,5 +201,15 @@ object FlexPreviewPopup {
         FlexLayoutResolver.Direction.ROW_REVERSE -> "row-reverse"
         FlexLayoutResolver.Direction.COLUMN -> "column"
         FlexLayoutResolver.Direction.COLUMN_REVERSE -> "column-reverse"
+    }
+
+    private fun FlexLayoutResolver.AlignContent.cssValue(): String = when (this) {
+        FlexLayoutResolver.AlignContent.FLEX_START -> "flex-start"
+        FlexLayoutResolver.AlignContent.FLEX_END -> "flex-end"
+        FlexLayoutResolver.AlignContent.CENTER -> "center"
+        FlexLayoutResolver.AlignContent.STRETCH -> "stretch"
+        FlexLayoutResolver.AlignContent.SPACE_BETWEEN -> "space-between"
+        FlexLayoutResolver.AlignContent.SPACE_AROUND -> "space-around"
+        FlexLayoutResolver.AlignContent.SPACE_EVENLY -> "space-evenly"
     }
 }
