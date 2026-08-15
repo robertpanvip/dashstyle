@@ -78,7 +78,7 @@
     <div class="form" id="form"></div>
   </div>
   <div class="footer">
-    <span class="hint-text" id="liveHint">实时应用 · 拖动子项：左右改 justify / 上下改 align</span>
+    <span class="hint-text" id="liveHint">实时应用 · 拖动子项：左右改 justify / 上下改 align（grid：左右改 justify-content / 上下改 align-content）</span>
   </div>
 </div>
 
@@ -228,13 +228,64 @@ function renderFlexCanvas(s){
   window.addEventListener('mousemove',globalMove); window.addEventListener('mouseup',globalUp);
 }
 
+// ---- 纯 JS grid 布局计算（与插件算法一致，便于精确磁吸）----
+function computeGrid(s, W, H){
+  const P=4, n=s.childCount;
+  const colCount = Math.max(1, s.cols||3), rowCount = Math.max(1, s.rows||1);
+  const cwBase = (W-2*P-(colCount-1)*s.gap)/colCount, chBase = (H-2*P-(rowCount-1)*s.gap)/rowCount;
+  const gridW = colCount*cwBase+(colCount-1)*s.gap, gridH = rowCount*chBase+(rowCount-1)*s.gap;
+  const ox = s.justifyContent==='center'? P+(W-2*P-gridW)/2 : s.justifyContent==='end'? (W-P-gridW) : P;
+  const oy = s.alignContent==='center'? P+(H-2*P-gridH)/2 : s.alignContent==='end'? (H-P-gridH) : P;
+  const boxes=[];
+  for(let i=0;i<n;i++){
+    const c=i%colCount, r=Math.floor(i/colCount);
+    if(r>=rowCount) break;
+    const cellX=ox+c*(cwBase+s.gap), cellY=oy+r*(chBase+s.gap);
+    let x=cellX, y=cellY, w=cwBase, h=chBase;
+    if(s.justifyItems!=='stretch'){ w=cwBase*0.6;
+      if(s.justifyItems==='center') x=cellX+(cwBase-w)/2; else if(s.justifyItems==='end') x=cellX+cwBase-w; }
+    if(s.alignItems!=='stretch'){ h=chBase*0.6;
+      if(s.alignItems==='center') y=cellY+(chBase-h)/2; else if(s.alignItems==='end') y=cellY+chBase-h; }
+    boxes.push({x:Math.round(x),y:Math.round(y),w:Math.max(1,Math.round(w)),h:Math.max(1,Math.round(h)),color:'c'+(i%4+1)});
+  }
+  return boxes;
+}
+
 function renderGridCanvas(s){
-  const rows = '1fr '.repeat(s.rows).trim();
-  const cols = '1fr '.repeat(s.cols).trim();
-  const wrap = document.createElement('div');
-  wrap.style.cssText='display:grid;width:100%;height:100%;grid-template-rows:'+rows+';grid-template-columns:'+cols+';gap:'+s.gap+'px;justify-items:'+s.justifyItems+';align-items:'+s.alignItems+';justify-content:'+s.justifyContent+';align-content:'+s.alignContent+';';
-  for(let i=0;i<s.childCount;i++){ const c=document.createElement('div'); c.className='cell c'+(i%4+1); wrap.appendChild(c); }
-  canvas.appendChild(wrap);
+  const rect = canvas.getBoundingClientRect();
+  const W=rect.width, H=rect.height;
+  const boxes = computeGrid(s, W, H);
+  const grid = document.createElement('div'); grid.style.cssText='position:absolute;inset:0;pointer-events:none;';
+  const jCands = ['start','center','end'];
+  const aCands = ['start','center','end'];
+  jCands.forEach((j,idx)=>{ const b=computeGrid({...s,justifyContent:j},W,H)[0]; const bx=b.x; const div=document.createElement('div');
+    div.style.cssText=`position:absolute;top:0;bottom:0;left:${bx}px;width:1px;background:${idx===jCands.indexOf(s.justifyContent)?'#2563eb99':'#d0d5dd'};pointer-events:none;`;
+    grid.appendChild(div); });
+  aCands.forEach((a,idx)=>{ const b=computeGrid({...s,alignContent:a},W,H)[0]; const by=b.y; const div=document.createElement('div');
+    div.style.cssText=`position:absolute;left:0;right:0;top:${by}px;height:1px;background:${idx===aCands.indexOf(s.alignContent)?'#2563eb99':'#d0d5dd'};pointer-events:none;`;
+    grid.appendChild(div); });
+  canvas.appendChild(grid);
+  boxes.forEach(b=>{ const d=document.createElement('div'); d.className='cell '+b.color;
+    d.style.cssText=`position:absolute;left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;cursor:grab;`; d.dataset.i=boxes.indexOf(b); canvas.appendChild(d); });
+  let drag=null;
+  canvas.onmousedown=(e)=>{ const r=canvas.getBoundingClientRect(); const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const hit=boxes.find(b=>mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h);
+    if(!hit) return; e.preventDefault(); drag={startX:mx,startY:my,axis:null}; canvas.style.cursor='grabbing'; };
+  const globalMove=(e)=>{ if(!drag) return; const r=canvas.getBoundingClientRect(); const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const dx=mx-drag.startX, dy=my-drag.startY;
+    if(drag.axis===null){ if(Math.abs(dx)>6||Math.abs(dy)>6) drag.axis= Math.abs(dx)>=Math.abs(dy)?'x':'y'; if(!drag.axis) return; }
+    if(drag.axis==='x'){
+      let best=jCands[0], bd=1e9;
+      for(const j of jCands){ const b=computeGrid({...s,justifyContent:j},W,H)[0]; const d=Math.abs((b.x+b.w/2)-mx); if(d<bd){bd=d;best=j;} }
+      if(best!==s.justifyContent){ s.justifyContent=best; renderCanvas(); updateBadge(); }
+    } else {
+      let best=aCands[0], bd=1e9;
+      for(const a of aCands){ const b=computeGrid({...s,alignContent:a},W,H)[0]; const d=Math.abs((b.y+b.h/2)-my); if(d<bd){bd=d;best=a;} }
+      if(best!==s.alignContent){ s.alignContent=best; renderCanvas(); updateBadge(); }
+    }
+  };
+  const globalUp=()=>{ if(drag){ drag=null; canvas.style.cursor='grab'; } window.removeEventListener('mousemove',globalMove); window.removeEventListener('mouseup',globalUp); };
+  window.addEventListener('mousemove',globalMove); window.addEventListener('mouseup',globalUp);
 }
 
 function renderForm(){

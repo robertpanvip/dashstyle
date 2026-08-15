@@ -239,7 +239,7 @@ object LayoutPreviewPopup {
         private val alignItems = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val justifyContent = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val alignContent = JComboBox(arrayOf("stretch", "start", "center", "end"))
-        private val preview = previewPanel({ current() })
+        private val preview = previewPanel({ current() }, dragSettings())
 
         init {
             justifyItems.selectedItem = initial.justifyItems.cssValue()
@@ -273,7 +273,64 @@ object LayoutPreviewPopup {
             apply()
         }
 
-        private fun current(): LayoutModel.Grid = LayoutModel.Grid(state[0])
+        /** 拖动反向推断：X 轴改 justify-content，Y 轴改 align-content（整块网格对齐）。 */
+        private fun dragSettings(): DragSettings {
+            val pad = 12
+            return DragSettings(
+                pad = pad,
+                hitTest = { p ->
+                    val s = state[0]
+                    val boxW = preview.width - pad * 2
+                    val boxH = preview.height - pad * 2
+                    val boxes = GridLayoutResolver.place(s, boxW, boxH)
+                    boxes.any { p.x in it.x..(it.x + it.w) && p.y in it.y..(it.y + it.h) }
+                },
+                onDrag = { p, axis, boxW, boxH ->
+                    val s = state[0]
+                    val newProps = when (axis) {
+                        DragAxis.X -> {
+                            val cands = listOf(
+                                GridLayoutResolver.GridAlign.START,
+                                GridLayoutResolver.GridAlign.CENTER,
+                                GridLayoutResolver.GridAlign.END
+                            )
+                            val best = cands.minByOrNull { a ->
+                                val b = GridLayoutResolver.place(s.copy(justifyContent = a), boxW, boxH)[0]
+                                val cx = b.x + b.w / 2.0
+                                abs(cx - p.x)
+                            } ?: s.justifyContent
+                            s.copy(justifyContent = best)
+                        }
+                        DragAxis.Y -> {
+                            val cands = listOf(
+                                GridLayoutResolver.GridAlign.START,
+                                GridLayoutResolver.GridAlign.CENTER,
+                                GridLayoutResolver.GridAlign.END
+                            )
+                            val best = cands.minByOrNull { a ->
+                                val b = GridLayoutResolver.place(s.copy(alignContent = a), boxW, boxH)[0]
+                                val cy = b.y + b.h / 2.0
+                                abs(cy - p.y)
+                            } ?: s.alignContent
+                            s.copy(alignContent = best)
+                        }
+                    }
+                    applyNewProps(newProps)
+                }
+            )
+        }
+
+        /** 应用新 props：更新 state、同步下拉控件、重绘画布并实时写回 CSS。 */
+        private fun applyNewProps(newProps: GridLayoutResolver.Props) {
+            if (newProps == state[0]) return
+            state[0] = newProps
+            justifyItems.selectedItem = newProps.justifyItems.cssValue()
+            alignItems.selectedItem = newProps.alignItems.cssValue()
+            justifyContent.selectedItem = newProps.justifyContent.cssValue()
+            alignContent.selectedItem = newProps.alignContent.cssValue()
+            preview.repaint()
+            apply()
+        }
 
         private fun apply() {
             val project = editor.project ?: return
@@ -282,6 +339,8 @@ object LayoutPreviewPopup {
                 applyGrid(block, state[0])
             }
         }
+
+        private fun current(): LayoutModel.Grid = LayoutModel.Grid(state[0])
 
         override fun build(): JBPopup {
             val form = JPanel(GridBagLayout())
