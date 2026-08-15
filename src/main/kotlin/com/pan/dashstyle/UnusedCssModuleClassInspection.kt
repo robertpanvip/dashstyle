@@ -144,24 +144,6 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
     }
 
     // ================================================================
-    // Ruleset 级 class 名提取（按 PSI selectorList 正则，不依赖语言）
-    // ================================================================
-    private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
-        val raw = runCatching { rs.selectorList?.text }.getOrNull().orEmpty().trim()
-        if (raw.isEmpty()) return emptyList()
-        // Less &-suffix：把 expandAmpersand 应用一次；外层已经 expandSelector，保险起见这里再做一次 text 级 normalize
-        val normalized = runCatching { Util.expandSelector(rs) }.getOrNull()
-            ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
-        // 去掉伪类/伪元素部分以避免误剪
-        val cleaned = normalized.replace(PSEUDO_PART_RE, "")
-        return MODULE_CLASS_RE.findAll(cleaned).mapNotNull { m ->
-            val rawName = m.groupValues[1]
-            val name = if (rawName.startsWith(".")) rawName.drop(1) else rawName
-            name.trim().takeIf { it.isNotEmpty() }
-        }.distinct().toList()
-    }
-
-    // ================================================================
     // QuickFix
     // ================================================================
     class RemoveRuleQuickFix(private val className: String) : LocalQuickFix {
@@ -197,9 +179,41 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         // className="a b-c" / :class="'a b-c'" / :class="`a b-c`"
         // 注：正则用 3 组 capture group（第 2/3/4 组分别对应 双引号 / 单引号 / 反引号）；
         //     下游读取 tokens 时从 groupValues.drop(1).first { it.isNotBlank() } 取值。
-        private val STRING_CLASSNAME_RE = Regex.fromLiteral("PLACEHOLDER_DO_NOT_USE").let {
-            val raw = "(?:className|class)\\s*=\\s*(?:\\(\\s*)?(?:\"([^\"]*)\"|'([^']*)'|`([^`]*)`)"
-            Regex(raw, RegexOption.IGNORE_CASE)
+        private val STRING_CLASSNAME_RE = Regex(
+            "(?:className|class)\\s*=\\s*(?:\\(\\s*)?(?:\"([^\"]*)\"|'([^']*)'|`([^`]*)`)",
+            RegexOption.IGNORE_CASE
+        )
+
+        // ================================================================
+        // 性能优化：computeFileSnapshot 里会遍历多个候选绑定名（styles/css/classes/...），
+        // 不能在 per-source-file 内层循环里反复构造 Regex。这里把固定绑定名的模式预编译成一次，
+        // 动态 bindingNameHint 仅在确实不在固定集合里时才补一个。
+        // ================================================================
+        private val FIXED_BINDINGS = setOf("styles", "css", "classes", "styled", "style", "moduleStyles")
+        private class BindingPatterns(val binding: String) {
+            val dynRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[\s*([^\s\]])""")
+            val memberRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)""")
+            val idxRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
+        }
+        private val FIXED_BINDING_PATTERNS: List<BindingPatterns> = FIXED_BINDINGS.map { BindingPatterns(it) }
+        // Vue $style.member / $style["key"]（不依赖绑定名，可直接预编译）
+        private val VUE_MEMBER_RE = Regex("""\${'$'}style\.([A-Za-z_][A-Za-z0-9_-]*)""")
+        private val VUE_IDX_RE = Regex("""\${'$'}style\[(['"`])([^'"`]+)\1\]""")
+
+        /** Ruleset 级 class 名提取（按 PSI selectorList 正则，不依赖语言）。静态化供 companion 与实例两处复用。 */
+        private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
+            val raw = runCatching { rs.selectorList?.text }.getOrNull().orEmpty().trim()
+            if (raw.isEmpty()) return emptyList()
+            // Less &-suffix：把 expandAmpersand 应用一次；外层已经 expandSelector，保险起见这里再做一次 text 级 normalize
+            val normalized = runCatching { Util.expandSelector(rs) }.getOrNull()
+                ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
+            // 去掉伪类/伪元素部分以避免误剪
+            val cleaned = normalized.replace(PSEUDO_PART_RE, "")
+            return MODULE_CLASS_RE.findAll(cleaned).mapNotNull { m ->
+                val rawName = m.groupValues[1]
+                val name = if (rawName.startsWith(".")) rawName.drop(1) else rawName
+                name.trim().takeIf { it.isNotEmpty() }
+            }.distinct().toList()
         }
 
         // ================================================================
@@ -255,19 +269,21 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             val cssVf = cssFile.virtualFile ?: return Snapshot(emptySet(), true, emptyMap())
             val used = mutableSetOf<String>()
             var hasDynamic = false
-            val cssVfPath = cssVf.path
-            val cssBaseName = cssVf.nameWithoutExtension.substringBeforeLast(".module")
 
-            for ((srcPsi, bindingNameHint) in references) {
+            // 候选绑定名模式：固定集合预编译 + 动态 hint 兜底（避免 per-source-file 内层循环重复构造 Regex）
+            val patterns = ArrayList<BindingPatterns>(FIXED_BINDING_PATTERNS.size + 1)
+            patterns += FIXED_BINDING_PATTERNS
+            val hint = references.firstOrNull()?.second?.ifBlank { "styles" } ?: "styles"
+            if (hint !in FIXED_BINDINGS) patterns += BindingPatterns(hint)
+
+            for ((srcPsi, _) in references) {
                 val srcText = runCatching { srcPsi.text }.getOrNull().orEmpty()
                 if (srcText.isEmpty()) continue
 
                 // --- 快速 hasDynamic 检测：
                 //     文本里出现 bindingName[xxx] 中括号引用，且 [ 之后第一个非空字符不是 ' 或 "，则视为动态索引
-                val candidateBindings = setOf(bindingNameHint.ifBlank { "styles" }, "styles", "css", "classes", "styled", "style", "moduleStyles")
-                dynLoop@ for (b in candidateBindings) {
-                    val re = Regex("""\b${Regex.escape(b)}\s*\[\s*([^\s\]])""")
-                    val m = re.find(srcText) ?: continue
+                dynLoop@ for (bp in patterns) {
+                    val m = bp.dynRe.find(srcText) ?: continue
                     val firstChar = m.groupValues[1].firstOrNull() ?: continue
                     if (firstChar != '\'' && firstChar != '"' && firstChar != '`') {
                         hasDynamic = true
@@ -278,17 +294,15 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
                 // --- 文本级 usedClassNames 扫描：同时覆盖 member access 和字符串索引 ---
                 // 注意：used 里同时存 camelCase(fooBar) + kebab(foo-bar)，匹配双风格。
-                for (b in candidateBindings) {
+                for (bp in patterns) {
                     // styles.fooBar
-                    val memberRe = Regex("""\b${Regex.escape(b)}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)""")
-                    for (mm in memberRe.findAll(srcText)) {
+                    for (mm in bp.memberRe.findAll(srcText)) {
                         val name = mm.groupValues[1]
                         used += name
                         used += Util.camelToKebab(name)
                     }
                     // styles["foo-bar"] / styles['foo-bar'] / styles[`fooBar`]
-                    val idxRe = Regex("""\b${Regex.escape(b)}\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
-                    for (mm in idxRe.findAll(srcText)) {
+                    for (mm in bp.idxRe.findAll(srcText)) {
                         val name = mm.groupValues[2]
                         used += name
                         used += Util.camelToKebab(name)
@@ -298,15 +312,13 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
                 // --- Vue 场景 :class="$style.xxx" 或 :class="xxx in $style" ---
                 if (srcPsi is XmlFile || (srcPsi.virtualFile?.extension?.lowercase() == "vue")) {
-                    val vueRe = Regex("""\${'$'}style\.([A-Za-z_][A-Za-z0-9_-]*)""")
-                    for (mm in vueRe.findAll(srcText)) {
+                    for (mm in VUE_MEMBER_RE.findAll(srcText)) {
                         val n = mm.groupValues[1]
                         used += n
                         used += Util.camelToKebab(n)
                         used += Util.kebabToCamel(n)
                     }
-                    val vueIdx = Regex("""\${'$'}style\[(['"`])([^'"`]+)\1\]""")
-                    for (mm in vueIdx.findAll(srcText)) {
+                    for (mm in VUE_IDX_RE.findAll(srcText)) {
                         val n = mm.groupValues[2]
                         used += n
                         used += Util.camelToKebab(n)
@@ -316,7 +328,6 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
                 // --- className="xxx" 或 :class="['a','b']" 如果是字符串字面量直接引用 kebab class 也当 used ---
                 for (mm in STRING_CLASSNAME_RE.findAll(srcText)) {
-                    // groupValues: 0=整串, 1=双引号内容, 2=单引号内容, 3=反引号内容 -> 取首个非空
                     val captured = mm.groupValues.drop(1).firstOrNull { it.isNotBlank() }.orEmpty()
                     val tokens = captured.split(Regex("""\s+""")).filter { it.isNotBlank() }
                     for (t in tokens) {
@@ -346,15 +357,21 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 }
             }
 
-            // --- 选择器复合场景：.a .b {} 里出现的 nested class b 若在 classesInFile 中也保守算 used（嵌套内部复用） ---
+            // --- 选择器复合场景 + 填充 per-ruleset class 名缓存：
+            //     .a .b {} 里出现的 nested class b 若在 classesInFile 中也保守算 used；
+            //     同时把每个 ruleset 的 class 名按 identityHashCode 存进 Snapshot，
+            //     避免 buildVisitor / inspectRuleset 每次 pass 都重新 extractClassNamesFromRuleset。
+            val classesByRuleset = HashMap<String, List<String>>()
             for (rs in runCatching { com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(cssFile, CssRuleset::class.java) }.getOrDefault(emptyList())) {
                 val selText = runCatching { rs.selectorList?.text }.getOrNull().orEmpty()
                 for (nested in NESTED_CLASS_RE.findAll(selText).map { it.groupValues[1] }) {
                     if (nested in classesInFile) used += nested
                 }
+                val clsNames = extractClassNamesFromRuleset(rs)
+                if (clsNames.isNotEmpty()) classesByRuleset[System.identityHashCode(rs).toString()] = clsNames
             }
 
-            return Snapshot(used, false, emptyMap())
+            return Snapshot(used, false, classesByRuleset)
         }
 
         // ================================================================

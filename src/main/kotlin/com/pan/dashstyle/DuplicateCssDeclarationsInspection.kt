@@ -9,6 +9,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.psi.*
 import com.intellij.psi.css.*
+import com.intellij.psi.util.CachedValueProvider
+import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlTag
 import com.intellij.openapi.fileTypes.PlainTextLanguage
@@ -276,8 +278,8 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         fun attachDuplicateWave(rs: CssRuleset, holder: AnnotationHolder) {
             val cssFile = rs.containingFile ?: return
             val block = rs.block ?: return
-            // 把整个 file 扫一遍分组（性能：Annotator 每 ruleset 都调一次，这里只按文件做一次性 CachedValue）
-            val snap = cachedGroupedSnapshot(cssFile)
+            // 把整个 file 扫一遍分组（性能：走文件级 CachedValue，避免每 ruleset 重复分组计算）
+            val snap = groupedSnapshot(cssFile)
             val mySig = runCatching {
                 val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
                 normalizeSignatureStatic(decls)
@@ -307,45 +309,25 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val file = rs.containingFile ?: return
             val mgr = com.intellij.codeInspection.InspectionManager.getInstance(project)
 
-            // 简洁做法：直接对当前 ruleset 所在的整个 stylesheet/file 扫一次，
-            // 对所有命中重复的 ruleset.block 逐一 createProblemDescriptor
-            val inspection = DuplicateCssDeclarationsInspection()
-            val styleRoot = when {
-                file is StylesheetFile -> (file as StylesheetFile).stylesheet
-                else -> file
-            } ?: file
-            val allRulesets = runCatching {
-                PsiTreeUtil.findChildrenOfType(styleRoot, CssRuleset::class.java).filter { it.block != null }
-            }.getOrDefault(emptyList())
-            if (allRulesets.size < 2) return
-
-            data class Entry(val rs: CssRuleset, val decls: List<CssDeclaration>, val sig: String)
-            val entries = allRulesets.mapNotNull { r ->
-                val decls = PsiTreeUtil.findChildrenOfType(r.block, CssDeclaration::class.java).toList()
-                if (decls.isEmpty()) return@mapNotNull null
-                Entry(r, decls, normalizeSignatureStatic(decls))
-            }
-            val groups = entries.groupBy { it.sig }.filterValues { it.size >= 2 }
+            // 简洁做法：用文件级 CachedValue 拿分组结果：O(N) 一次共享，避免对每个 visit 的 ruleset 都全文件扫描（O(N²)）。
+            val groups = groupedSnapshot(file).filterValues { it.size >= 2 }
+            if (groups.isEmpty()) return
             for ((_, group) in groups) {
                 val fixes: Array<LocalQuickFix> = arrayOf(
-                    ExtractCommonRuleQuickFixWrapper(group.map { it.rs }, group.first().decls)
+                    ExtractCommonRuleQuickFixWrapper(group.map { it.ruleset }, group.first().declarations)
                 )
                 val count = group.size
-                val commonDecl = group.first().decls.joinToString("\n", limit = 3) { "  ${it.text}" } +
-                    (if (group.first().decls.size > 3) "\n  ..." else "")
+                val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
+                    (if (group.first().declarations.size > 3) "\n  ..." else "")
                 val msg = "$count rules share identical declarations:\n$commonDecl"
                 for (e in group) {
-                    val range = e.rs.block ?: continue
+                    val range = e.ruleset.block ?: continue
                     runCatching {
-                        val pd = mgr.createProblemDescriptor(
+                        mgr.createProblemDescriptor(
                             range, msg,
                             fixes.firstOrNull(),
                             ProblemHighlightType.GENERIC_ERROR_OR_WARNING, true
                         )
-                        // WS-2025.3 的 InspectionManager.createProblemDescriptor(...) 返回的 ProblemDescriptor
-                        // 默认会被 Daemon 下一次 Inspection Pass 读到并画出波浪线；
-                        // 这里不强依赖 ProblemDescriptorUtil.registerProblem（该类在某些 WS 版本是 internal）。
-                        pd
                     }
                 }
             }
@@ -376,29 +358,22 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             return s.lowercase()
         }
 
-        // file-level cache：避免 Annotator 对同一文件每 ruleset 重复分组计算
-        private val snapCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Map<String, List<Entry>>>>()
+        // file-level cache：用 CachedValue 按文件缓存分组结果（依赖只认该文件本身，
+        // 其它文件改动不会让本文件的重复分组失效）。替代原先手动 ConcurrentHashMap + PSI 强引用，
+        // 避免跨项目持有过期 PSI 的内存泄漏。
         private data class Entry(val ruleset: CssRuleset, val declarations: List<CssDeclaration>, val signature: String)
-        private fun cachedGroupedSnapshot(cssFile: PsiFile): Map<String, List<Entry>> {
-            val key = cssFile.virtualFile?.path ?: return emptyMap()
-            val modStamp = runCatching { cssFile.modificationStamp }.getOrDefault(-1L)
-            val cached = snapCache[key]
-            if (cached != null && cached.first == modStamp) return cached.second
-            val root = (cssFile as? StylesheetFile)?.stylesheet ?: cssFile
-            val rulesets = PsiTreeUtil.findChildrenOfType(root, CssRuleset::class.java).filter { it.block != null }
-            val entries = rulesets.mapNotNull { rs ->
-                val decls = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
-                if (decls.isEmpty()) return@mapNotNull null
-                Entry(rs, decls, normalizeSignatureStatic(decls))
-            }
-            val grouped = entries.groupBy { it.signature }
-            snapCache[key] = modStamp to grouped
-            // 兜底：snapCache 不要超过 32 个文件，避免泄漏
-            if (snapCache.size > 32) {
-                val toRemove = snapCache.keys.take(snapCache.size - 16)
-                for (k in toRemove) snapCache.remove(k)
-            }
-            return grouped
+        private fun groupedSnapshot(cssFile: PsiFile): Map<String, List<Entry>> {
+            return CachedValuesManager.getManager(cssFile.project).getCachedValue(cssFile, CachedValueProvider {
+                val root = (cssFile as? StylesheetFile)?.stylesheet ?: cssFile
+                val rulesets = PsiTreeUtil.findChildrenOfType(root, CssRuleset::class.java).filter { it.block != null }
+                val entries = rulesets.mapNotNull { rs ->
+                    val decls = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
+                    if (decls.isEmpty()) return@mapNotNull null
+                    Entry(rs, decls, normalizeSignatureStatic(decls))
+                }
+                val grouped = entries.groupBy { it.signature }
+                CachedValueProvider.Result.create(grouped, cssFile)
+            })
         }
     }
 
