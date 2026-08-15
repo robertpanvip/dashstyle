@@ -69,6 +69,19 @@
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
+        <!-- ========================= Tailwind 类补全（@apply 内，右侧 CSS 预览） ========================= -->
+        <!-- 在 CSS 的 @apply 指令内对 Tailwind 类做补全，候选右侧灰字显示该类展开后的 CSS 声明，
+             按 Enter 直接补全。类清单来自 TailwindClassResolver（纯逻辑，内置常用类）。 -->
+        <completion.contributor
+                language="CSS"
+                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+        <completion.contributor
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+        <completion.contributor
+                language="LESS"
+                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+
         <!-- ========================= 引用 & 跳转 ========================= -->
         <psi.referenceContributor
                 implementation="com.pan.dashstyle.StyleStringKeyReferenceContributor"/>
