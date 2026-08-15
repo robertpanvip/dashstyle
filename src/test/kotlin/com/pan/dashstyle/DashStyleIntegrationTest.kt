@@ -483,7 +483,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             childCount = 3
         )
         WriteCommandAction.runWriteCommandAction(project) {
-            FlexPreviewPopup.applyToBlock(ruleset!!.block!!, props)
+            LayoutPreviewPopup.applyToBlock(ruleset!!.block!!, LayoutModel.Flex(props))
         }
         val block = ruleset!!.block!!
         Assert.assertEquals("justify-content 应改为 center", "center", block.findDeclaration("justify-content")?.value?.text?.trim())
