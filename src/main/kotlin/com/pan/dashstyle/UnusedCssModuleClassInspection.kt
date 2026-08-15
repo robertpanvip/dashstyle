@@ -4,12 +4,11 @@ import com.intellij.codeInspection.*
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.psi.*
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.css.StylesheetFile
-import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.xml.XmlFile
@@ -203,20 +202,6 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             Regex(raw, RegexOption.IGNORE_CASE)
         }
 
-        private fun com.intellij.openapi.vfs.VirtualFile.findFileByRelativePath_(rel: String): com.intellij.openapi.vfs.VirtualFile? {
-            var cur: com.intellij.openapi.vfs.VirtualFile? = this
-            for (seg in rel.replace('\\', '/').split('/')) {
-                if (seg.isEmpty() || seg == ".") continue
-                if (seg == "..") { cur = cur?.parent; continue }
-                cur = cur?.findChild(seg) ?: return null
-            }
-            return cur
-        }
-
-        private fun com.intellij.openapi.vfs.VirtualFile.findFileByRel2(rel: String): com.intellij.openapi.vfs.VirtualFile? {
-            return findFileByRelativePath_(rel)
-        }
-
         // ================================================================
         // File-level snapshot 计算（按 cssFile 挂 CachedValue）
         // 关键：computeFileSnapshot / findReferencingSourceFiles 必须放在 companion object（静态），
@@ -228,24 +213,46 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         fun getOrComputeFileSnapshot(cssFile: PsiFile): Snapshot {
             return CachedValuesManager.getManager(cssFile.project).getCachedValue(
                 cssFile,
-                CachedValueProvider {
-                    val snap = computeFileSnapshot(cssFile)
-                    CachedValueProvider.Result.create(
-                        snap,
-                        cssFile,
-                        com.intellij.psi.util.PsiModificationTracker.MODIFICATION_COUNT
-                    )
-                }
+                CachedValueProvider { computeSnapshotWithDeps(cssFile) }
             )
         }
 
-        fun computeFileSnapshot(cssFile: PsiFile): Snapshot {
-            val cssVf = cssFile.virtualFile ?: return Snapshot(emptySet(), true, emptyMap())
-            if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return Snapshot(emptySet(), true, emptyMap())
+        /**
+         * 计算 snapshot 并返回**精细化失效依赖**，避免全局 MODIFICATION_COUNT：
+         *   - cssFile 元素：CSS 文件本身改动时失效
+         *   - 每个引用源文件元素：只有真正 import 了它的 JS/TS/Vue 改动时才失效
+         *   - OUT_OF_CODE_BLOCK_MODIFICATION_COUNT：新增/删除 import（在文件顶层，属于 code-block 外结构变化）
+         *     时失效 —— 函数体内打字不会触发，因此不再"在任意文件敲键盘就重算所有 module snapshot"。
+         */
+        private fun computeSnapshotWithDeps(cssFile: PsiFile): CachedValueProvider.Result<Snapshot> {
+            val cssVf = cssFile.virtualFile
+            if (cssVf == null || !MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) })
+                return CachedValueProvider.Result.create(Snapshot(emptySet(), true, emptyMap()), cssFile)
 
             val references = findReferencingSourceFiles(cssFile)
-            if (references.isEmpty()) return Snapshot(emptySet(), false, emptyMap())  // 非 CSS Module 容器 → 不置灰，也不报错
+            if (references.isEmpty())
+                return CachedValueProvider.Result.create(Snapshot(emptySet(), false, emptyMap()), cssFile)
 
+            val snap = computeFileSnapshot(cssFile, references)
+            val deps = mutableListOf<Any>()
+            deps += cssFile
+            for ((srcPsi, _) in references) deps += srcPsi
+            // 覆盖"新增 import / 新增引用文件"这类结构变化：跟踪 JS/TS/Vue 的 AST 变更，
+            // 比全局 MODIFICATION_COUNT 细得多（其它语言文件改动不会触发重算）。
+            deps += com.intellij.psi.util.PsiModificationTracker.getInstance(cssFile.project)
+                .forLanguages { lang ->
+                    val id = lang.id.lowercase()
+                    id == "javascript" || id == "html" || id == "vue" ||
+                        id.contains("typescript") || id.contains("jsx")
+                }
+            return CachedValueProvider.Result.create(snap, deps)
+        }
+
+        fun computeFileSnapshot(
+            cssFile: PsiFile,
+            references: List<Pair<PsiFile, String>>
+        ): Snapshot {
+            val cssVf = cssFile.virtualFile ?: return Snapshot(emptySet(), true, emptyMap())
             val used = mutableSetOf<String>()
             var hasDynamic = false
             val cssVfPath = cssVf.path
@@ -355,70 +362,28 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         // ================================================================
         private fun findReferencingSourceFiles(cssFile: PsiFile): List<Pair<PsiFile, String>> {
             val project = cssFile.project
-            val cssVf = cssFile.virtualFile ?: return emptyList()
-            val cssPath = cssVf.path
-            val cssName = cssVf.name
             val out = mutableListOf<Pair<PsiFile, String>>()
             val seen = mutableSetOf<String>()
 
             ApplicationManager.getApplication().runReadAction {
+                // 索引驱动反向定位：只查"真正引用了这个 CSS 文件"的 import 节点，
+                // 不再全项目 iterateContent。引用索引记录了每个模块引用 resolve 到的目标文件，
+                // 因此 ReferencesSearch 直接命中所有使用方，代价 O(引用数) 而非 O(项目文件数)。
                 val scope = GlobalSearchScope.projectScope(project)
-                val fileNames = hashSetOf<String>()
-                runCatching {
-                    val idx = ProjectFileIndex.getInstance(project)
-                    idx.iterateContent { vf ->
-                        val n = vf.name
-                        if (vf.isValid && !vf.isDirectory && (
-                            n.endsWith(".js") || n.endsWith(".jsx") ||
-                                n.endsWith(".ts") || n.endsWith(".tsx") ||
-                                n.endsWith(".vue"))
-                        ) {
-                            fileNames += n
-                        }
-                        true
-                    }
-                }
-                val candidatePsiFiles = mutableListOf<PsiFile>()
-                for (n in fileNames) {
-                    val vFiles = runCatching { FilenameIndex.getVirtualFilesByName(n, scope) }.getOrNull() ?: continue
-                    for (vf in vFiles) {
-                        if (!vf.isValid || vf.isDirectory) continue
-                        val psi = PsiManager.getInstance(project).findFile(vf) ?: continue
-                        candidatePsiFiles += psi
-                    }
-                }
+                val refs = runCatching {
+                    ReferencesSearch.search(cssFile, scope).findAll()
+                }.getOrNull() ?: emptyList()
 
-                for (psiFile in candidatePsiFiles) {
-                    val imports = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(psiFile, ES6ImportDeclaration::class.java)
-                    if (imports.isEmpty()) continue
-                    val fileVf = psiFile.virtualFile?.parent ?: continue
-                    for (imp in imports) {
-                        // WebStorm 2025.3 中 importModuleText 已失效（返回 null），改用 fromClause 的文本提取模块路径。
-                        val from = runCatching {
-                            imp.importModuleText
-                                ?: imp.getFromClause()?.text
-                                    ?.substringAfter("from", "")
-                                    ?.trim()
-                                    ?.trim('\'', '"', '`')
-                        }.getOrNull()?.trim() ?: continue
-                        if (!MODULE_EXTS.any { from.endsWith(it, ignoreCase = true) }) continue
-                        val resolvedVf = fileVf.findFileByRel2(from.trimStart('/'))
-                            ?: fileVf.findChild(from.substringAfterLast('/'))
-                            ?: continue
-                        val samePath = try {
-                            val normA = resolvedVf.path.replace('\\', '/').trimEnd('/')
-                            val normB = cssPath.replace('\\', '/').trimEnd('/')
-                            normA == normB
-                        } catch (_: Throwable) { false }
-                        if (!samePath && resolvedVf.name != cssName) continue
-
-                        val named = imp.namedImports
-                        val defaultBinding = imp.importedBindings.firstOrNull { b ->
-                            named == null || !com.intellij.psi.util.PsiTreeUtil.isAncestor(named, b, false)
-                        } ?: imp.importedBindings.firstOrNull() ?: continue
-                        val key = psiFile.virtualFile?.path.orEmpty() + "#" + (defaultBinding.name ?: "styles")
-                        if (seen.add(key)) out += psiFile to (defaultBinding.name ?: "styles")
-                    }
+                for (ref in refs) {
+                    val srcPsi = ref.element.containingFile ?: continue
+                    val srcVf = srcPsi.virtualFile ?: continue
+                    if (srcVf.extension?.lowercase() !in SOURCE_EXTS) continue
+                    val imp = com.intellij.psi.util.PsiTreeUtil.getParentOfType(
+                        ref.element, ES6ImportDeclaration::class.java
+                    )
+                    val binding = imp?.let(::extractDefaultBinding) ?: "styles"
+                    val key = srcVf.path.orEmpty() + "#" + binding
+                    if (seen.add(key)) out += srcPsi to binding
                 }
 
                 // --- Vue SFC：如果 cssFile 是 vue 内嵌 <style module>，此时直接取 vueFile 为引用源 ---
@@ -441,6 +406,17 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 }
             }
             return out
+        }
+
+        /** 引用源可出现的文件类型（ReferencesSearch 命中后按此过滤） */
+        private val SOURCE_EXTS = setOf("js", "jsx", "ts", "tsx", "vue")
+
+        /** 从 ES6 import 里取默认 binding 名（default import 而非 named import），取不到给 "styles" */
+        private fun extractDefaultBinding(imp: ES6ImportDeclaration): String {
+            val named = imp.namedImports
+            return imp.importedBindings.firstOrNull { b ->
+                named == null || !com.intellij.psi.util.PsiTreeUtil.isAncestor(named, b, false)
+            }?.name ?: imp.importedBindings.firstOrNull()?.name ?: "styles"
         }
     }
 }

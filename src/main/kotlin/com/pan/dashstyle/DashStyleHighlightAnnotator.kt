@@ -236,8 +236,7 @@ class DashStyleHighlightAnnotator : Annotator {
                     val result = bySig.filterValues { it.size >= 2 }
                     com.intellij.psi.util.CachedValueProvider.Result.create(
                         result,
-                        contextFile,
-                        com.intellij.psi.util.PsiModificationTracker.MODIFICATION_COUNT
+                        contextFile  // 只依赖该文件本身：其它文件改动不会让本文件的重复分组失效
                     )
                 }
             )

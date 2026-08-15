@@ -57,11 +57,11 @@ class StaticGlobalHighlightVisitor : HighlightVisitor, PossiblyDumbAware {
     // ========================= HighlightVisitor 真实签名（WS-2025.3） =========================
     override fun suitableForFile(file: PsiFile): Boolean {
         val name = file.name?.lowercase().orEmpty()
-        // Vue / Svelte / Astro 等"带内嵌 <style>"的文件，annotator 扩展点基于语言过滤不会命中内嵌节点，
-        // HighlightVisitor 才需要兜底；纯 .css/.scss/.less 已经有 annotator 在画了，直接返回 false 避免双画。
+        // 只对"可能内嵌 <style>"的宿主文件返回 true，避免在每个 JSX/TSX 大文件上按元素走 visit()。
+        // Vue / Svelte / Astro / Html 内嵌 CSS 的 annotator 语言过滤可能命中不了，HighlightVisitor 才需要兜底；
+        // 纯 .css/.scss/.less（有 annotator）以及 .tsx/.jsx（样式来自 .module.*，无内嵌 <style>）不在此列。
         return name.endsWith(".vue") || name.endsWith(".svelte") || name.endsWith(".astro") ||
-                name.endsWith(".html") || name.endsWith(".htm") || name.endsWith(".tsx") ||
-                name.endsWith(".jsx") || name.endsWith(".vue.ts") // 一些插件会生成虚拟文件名
+                name.endsWith(".html") || name.endsWith(".htm")
     }
 
     override fun visit(element: PsiElement) {
