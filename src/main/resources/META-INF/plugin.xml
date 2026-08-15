@@ -198,6 +198,22 @@
                 language="ANY"
                 implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
 
+        <!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
+        <!-- 在 box-shadow / text-shadow 声明行前渲染圆角矩形 + 真实阴影的 gutter 图标，
+             悬浮时把同一阴影放大渲染成 PNG 作为 tooltip。解析复用 ShadowResolver（纯逻辑）。 -->
+        <codeInsight.lineMarkerProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="ANY"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+
         <!-- ========================= CSS 尺寸/单位换算助手 ========================= -->
         <codeInsight.inlayProvider
                 language="CSS"
