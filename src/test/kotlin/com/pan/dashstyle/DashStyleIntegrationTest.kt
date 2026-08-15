@@ -9,6 +9,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert
 import org.junit.Test
@@ -452,5 +453,44 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         )
         // display:block 的 ruleset 不应生成任何 inlay
         Assert.assertTrue("非 flex 容器不应生成 inlay", offsets.all { it > 0 })
+    }
+
+    // ========================================================================
+    // #9. Flex 预览弹窗：applyToBlock 把调整后的 flex 值写回 CSS ruleset
+    //     （已存在声明改值 + 缺失声明新增）
+    // ========================================================================
+    @Test
+    fun `flex preview popup applyToBlock writes back flex values to ruleset`() {
+        val css = myFixture.configureByText(
+            "Flex2.module.css",
+            """
+            .toolbar {
+              display: flex;
+              justify-content: flex-start;
+              gap: 0;
+            }
+            """.trimIndent()
+        )
+        val ruleset = PsiTreeUtil.findChildrenOfType(css, CssRuleset::class.java).firstOrNull()
+        Assert.assertNotNull("应能找到 .toolbar ruleset", ruleset)
+
+        val props = FlexLayoutResolver.Props(
+            direction = FlexLayoutResolver.Direction.ROW,
+            justify = FlexLayoutResolver.Justify.CENTER,      // 已有声明 → 改值
+            align = FlexLayoutResolver.Align.STRETCH,          // 缺失 → 新增
+            gap = 16,                                          // 已有声明 → 改值
+            wrap = true,                                       // 缺失 → 新增
+            childCount = 3
+        )
+        WriteCommandAction.runWriteCommandAction(project) {
+            FlexPreviewPopup.applyToBlock(ruleset!!.block!!, props)
+        }
+        val block = ruleset!!.block!!
+        Assert.assertEquals("justify-content 应改为 center", "center", block.findDeclaration("justify-content")?.value?.text?.trim())
+        Assert.assertEquals("gap 应改为 16px", "16px", block.findDeclaration("gap")?.value?.text?.trim())
+        Assert.assertNotNull("align-items 应被新增", block.findDeclaration("align-items"))
+        Assert.assertEquals("新增 align-items 应为 stretch", "stretch", block.findDeclaration("align-items")?.value?.text?.trim())
+        Assert.assertNotNull("flex-wrap 应被新增", block.findDeclaration("flex-wrap"))
+        Assert.assertNotNull("flex-direction 应被新增", block.findDeclaration("flex-direction"))
     }
 }

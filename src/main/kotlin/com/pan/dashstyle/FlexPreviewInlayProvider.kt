@@ -20,9 +20,12 @@ import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.Color
 import java.awt.Graphics2D
+import java.awt.Point
+import java.awt.event.MouseEvent
 import javax.swing.Box
 import javax.swing.JComponent
 import javax.swing.JCheckBox
+import javax.swing.SwingUtilities
 
 /**
  * CSS Flex 布局增强 —— 行尾迷你预览。
@@ -91,7 +94,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
                 if (element !== file || !isStylesheetLike(file)) return false
                 if (!settings.showPerProperty && !settings.showOverallBadge) return false
                 val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
-                for (rs in rulesets) processRuleset(rs, settings, sink)
+                for (rs in rulesets) processRuleset(rs, editor, settings, sink)
                 return false
             }
         }
@@ -100,7 +103,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
     // ================================================================
     // 单 ruleset 处理
     // ================================================================
-    private fun processRuleset(rs: CssRuleset, settings: Settings, sink: InlayHintsSink) {
+    private fun processRuleset(rs: CssRuleset, editor: Editor, settings: Settings, sink: InlayHintsSink) {
         val block = rs.block ?: return
         val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
         if (decls.isEmpty()) return
@@ -127,7 +130,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
         if (settings.showOverallBadge) {
             sink.addInlineElement(
                 display.textRange.endOffset, false,
-                FlexPreviewPresentation(base, isOverall = true), false
+                FlexPreviewPresentation(base, editor, rs, isOverall = true), false
             )
         }
 
@@ -143,7 +146,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
                     "flex-wrap" -> base.copy(wrap = d.value?.text?.trim()?.equals("wrap", true) == true)
                     else -> continue
                 }
-                sink.addInlineElement(d.textRange.endOffset, false, FlexPreviewPresentation(props), false)
+                sink.addInlineElement(d.textRange.endOffset, false, FlexPreviewPresentation(props, editor, rs), false)
             }
         }
     }
@@ -172,11 +175,23 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
  */
 class FlexPreviewPresentation(
     private val props: FlexLayoutResolver.Props,
+    private val editor: Editor,
+    private val ruleset: CssRuleset,
     private val isOverall: Boolean = false
 ) : BasePresentation() {
 
     override val width: Int get() = if (isOverall) 46 else 40
     override val height: Int get() = if (isOverall) 26 else 22
+
+    override fun mouseClicked(event: MouseEvent, point: Point) {
+        if (SwingUtilities.isLeftMouseButton(event) && event.clickCount == 1) {
+            val popup = FlexPreviewPopup.create(editor, ruleset, props)
+            // 锚定在 inlay 附近弹出，用户可拖动
+            if (event.component != null) {
+                popup.showInScreenCoordinates(event.component, event.locationOnScreen)
+            }
+        }
+    }
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         val pad = if (isOverall) 3 else 2
