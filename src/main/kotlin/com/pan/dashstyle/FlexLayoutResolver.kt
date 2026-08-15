@@ -74,7 +74,26 @@ object FlexLayoutResolver {
      * 在 W×H 的容器内摆放 childCount 个子项。返回每个子项的 (x, y, w, h)。
      * 算法与交互预览面板里的摆位逻辑保持一致（justify 沿主轴、align 沿交叉轴）。
      */
+    // (Props, W, H) → 摆放结果的有界 LRU 缓存：place 是确定性纯函数，结果可复用
+    private data class PlaceKey(val props: Props, val w: Int, val h: Int)
+
+    private val placeCache = object : LinkedHashMap<PlaceKey, List<Box>>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<PlaceKey, List<Box>>?): Boolean = size > 512
+    }
+
     fun place(props: Props, W: Int, H: Int): List<Box> {
+        val key = PlaceKey(props, W, H)
+        synchronized(placeCache) {
+            placeCache[key]?.let { return it }
+        }
+        val boxes = computePlace(props, W, H)
+        synchronized(placeCache) {
+            placeCache[key] = boxes
+        }
+        return boxes
+    }
+
+    private fun computePlace(props: Props, W: Int, H: Int): List<Box> {
         val n = props.childCount.coerceAtLeast(1)
         val row = props.direction == Direction.ROW || props.direction == Direction.ROW_REVERSE
         val reverse = props.direction == Direction.ROW_REVERSE || props.direction == Direction.COLUMN_REVERSE

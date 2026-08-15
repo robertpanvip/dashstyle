@@ -24,6 +24,8 @@ import java.awt.Color
 import java.awt.Graphics2D
 import java.awt.Point
 import java.awt.event.MouseEvent
+import java.awt.image.BufferedImage
+import java.util.LinkedHashMap
 import javax.swing.Box
 import javax.swing.JComponent
 import javax.swing.JCheckBox
@@ -122,7 +124,7 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
         val result = ArrayList<FlexContext>()
         for (rs in PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)) {
             val block = rs.block ?: continue
-            val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
+            val decls = block.getDeclarations().toList()
             if (decls.isEmpty()) continue
 
             val display = decls.firstOrNull { it.propertyName?.trim().equals("display", true) }
@@ -228,18 +230,8 @@ class FlexPreviewPresentation(
     }
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
-        val pad = if (isOverall) 3 else 2
-        val boxW = width - pad * 2
-        val boxH = height - pad * 2
-        val boxes = FlexLayoutResolver.place(props, boxW, boxH)
-
-        g2d.color = if (isOverall) OVERALL_BORDER else BORDER
-        g2d.drawRect(pad, pad, boxW - 1, boxH - 1)
-        val fill = if (isOverall) OVERALL_CHILD else CHILD
-        for (b in boxes) {
-            g2d.color = fill
-            g2d.fillRect(pad + b.x, pad + b.y, b.w, b.h)
-        }
+        // 直接整图 blit 已按 Props 预渲染的迷你布局，避免每次重绘重复计算与画图元
+        g2d.drawImage(image(props, width, height, isOverall), 0, 0, width, height, null)
     }
 
     override fun toString(): String = "FlexPreview(${props.direction},${props.justify},${props.align},gap=${props.gap})"
@@ -249,5 +241,44 @@ class FlexPreviewPresentation(
         val CHILD: JBColor = JBColor(Color(0x4f8cff), Color(0x6aa0ff))
         val OVERALL_BORDER: JBColor = JBColor(Color(0x2d7ff9), Color(0x4f9bff))
         val OVERALL_CHILD: JBColor = JBColor(Color(0x1b5fd0), Color(0x5f9bff))
+
+        // (Props, w, h, overall) → 预渲染位图 的有界 LRU 缓存
+        private data class ImageKey(
+            val props: FlexLayoutResolver.Props,
+            val w: Int,
+            val h: Int,
+            val overall: Boolean
+        )
+
+        private const val MAX_IMAGES = 256
+        private val imageCache = object : LinkedHashMap<ImageKey, BufferedImage>(MAX_IMAGES, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ImageKey, BufferedImage>?): Boolean =
+                size > MAX_IMAGES
+        }
+
+        private fun image(props: FlexLayoutResolver.Props, w: Int, h: Int, overall: Boolean): BufferedImage {
+            val key = ImageKey(props, w, h, overall)
+            synchronized(imageCache) {
+                imageCache[key]?.let { return it }
+            }
+            val img = BufferedImage(w.coerceAtLeast(1), h.coerceAtLeast(1), BufferedImage.TYPE_INT_ARGB)
+            val g = img.createGraphics()
+            val pad = if (overall) 3 else 2
+            val boxW = w - pad * 2
+            val boxH = h - pad * 2
+            val boxes = FlexLayoutResolver.place(props, boxW, boxH)
+            g.color = if (overall) OVERALL_BORDER else BORDER
+            g.drawRect(pad, pad, boxW - 1, boxH - 1)
+            val fill = if (overall) OVERALL_CHILD else CHILD
+            for (b in boxes) {
+                g.color = fill
+                g.fillRect(pad + b.x, pad + b.y, b.w, b.h)
+            }
+            g.dispose()
+            synchronized(imageCache) {
+                imageCache[key] = img
+            }
+            return img
+        }
     }
 }
