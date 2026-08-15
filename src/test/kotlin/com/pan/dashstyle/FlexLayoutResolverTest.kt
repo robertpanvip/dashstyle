@@ -77,4 +77,23 @@ class FlexLayoutResolverTest {
         // 反行：第一个子项在最右侧
         assertTrue("row-reverse 时第一个子项更靠右", boxes[0].x > boxes[2].x)
     }
+
+    @Test
+    fun `wrap applies justify-content per line independently`() {
+        // W=60：每行最多 2 个子项，3 个子项 → 2 行（第一行 2 个，第二行 1 个）
+        val boxes = FlexLayoutResolver.place(
+            FlexLayoutResolver.Props(
+                wrap = true,
+                justify = FlexLayoutResolver.Justify.SPACE_BETWEEN,
+                childCount = 3
+            ),
+            W = 60, H = 200
+        )
+        // 第一行（index 0,1）：space-between 把两个子项推到两端，应有较大间距
+        assertTrue("第一行 space-between 拉开间距", boxes[1].x - boxes[0].x > 20)
+        // 第二行只有一个子项（index 2）：单行 space-between 无效果，回到行首
+        assertEquals("第二行单子项落在行首", 4, boxes[2].x)
+        // 两行 y 不同，证明确实换行
+        assertTrue("两行 y 不同", boxes[2].y != boxes[0].y)
+    }
 }

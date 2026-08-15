@@ -15,6 +15,8 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
+import com.intellij.psi.util.CachedValueProvider
+import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -93,62 +95,92 @@ class FlexPreviewInlayProvider : InlayHintsProvider<FlexPreviewInlayProvider.Set
             override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
                 if (element !== file || !isStylesheetLike(file)) return false
                 if (!settings.showPerProperty && !settings.showOverallBadge) return false
-                val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
-                for (rs in rulesets) processRuleset(rs, editor, settings, sink)
+                emitInlays(flexContexts(file), editor, settings, sink)
                 return false
             }
         }
     }
 
     // ================================================================
-    // 单 ruleset 处理
+    // flex 上下文解析（结果用 CachedValue 缓存：大文件反复高亮时只解析一次，
+    // 文档 PSI 变化后自动失效重建，避免每次全量扫描所有 ruleset）
     // ================================================================
-    private fun processRuleset(rs: CssRuleset, editor: Editor, settings: Settings, sink: InlayHintsSink) {
-        val block = rs.block ?: return
-        val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
-        if (decls.isEmpty()) return
+    private data class FlexContext(
+        val ruleset: CssRuleset,
+        val display: CssDeclaration,
+        val decls: List<CssDeclaration>,
+        val base: FlexLayoutResolver.Props
+    )
 
-        val display = decls.firstOrNull { it.propertyName?.trim().equals("display", true) }
-        val displayVal = display?.value?.text?.trim()?.lowercase()
-        if (displayVal != "flex" && displayVal != "inline-flex") return
-
-        // 收集当前 ruleset 里所有 flex 相关属性，作为上下文（总效果 + 每条预览的底座）
-        val ctx = HashMap<String, String>()
-        for (d in decls) {
-            val p = d.propertyName?.trim()?.lowercase() ?: continue
-            if (p in FLEX_PROPS) ctx[p] = d.value?.text?.trim().orEmpty()
+    private fun flexContexts(file: PsiFile): List<FlexContext> {
+        return CachedValuesManager.getCachedValue(file) {
+            CachedValueProvider.Result.create(computeFlexContexts(file), file)
         }
-        val base = FlexLayoutResolver.Props(
-            direction = FlexLayoutResolver.parseDirection(ctx["flex-direction"]),
-            justify = FlexLayoutResolver.parseJustify(ctx["justify-content"]),
-            align = FlexLayoutResolver.parseAlign(ctx["align-items"]),
-            alignContent = FlexLayoutResolver.parseAlignContent(ctx["align-content"]),
-            gap = FlexLayoutResolver.parseGap(ctx["gap"] ?: ctx["row-gap"]),
-            wrap = ctx["flex-wrap"]?.equals("wrap", true) == true
-        )
+    }
 
-        // display:flex 行 → 总效果徽标（display 必非空，否则上面已提前 return）
-        if (settings.showOverallBadge) {
-            sink.addInlineElement(
-                display.textRange.endOffset, false,
-                FlexPreviewPresentation(base, editor, rs, isOverall = true), false
-            )
-        }
+    private fun computeFlexContexts(file: PsiFile): List<FlexContext> {
+        val result = ArrayList<FlexContext>()
+        for (rs in PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)) {
+            val block = rs.block ?: continue
+            val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
+            if (decls.isEmpty()) continue
 
-        // 每个 flex 属性行尾 → 以 base 为底座、仅替换该条属性值，聚焦展示当前那条
-        if (settings.showPerProperty) {
+            val display = decls.firstOrNull { it.propertyName?.trim().equals("display", true) }
+                ?: continue
+            val displayVal = display.value?.text?.trim()?.lowercase()
+            if (displayVal != "flex" && displayVal != "inline-flex") continue
+
+            // 收集当前 ruleset 里所有 flex 相关属性，作为上下文（总效果 + 每条预览的底座）
+            val ctx = HashMap<String, String>()
             for (d in decls) {
                 val p = d.propertyName?.trim()?.lowercase() ?: continue
-                val props = when (p) {
-                    "justify-content" -> base.copy(justify = FlexLayoutResolver.parseJustify(d.value?.text, base.justify))
-                    "align-items" -> base.copy(align = FlexLayoutResolver.parseAlign(d.value?.text, base.align))
-                    "align-content" -> base.copy(alignContent = FlexLayoutResolver.parseAlignContent(d.value?.text, base.alignContent))
-                    "flex-direction" -> base.copy(direction = FlexLayoutResolver.parseDirection(d.value?.text, base.direction))
-                    "gap", "row-gap" -> base.copy(gap = FlexLayoutResolver.parseGap(d.value?.text))
-                    "flex-wrap" -> base.copy(wrap = d.value?.text?.trim()?.equals("wrap", true) == true)
-                    else -> continue
+                if (p in FLEX_PROPS) ctx[p] = d.value?.text?.trim().orEmpty()
+            }
+            val base = FlexLayoutResolver.Props(
+                direction = FlexLayoutResolver.parseDirection(ctx["flex-direction"]),
+                justify = FlexLayoutResolver.parseJustify(ctx["justify-content"]),
+                align = FlexLayoutResolver.parseAlign(ctx["align-items"]),
+                alignContent = FlexLayoutResolver.parseAlignContent(ctx["align-content"]),
+                gap = FlexLayoutResolver.parseGap(ctx["gap"] ?: ctx["row-gap"]),
+                wrap = ctx["flex-wrap"]?.equals("wrap", true) == true
+            )
+            result.add(FlexContext(rs, display, decls, base))
+        }
+        return result
+    }
+
+    // ================================================================
+    // 把缓存的上下文渲染成 inlay
+    // ================================================================
+    private fun emitInlays(
+        contexts: List<FlexContext>,
+        editor: Editor,
+        settings: Settings,
+        sink: InlayHintsSink
+    ) {
+        for (fc in contexts) {
+            // display:flex 行 → 总效果徽标
+            if (settings.showOverallBadge) {
+                sink.addInlineElement(
+                    fc.display.textRange.endOffset, false,
+                    FlexPreviewPresentation(fc.base, editor, fc.ruleset, isOverall = true), false
+                )
+            }
+            // 每个 flex 属性行尾 → 以 base 为底座、仅替换该条属性值，聚焦展示当前那条
+            if (settings.showPerProperty) {
+                for (d in fc.decls) {
+                    val p = d.propertyName?.trim()?.lowercase() ?: continue
+                    val props = when (p) {
+                        "justify-content" -> fc.base.copy(justify = FlexLayoutResolver.parseJustify(d.value?.text, fc.base.justify))
+                        "align-items" -> fc.base.copy(align = FlexLayoutResolver.parseAlign(d.value?.text, fc.base.align))
+                        "align-content" -> fc.base.copy(alignContent = FlexLayoutResolver.parseAlignContent(d.value?.text, fc.base.alignContent))
+                        "flex-direction" -> fc.base.copy(direction = FlexLayoutResolver.parseDirection(d.value?.text, fc.base.direction))
+                        "gap", "row-gap" -> fc.base.copy(gap = FlexLayoutResolver.parseGap(d.value?.text))
+                        "flex-wrap" -> fc.base.copy(wrap = d.value?.text?.trim()?.equals("wrap", true) == true)
+                        else -> continue
+                    }
+                    sink.addInlineElement(d.textRange.endOffset, false, FlexPreviewPresentation(props, editor, fc.ruleset), false)
                 }
-                sink.addInlineElement(d.textRange.endOffset, false, FlexPreviewPresentation(props, editor, rs), false)
             }
         }
     }
