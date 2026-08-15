@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DashStyle · CSS Flex 布局增强 — 效果图</title>
+<style>
+  :root {
+    --editor-bg: #1e1f22;
+    --editor-gutter: #2b2c2f;
+    --editor-line: #37393d;
+    --editor-text: #d4d4d4;
+    --editor-gutter-num: #6a6b6f;
+    --accent: #4f8cff;
+    --accent-soft: rgba(79,140,255,.14);
+    --green: #6fcf97;
+    --yellow: #e2c08d;
+    --popup-bg: #2b2d30;
+    --popup-border: #4a4d52;
+    --chip: #3a3d42;
+    --chip-active: #2a5fbf;
+    --shadow: 0 12px 40px rgba(0,0,0,.5);
+    --mono: "SF Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #141517;
+    color: var(--editor-text);
+    padding: 32px;
+    min-height: 100vh;
+  }
+  .page-title { max-width: 900px; margin: 0 auto 8px; font-size: 20px; font-weight: 600; color: #fff; }
+  .page-sub { max-width: 900px; margin: 0 auto 28px; font-size: 13px; color: #9a9b9f; }
+  .page-sub b { color: var(--green); }
+
+  /* ---------- IDE 窗口 ---------- */
+  .ide {
+    max-width: 900px;
+    margin: 0 auto;
+    background: var(--editor-bg);
+    border: 1px solid #33353a;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .ide-tab {
+    display: flex; align-items: center; gap: 14px;
+    background: #2b2d30;
+    padding: 8px 16px;
+    border-bottom: 1px solid #3a3d42;
+    font-size: 12px;
+    color: #f0f0f0;
+  }
+  .ide-tab .dot { width: 10px; height: 10px; border-radius: 50%; background: #3a3d42; }
+  .ide-tab .fn { color: #9a9b9f; font-family: var(--mono); }
+  .ide-tab .file {
+    margin-left: auto; font-family: var(--mono); color: #cfd0d4;
+    background: #3a3d42; padding: 3px 10px; border-radius: 5px; font-size: 12px;
+  }
+  .ide-tab .file .css { color: #6f97d9; }
+
+  .editor { display: flex; font-family: var(--mono); font-size: 13.5px; line-height: 1.75; }
+  .gutter {
+    width: 48px; flex: none; background: var(--editor-gutter);
+    text-align: right; padding: 12px 10px 12px 0; color: var(--editor-gutter-num);
+    user-select: none; border-right: 1px solid #33353a;
+  }
+  .gutter div { height: 1.75em; }
+  .code { flex: 1; padding: 12px 16px; overflow-x: auto; position: relative; white-space: pre; }
+
+  .k { color: #c586c0; }        /* keyword */
+  .p { color: #9cdcfe; }        /* property */
+  .v { color: #ce9178; }        /* value */
+  .w { color: #dcdcaa; }        /* weak / comment */
+  .cm { color: #6a9955; font-style: italic; }
+  .sel { color: #d7ba7d; }
+
+  .line { position: relative; min-height: 1.75em; }
+  .line.flex { background: var(--accent-soft); border-radius: 4px; }
+
+  /* ---------- Inlay 小型预览（行尾） ---------- */
+  .inlay {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-left: 10px; vertical-align: middle; cursor: pointer;
+    background: #2a2c30; border: 1px solid #3c3f45; border-radius: 6px;
+    padding: 2px 6px; position: relative;
+    transition: border-color .15s, transform .1s;
+  }
+  .inlay:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .inlay .mini {
+    width: 34px; height: 22px; border: 1px solid #55585f; border-radius: 3px;
+    background: #1e1f22; position: relative;
+  }
+  .inlay .mini i {
+    position: absolute; width: 5px; height: 5px; border-radius: 1px;
+    background: var(--accent); display: block;
+  }
+  .inlay .tag { font-size: 10px; color: #9a9b9f; font-family: var(--mono); }
+  .inlay .badge {
+    font-size: 13px; line-height: 1; color: #fff; font-family: var(--mono);
+    background: var(--accent); border-radius: 4px; padding: 3px 6px;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .inlay .badge .flex-label { font-size: 9px; opacity: .85; }
+
+  /* 迷你图内子项位置预置（由 JS 动态设置 style 即可，这里留空） */
+
+  /* ---------- 交互弹窗 ---------- */
+  .popup-backdrop { position: absolute; inset: 0; z-index: 5; }
+  .popup {
+    position: absolute; z-index: 6;
+    width: 360px; background: var(--popup-bg);
+    border: 1px solid var(--popup-border); border-radius: 10px;
+    box-shadow: var(--shadow); padding: 14px 16px;
+  }
+  .popup .head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .popup .head .t { font-size: 13px; font-weight: 600; color: #fff; }
+  .popup .head .sub { font-size: 11px; color: #8a8b90; font-family: var(--mono); }
+  .popup .canvas {
+    height: 120px; border: 1px solid #4a4d52; border-radius: 8px; margin: 10px 0;
+    background:
+      repeating-linear-gradient(0deg, transparent, transparent 29px, rgba(255,255,255,.03) 29px, rgba(255,255,255,.03) 30px),
+      #1e1f22;
+    position: relative; overflow: hidden;
+  }
+  .popup .canvas .axis-v { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.06); }
+  .popup .canvas .axis-h { position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,.06); }
+  .popup .item {
+    position: absolute; width: 26px; height: 20px; border-radius: 4px;
+    background: var(--accent); transition: all .18s ease;
+  }
+  .popup .item:nth-child(2) { background: #7aa2ff; }
+  .popup .item:nth-child(3) { background: #5f8bef; }
+  .field { margin-bottom: 10px; }
+  .field .label { font-size: 11px; color: #9a9b9f; margin-bottom: 5px; display: flex; justify-content: space-between; }
+  .field .label .val { color: var(--green); font-family: var(--mono); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    font-family: var(--mono); font-size: 11px; color: #cfd0d4;
+    background: var(--chip); border: 1px solid #4a4d52; border-radius: 5px;
+    padding: 3px 8px; cursor: pointer; transition: all .12s;
+  }
+  .chip.active { background: var(--chip-active); border-color: var(--accent); color: #fff; }
+  .chip:hover { border-color: var(--accent); }
+  .popup .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .btn {
+    font-size: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer; border: 1px solid transparent;
+  }
+  .btn.ghost { background: transparent; color: #cfd0d4; border-color: #4a4d52; }
+  .btn.ghost:hover { background: #3a3d42; }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary:hover { background: #3d7bf0; }
+
+  /* 提示说明卡 */
+  .note {
+    max-width: 900px; margin: 20px auto 0; background: #1b1c1f;
+    border: 1px solid #2f3136; border-radius: 10px; padding: 16px 20px; font-size: 13px; line-height: 1.7;
+  }
+  .note h3 { color: #fff; font-size: 14px; margin-bottom: 8px; }
+  .note ul { padding-left: 18px; color: #b9babe; }
+  .note b { color: var(--green); }
+  .note code { background: #2a2c30; padding: 1px 6px; border-radius: 4px; font-family: var(--mono); font-size: 12px; color: #9cdcfe; }
+</style>
+</head>
+<body>
+
+<div class="page-title">DashStyle · CSS Flex 布局增强</div>
+<div class="page-sub"><b>效果图</b>（纯 HTML 模拟，非真实插件）— 每个 flex 属性行尾显示迷你布局预览，点击弹出<b>可交互</b>配置面板，<code>display:flex</code> 行显示总效果。</div>
+
+<div class="ide" id="ide">
+  <div class="ide-tab">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span class="fn">●</span> DashStyle Flex Preview
+    <span class="file"><span class="css">App</span>.module.css</span>
+  </div>
+  <div class="editor" id="editor">
+    <div class="gutter">
+      <div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div></div>
+    </div>
+    <div class="code" id="code">
+
+<span class="sel">.toolbar</span> <span class="cm">/* flex 容器 */</span>
+  <span class="p">display</span>: <span class="v">flex</span>; <span class="w" id="inlayFlex"></span>
+  <span class="p">justify-content</span>: <span class="v">center</span>; <span class="w" id="inlayJustify"></span>
+  <span class="p">align-items</span>: <span class="v">center</span>; <span class="w" id="inlayAlign"></span>
+  <span class="p">gap</span>: <span class="v">12px</span>; <span class="w" id="inlayGap"></span>
+  <span class="p">flex-wrap</span>: <span class="v">nowrap</span>; <span class="w" id="inlayWrap"></span>
+
+  <span class="sel">.item</span> <span class="cm">/* 子项 */</span>
+  <span class="p">flex</span>: <span class="v">1</span>; <span class="w" id="inlayFlexItem"></span>
+
+<span class="cm">/* 点击任意小窗 → 弹交互面板，可实时拖拽/切换，确认后写回 */</span>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  const CODE = document.getElementById('code');
+  const IDE = document.getElementById('ide');
+
+  // 每个 inlay 的迷你图：子项相对父容器的 (left, top)
+  // 容器 34x22，子项 5x5
+  const ITEMS = [
+    { id:'inlayFlex', label:'flex', items:[[14.5,4],[14.5,12],[14.5,20]] },
+    { id:'inlayJustify', label:'center', items:[[14.5,4],[14.5,12],[14.5,20]] },
+    { id:'inlayAlign', label:'center', items:[[4,8.5],[14.5,8.5],[25,8.5]] },
+    { id:'inlayGap', label:'12px', items:[[4,4],[14.5,12],[25,20]] },
+    { id:'inlayWrap', label:'nowrap', items:[[4,4],[14.5,12],[25,20]] },
+    { id:'inlayFlexItem', label:'flex:1', items:[[4,8.5],[14.5,8.5],[25,8.5]] },
+  ];
+
+  function renderInlay(conf) {
+    const el = document.createElement('span');
+    el.className = 'inlay';
+    el.dataset.id = conf.id;
+    el.innerHTML =
+      `<span class="mini" id="mini-${conf.id}"></span>` +
+      (conf.id === 'inlayFlex'
+        ? `<span class="badge"><span class="flex-label">flex</span>总效果</span>`
+        : `<span class="tag">${conf.label}</span>`);
+    document.getElementById(conf.id).appendChild(el);
+    // 画迷你子项
+    const mini = document.getElementById('mini-' + conf.id);
+    conf.items.forEach(([l,t])=>{
+      const i = document.createElement('i');
+      i.style.left = l + 'px'; i.style.top = t + 'px';
+      mini.appendChild(i);
+    });
+    el.addEventListener('click', (e) => openPopup(e, conf));
+  }
+  ITEMS.forEach(renderInlay);
+
+  // ---------- 交互弹窗 ----------
+  let popupEl = null, canvasItems = [];
+  const POP = {
+    display:'flex', justifyContent:'center', alignItems:'center', gap:12, flexWrap:'nowrap'
+  };
+
+  function openPopup(e, conf) {
+    closePopup();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ideRect = IDE.getBoundingClientRect();
+    popupEl = document.createElement('div');
+    popupEl.className = 'popup';
+    popupEl.innerHTML = `
+      <div class="head">
+        <span class="t">Flex 布局预览</span>
+        <span class="sub">.toolbar</span>
+      </div>
+      <div class="canvas" id="popCanvas">
+        <div class="axis-v"></div><div class="axis-h"></div>
+        <div class="item"></div><div class="item"></div><div class="item"></div>
+      </div>
+      <div class="field">
+        <div class="label">justify-content <span class="val" id="vJ">center</span></div>
+        <div class="chips" id="cJ">
+          <span class="chip" data-v="flex-start">flex-start</span>
+          <span class="chip active" data-v="center">center</span>
+          <span class="chip" data-v="flex-end">flex-end</span>
+          <span class="chip" data-v="space-between">space-between</span>
+          <span class="chip" data-v="space-around">space-around</span>
+        </div>
+      </div>
+      <div class="field">
+        <div class="label">align-items <span class="val" id="vA">center</span></div>
+        <div class="chips" id="cA">
+          <span class="chip" data-v="flex-start">flex-start</span>
+          <span class="chip active" data-v="center">center</span>
+          <span class="chip" data-v="flex-end">flex-end</span>
+          <span class="chip" data-v="stretch">stretch</span>
+        </div>
+      </div>
+      <div class="field" style="display:flex;gap:16px">
+        <div style="flex:1">
+          <div class="label">gap <span class="val" id="vG">12px</span></div>
+          <input id="rG" type="range" min="0" max="40" value="12" style="width:100%">
+        </div>
+        <div style="flex:1">
+          <div class="label">direction <span class="val" id="vD">row</span></div>
+          <div class="chips" id="cD">
+            <span class="chip active" data-v="row">row</span>
+            <span class="chip" data-v="column">col</span>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <button class="btn ghost" id="bCancel">取消</button>
+        <button class="btn primary" id="bApply">应用并写回</button>
+      </div>
+    `;
+    IDE.appendChild(popupEl);
+    // 定位：相对 IDE，放在点击的 inlay 下方
+    let left = rect.left - ideRect.left;
+    let top  = rect.bottom - ideRect.top + 8;
+    if (top + 320 > IDE.clientHeight) top = rect.top - ideRect.top - 320;
+    popupEl.style.left = Math.max(8, Math.min(left, IDE.clientWidth-380)) + 'px';
+    popupEl.style.top = top + 'px';
+
+    canvasItems = [...popupEl.querySelectorAll('.item')];
+    refreshCanvas();
+
+    // chips 事件
+    bindChips('cJ','vJ','justifyContent');
+    bindChips('cA','vA','alignItems');
+    bindChips('cD','vD','direction');
+    document.getElementById('rG').addEventListener('input', (e)=>{
+      POP.gap = +e.target.value;
+      document.getElementById('vG').textContent = POP.gap + 'px';
+      refreshCanvas();
+    });
+    document.getElementById('bCancel').addEventListener('click', closePopup);
+    document.getElementById('bApply').addEventListener('click', ()=>{ closePopup(); flashApplied(); });
+  }
+
+  function bindChips(containerId, valId, key) {
+    document.getElementById(containerId).querySelectorAll('.chip').forEach(ch=>{
+      ch.addEventListener('click', ()=>{
+        document.querySelectorAll('#'+containerId+' .chip').forEach(c=>c.classList.remove('active'));
+        ch.classList.add('active');
+        POP[key] = ch.dataset.v;
+        document.getElementById(valId).textContent = ch.dataset.v;
+        refreshCanvas();
+      });
+    });
+  }
+
+  function refreshCanvas() {
+    const W = 360-32, H = 120;
+    const pad = 12, n = 3;
+    const dir = POP.direction;
+    const j = POP.justifyContent, a = POP.alignItems;
+    const gap = Math.min(POP.gap, 40);
+    const avail = dir==='row' ? W-2*pad : H-2*pad;
+    const total = n*26 + (n-1)*gap;
+    let start = pad;
+    if (j==='center') start = pad + (avail-total)/2;
+    else if (j==='flex-end') start = W-pad-total;
+    else if (j==='space-between') gap = (avail-n*26)/(n-1);
+    else if (j==='space-around') { gap = (avail-n*26)/n; start = pad+gap/2; }
+
+    canvasItems.forEach((it, i)=>{
+      const row = dir==='row';
+      it.style.width = row? '26px':'26px';
+      it.style.height = row? '20px':'26px';
+      const pos = row ? start + i*(26+gap) : start + i*(26+gap);
+      let x, y;
+      if (row) {
+        x = pos; x = Math.min(Math.max(x,pad), W-pad-26);
+        if (a==='center') y = (H-20)/2;
+        else if (a==='flex-end') y = H-pad-20;
+        else if (a==='stretch') { y = pad; it.style.height = H-2*pad; }
+        else y = pad;
+      } else {
+        y = pos; y = Math.min(Math.max(y,pad), H-pad-26);
+        if (a==='center') x = (W-26)/2;
+        else if (a==='flex-end') x = W-pad-26;
+        else if (a==='stretch') { x = pad; it.style.width = W-2*pad; }
+        else x = pad;
+      }
+      it.style.left = x+'px'; it.style.top = y+'px';
+    });
+  }
+
+  function closePopup(){ if(popupEl){ popupEl.remove(); popupEl=null; } }
+
+  function flashApplied(){
+    const badge = document.querySelector('#inlayFlex .badge');
+    badge.style.background = '#3f9d5f';
+    setTimeout(()=> badge.style.background = '', 900);
+  }
+
+  // 点空白关闭
+  IDE.addEventListener('click', (e)=>{ if(e.target.closest('.popup')) return; });
+  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closePopup(); });
+</script>
+
+<div class="note">
+  <h3>效果说明</h3>
+  <ul>
+    <li><b>静态行尾预览</b>：每个 flex 属性行尾出现一个小迷你图，直观反映该属性当前值（如 <code>justify-content: center</code> → 子项水平居中）。</li>
+    <li><b>总效果徽标</b>：<code>display: flex</code> 行尾显示 <code>flex 总效果</code> 徽标，汇总整个容器所有 flex 属性的综合布局。</li>
+    <li><b>可交互弹窗</b>：点击任意预览弹出配置面板，可实时切换 <code>justify-content / align-items / gap / direction</code>，画布即时重排；点「应用并写回」通过 <code>WriteCommandAction</code> 写回 CSS 文件。</li>
+    <li><b>实现层</b>：静态预览用 <code>InlayModel.addAfterLineEndElement</code> + 自定义 <code>EditorCustomElementRenderer</code>；交互用 <code>JBPopupFactory</code> 弹窗，面板为自控 <code>JComponent</code>；值→布局映射为纯逻辑，可用现有纯 Java 验证器测试。</li>
+  </ul>
+</div>
+
+</body>
+</html>
