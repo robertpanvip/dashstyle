@@ -374,7 +374,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             "com.pan.dashstyle.DashStyleDocumentationProvider",
             "com.pan.dashstyle.InlineStyleToCssModuleIntention",
             "com.pan.dashstyle.ExtractColorsAction",
-            "com.pan.dashstyle.FlexPreviewInlayProvider"
+            "com.pan.dashstyle.LayoutPreviewInlayProvider"
         )
         val cl = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
         for (cn in mustLoad) {

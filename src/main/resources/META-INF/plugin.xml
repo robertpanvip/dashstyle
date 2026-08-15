@@ -186,16 +186,16 @@
              Kotlin 侧用 isStylesheetLike 实际过滤，避免无关文件被反复触发。 -->
         <codeInsight.inlayProvider
                 language="CSS"
-                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
         <codeInsight.inlayProvider
                 language="SCSS"
-                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
         <codeInsight.inlayProvider
                 language="LESS"
-                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
         <codeInsight.inlayProvider
                 language="ANY"
-                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
 
         <!-- 全局 HighlightVisitor：StaticGlobalHighlightVisitor 按 ReflectorSnifferTest 嗅探到的真实签名
              （com.intellij.codeInsight.daemon.impl.HighlightVisitor，visit 只有 1 个 PsiElement 参数）
