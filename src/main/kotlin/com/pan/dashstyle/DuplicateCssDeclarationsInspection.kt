@@ -146,7 +146,10 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         private val duplicates: List<CssRuleset>,
         private val commonDeclarations: List<CssDeclaration>
     ) : LocalQuickFix {
-        override fun getName(): String = "Extract ${commonDeclarations.size} shared declarations into a new common class (with @extend)"
+        override fun getName(): String {
+            val strategy = duplicates.firstOrNull()?.let { quickFixStrategy(it) } ?: "shared selector"
+            return "Extract ${commonDeclarations.size} shared declarations into a new common class ($strategy)"
+        }
         override fun getFamilyName(): String = "DashStyle: Extract common CSS class"
 
         override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
@@ -217,6 +220,16 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val p = d.propertyName?.trim()?.lowercase().orEmpty()
             val v = d.value?.text?.trim()?.replace(Regex("""\s+"""), " ")?.lowercase().orEmpty()
             return "$p:$v"
+        }
+
+        /** 该 ruleset 对应的「合并引用」语法策略（供 fix 名称与插入逻辑共用）。 */
+        private fun quickFixStrategy(rs: CssRuleset): String {
+            val preprocessorName = determinePreprocessor(rs.containingFile)
+            return when (preprocessorName) {
+                "less" -> "LESS mixin call"
+                "scss", "sass" -> "@extend"
+                else -> "shared selector"
+            }
         }
 
         private fun determinePreprocessor(file: PsiFile?): String {

@@ -78,7 +78,7 @@
 | Inspection | 触发 | 修复 |
 |---|---|---|
 | [UnusedCssModuleClassInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/UnusedCssModuleClassInspection.kt) | CSS Module 文件中存在定义但 TSX/Vue 里 `styles.xxx` / `styles["xxx"]` 未引用时类名**置灰**；扫描到动态 `styles[expr]` 自动关闭该文件的检查避免误报 | QuickFix：删除未用 ruleset |
-| [DuplicateCssDeclarationsInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/DuplicateCssDeclarationsInspection.kt) | 同一 CSS 文件里 ≥2 个 ruleset 声明块完全相同 → **黄色 + 波浪线**（仿 TS 重复代码检查视觉） | QuickFix：抽取为 `%__common-xxx` 占位类，所有重复点替换成 `@extend %__common-xxx`（Sass 语义） |
+| [DuplicateCssDeclarationsInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/DuplicateCssDeclarationsInspection.kt) | 同一 CSS 文件里 ≥2 个 ruleset 声明块完全相同 → **黄色 + 波浪线**（仿 TS 重复代码检查视觉） | QuickFix：抽取为公共类 `.common-name`，重复点删除原声明并按语言替换为合并引用——**LESS** 用 mixin 调用 `.common-name();`（LESS 的 ruleset 本身就是 mixin），**SCSS/Sass** 用 `@extend .common-name;`，纯 **CSS** 无 extend/mixin 只删声明不动选择器 |
 
 ### 2.6 导入自动化
 > 说明：复制 `styles.xxx` → 粘贴时自动带 import，IntelliJ 平台自带的「Add import on paste」已能胜任，
