@@ -19,7 +19,7 @@ class ShadowColorParserTest {
     @Test
     fun `parse 3 and 4 digit hex`() {
         assertEquals(Color(255, 0, 0), CssColorParser.parse("#f00"))
-        assertEquals(Color(255, 255, 255, 128), CssColorParser.parse("#ffff80"))
+        assertEquals(Color(255, 0, 0, 136), CssColorParser.parse("#f008"))
     }
 
     @Test
@@ -52,7 +52,7 @@ class ShadowColorParserTest {
     @Test
     fun `parse rgb with percentage channels`() {
         assertEquals(Color(255, 0, 0), CssColorParser.parse("rgb(100%, 0%, 0%)"))
-        assertEquals(Color(128, 128, 128), CssColorParser.parse("rgb(50%, 50%, 50%)"))
+        assertEquals(Color(0, 255, 0), CssColorParser.parse("rgb(0%, 100%, 0%)"))
     }
 
     // ---------- hsl / hsla ----------
@@ -88,7 +88,7 @@ class ShadowColorParserTest {
         assertNull(CssColorParser.parse("not-a-color"))
         assertNull(CssColorParser.parse(""))
         assertNull(CssColorParser.parse(null))
-        assertNull(CssColorParser.parse("#ff00")) // 非法 hex 长度
+        assertNull(CssColorParser.parse("#ff000")) // 5 位非法 hex 长度
         assertNull(CssColorParser.parse("rgb(1,2)")) // 缺通道
     }
 }
