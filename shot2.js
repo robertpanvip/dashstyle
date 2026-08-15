@@ -12,6 +12,6 @@ const { chromium } = require('/tmp/node_modules/playwright-core');
   await page.click('#swGrid');
   await page.waitForTimeout(300);
   await page.screenshot({ path: '/workspace/popup-demo-grid.png' });
-  console.log('saved flex + grid');
+  console.log('re-saved');
   await browser.close();
 })();

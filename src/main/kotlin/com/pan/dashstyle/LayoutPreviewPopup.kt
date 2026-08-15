@@ -22,8 +22,7 @@ import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JSpinner
-import javax.swing.SpinnerNumberModel
+import javax.swing.JSlider
 
 /**
  * CSS 布局预览的交互弹窗（flex 与 grid 通用）。
@@ -48,6 +47,27 @@ object LayoutPreviewPopup {
         fun build(): JBPopup
     }
 
+    /** 数字输入滑块：JSlider + 实时数值标签，右侧显示当前值。 */
+    private class SliderControl(min: Int, max: Int, initial: Int) {
+        private val slider = JSlider(min, max, initial.coerceIn(min, max))
+        private val valueLabel = JLabel(initial.coerceIn(min, max).toString())
+        private val panel = JPanel(BorderLayout(6, 0)).apply {
+            add(slider, BorderLayout.CENTER)
+            add(valueLabel, BorderLayout.EAST)
+            preferredSize = Dimension(160, 24)
+        }
+        init {
+            slider.addChangeListener {
+                valueLabel.text = slider.value.toString()
+            }
+        }
+        val view: JComponent get() = panel
+        val value: Int get() = slider.value
+        fun addChangeListener(l: () -> Unit) {
+            slider.addChangeListener { l() }
+        }
+    }
+
     // ====================================================================
     // flex 编辑器
     // ====================================================================
@@ -63,7 +83,7 @@ object LayoutPreviewPopup {
         private val alignContent = JComboBox(arrayOf("flex-start", "flex-end", "center", "stretch", "space-between", "space-around", "space-evenly"))
         private val direction = JComboBox(arrayOf("row", "row-reverse", "column", "column-reverse"))
         private val wrap = JComboBox(arrayOf("nowrap", "wrap"))
-        private val gap = JSpinner(SpinnerNumberModel(0, 0, 40, 1))
+        private val gap = SliderControl(0, 40, initial.gap)
 
         init {
             justify.selectedItem = initial.justify.cssValue()
@@ -71,7 +91,6 @@ object LayoutPreviewPopup {
             alignContent.selectedItem = initial.alignContent.cssValue()
             direction.selectedItem = initial.direction.cssValue()
             wrap.selectedItem = if (initial.wrap) "wrap" else "nowrap"
-            gap.value = initial.gap
 
             justify.addActionListener { refresh() }
             align.addActionListener { refresh() }
@@ -87,7 +106,7 @@ object LayoutPreviewPopup {
                 justify = FlexLayoutResolver.parseJustify(justify.selectedItem as? String, state[0].justify),
                 align = FlexLayoutResolver.parseAlign(align.selectedItem as? String, state[0].align),
                 alignContent = FlexLayoutResolver.parseAlignContent(alignContent.selectedItem as? String, state[0].alignContent),
-                gap = (gap.value as Int).coerceIn(0, 40),
+                gap = gap.value.coerceIn(0, 40),
                 wrap = (wrap.selectedItem as? String) == "wrap",
                 childCount = state[0].childCount
             )
@@ -119,7 +138,7 @@ object LayoutPreviewPopup {
             addRow("align-content", alignContent)
             addRow("flex-direction", direction)
             addRow("flex-wrap", wrap)
-            addRow("gap", gap)
+            addRow("gap", gap.view)
 
             val applyBtn = JButton("应用到样式")
             applyBtn.addActionListener { apply() }
@@ -150,9 +169,9 @@ object LayoutPreviewPopup {
     ) : PopupEditor {
         private val state = arrayOf(initial)
 
-        private val columns = JSpinner(SpinnerNumberModel(count(initial.columns), 1, 6, 1))
-        private val rows = JSpinner(SpinnerNumberModel(count(initial.rows).coerceAtLeast(1), 1, 4, 1))
-        private val gap = JSpinner(SpinnerNumberModel(initial.gap, 0, 40, 1))
+        private val columns = SliderControl(1, 6, count(initial.columns))
+        private val rows = SliderControl(1, 4, count(initial.rows).coerceAtLeast(1))
+        private val gap = SliderControl(0, 40, initial.gap)
         private val justifyItems = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val alignItems = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val justifyContent = JComboBox(arrayOf("stretch", "start", "center", "end"))
@@ -174,12 +193,12 @@ object LayoutPreviewPopup {
         }
 
         private fun refresh() {
-            val nCols = (columns.value as Int).coerceIn(1, 6)
-            val nRows = (rows.value as Int).coerceIn(1, 4)
+            val nCols = columns.value.coerceIn(1, 6)
+            val nRows = rows.value.coerceIn(1, 4)
             state[0] = GridLayoutResolver.Props(
                 columns = List(nCols) { GridLayoutResolver.Track.Flex(1) },
                 rows = List(nRows) { GridLayoutResolver.Track.Flex(1) },
-                gap = (gap.value as Int).coerceIn(0, 40),
+                gap = gap.value.coerceIn(0, 40),
                 justifyItems = GridLayoutResolver.parseAlign(justifyItems.selectedItem as? String, state[0].justifyItems),
                 alignItems = GridLayoutResolver.parseAlign(alignItems.selectedItem as? String, state[0].alignItems),
                 justifyContent = GridLayoutResolver.parseAlign(justifyContent.selectedItem as? String, state[0].justifyContent),
@@ -209,9 +228,9 @@ object LayoutPreviewPopup {
                 c.gridx = 1; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1.0
                 form.add(comp, c); row++
             }
-            addRow("columns(1fr)", columns)
-            addRow("rows(1fr)", rows)
-            addRow("gap", gap)
+            addRow("columns(1fr)", columns.view)
+            addRow("rows(1fr)", rows.view)
+            addRow("gap", gap.view)
             addRow("justify-items", justifyItems)
             addRow("align-items", alignItems)
             addRow("justify-content", justifyContent)
@@ -229,7 +248,7 @@ object LayoutPreviewPopup {
             panel.add(buttons, BorderLayout.SOUTH)
 
             return JBPopupFactory.getInstance()
-                .createComponentPopupBuilder(panel, columns)
+                .createComponentPopupBuilder(panel, columns.view)
                 .setTitle("Grid 布局预览")
                 .setMovable(true).setResizable(false).setCancelKeyEnabled(true)
                 .createPopup()
