@@ -197,6 +197,20 @@
                 language="ANY"
                 implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
 
+        <!-- ========================= CSS 尺寸/单位换算助手 ========================= -->
+        <codeInsight.inlayProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="ANY"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
+
         <!-- 全局 HighlightVisitor：StaticGlobalHighlightVisitor 按 ReflectorSnifferTest 嗅探到的真实签名
              （com.intellij.codeInsight.daemon.impl.HighlightVisitor，visit 只有 1 个 PsiElement 参数）
              静态实现，专门负责 Vue/Svelte 等带内嵌 <style module> 场景——这些文件的内嵌 CssRuleset 不在

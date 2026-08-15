@@ -161,4 +161,82 @@ object GridLayoutResolver {
             }
         }
     }
+
+    /**
+     * 计算轨道在给定可用尺寸下的像素宽度。同 [layoutTracks]，对外暴露供拖拽/绘制复用。
+     */
+    fun trackWidths(tracks: List<Track>, avail: Int): List<Int> = layoutTracks(tracks, avail)
+
+    /**
+     * 相邻轨道分隔线的像素位置（含最右侧边框），供轨道拖拽命中和绘制分隔线使用。
+     * 返回 n+1 个边界点（tracks 为空时返回 [0]）。
+     */
+    fun trackBounds(tracks: List<Track>, avail: Int, gap: Int = 0): List<Int> {
+        val widths = layoutTracks(tracks, avail)
+        val bounds = ArrayList<Int>(widths.size + 1)
+        var acc = 0
+        bounds.add(0)
+        for ((idx, w) in widths.withIndex()) {
+            acc += w
+            bounds.add(acc)
+            // 分隔线位于轨道边界处；gap 在记录边界之后叠加
+            if (idx < widths.size - 1) acc += gap
+        }
+        return bounds
+    }
+
+    /**
+     * 轨道拖拽：调整 [leftIndex] 与 [leftIndex+1] 两条相邻轨道之间的相对尺寸。
+     * 拖动分隔线往右（[delta] > 0）时，左侧轨道变宽、右侧变窄。
+     *
+     * 规则：
+     *  - 两条都是 fr → 在两者间加减权重，保持各自 ≥ [minWeight]；
+     *  - 只有一条是 fr → 改变该条权重；
+     *  - 都没有 fr（px/auto）→ 直接给左侧 px 加 [delta]、右侧 px 减 [delta]（钳制到 ≥0）。
+     * 返回新轨道列表；越界索引或无可调整项时返回原列表。
+     */
+    fun resizeAdjacentTracks(
+        tracks: List<Track>,
+        leftIndex: Int,
+        delta: Int,
+        minWeight: Int = 1
+    ): List<Track> {
+        if (leftIndex < 0 || leftIndex + 1 >= tracks.size || delta == 0) return tracks
+        val left = tracks[leftIndex]
+        val right = tracks[leftIndex + 1]
+
+        val leftW = (left as? Track.Flex)?.weight
+        val rightW = (right as? Track.Flex)?.weight
+        val out = tracks.toMutableList()
+
+        if (leftW != null && rightW != null) {
+            // 守恒移动：左侧实际变化量 = 拖拽量，但被 minWeight 钳制后，差值由右侧吸收
+            val newLeft = (leftW + delta).coerceAtLeast(minWeight)
+            val leftChange = newLeft - leftW
+            out[leftIndex] = Track.Flex(newLeft)
+            out[leftIndex + 1] = Track.Flex((rightW - leftChange).coerceAtLeast(minWeight))
+            return out
+        }
+        if (leftW != null) {
+            out[leftIndex] = Track.Flex((leftW + delta).coerceAtLeast(minWeight))
+            return out
+        }
+        if (rightW != null) {
+            out[leftIndex + 1] = if (delta > 0) {
+                Track.Flex(rightW.coerceAtLeast(minWeight))
+            } else {
+                Track.Flex((rightW + delta).coerceAtLeast(minWeight))
+            }
+            return out
+        }
+        // 都没有 fr：px 平移
+        val lp = (left as? Track.Fixed)?.px
+        val rp = (right as? Track.Fixed)?.px
+        if (lp != null && rp != null) {
+            out[leftIndex] = Track.Fixed((lp + delta).coerceAtLeast(0))
+            out[leftIndex + 1] = Track.Fixed((rp - delta).coerceAtLeast(0))
+            return out
+        }
+        return tracks
+    }
 }

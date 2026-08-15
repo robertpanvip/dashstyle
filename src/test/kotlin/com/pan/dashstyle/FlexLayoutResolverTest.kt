@@ -96,4 +96,48 @@ class FlexLayoutResolverTest {
         // 两行 y 不同，证明确实换行
         assertTrue("两行 y 不同", boxes[2].y != boxes[0].y)
     }
+
+    // ---------- 子项级微调：align-self 覆盖容器 align-items ----------
+
+    @Test
+    fun `child align-self flex-end moves that child down below others`() {
+        // 容器 align:flex-start，第 0 个子项 align-self:flex-end → 该子项 y 更大
+        val boxes = FlexLayoutResolver.place(
+            FlexLayoutResolver.Props(
+                align = FlexLayoutResolver.Align.FLEX_START,
+                alignSelfs = listOf(FlexLayoutResolver.Align.FLEX_END, null, null)
+            ),
+            W = 200, H = 200
+        )
+        assertTrue("align-self flex-end 子项应更靠下", boxes[0].y > boxes[1].y)
+        assertEquals("其余子项沿用容器 flex-start，y 相同", boxes[1].y, boxes[2].y)
+    }
+
+    @Test
+    fun `child align-self center centers that child vertically`() {
+        val boxes = FlexLayoutResolver.place(
+            FlexLayoutResolver.Props(
+                align = FlexLayoutResolver.Align.FLEX_START,
+                alignSelfs = listOf(FlexLayoutResolver.Align.CENTER)
+            ),
+            W = 200, H = 200
+        )
+        // flex-start 基准 y=4；center 应把子项居中到容器，y 明显大于 4 且小于容器底
+        assertTrue("center 子项 y 大于 flex-start 基准", boxes[0].y > boxes[1].y)
+        assertTrue("center 子项仍在容器内", boxes[0].y + boxes[0].h <= 200)
+    }
+
+    @Test
+    fun `child align-self stretch stretches only that child`() {
+        val boxes = FlexLayoutResolver.place(
+            FlexLayoutResolver.Props(
+                align = FlexLayoutResolver.Align.FLEX_START,
+                alignSelfs = listOf(FlexLayoutResolver.Align.STRETCH, null, null)
+            ),
+            W = 200, H = 200
+        )
+        // 单行时 stretch 填满行带（容高-2P），比非 stretch 的 20 更高
+        assertTrue("stretch 子项高度应大于普通子项", boxes[0].h > boxes[1].h)
+        assertEquals("其余子项高度不变", boxes[1].h, boxes[2].h)
+    }
 }

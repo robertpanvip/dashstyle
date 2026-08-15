@@ -23,7 +23,12 @@ object FlexLayoutResolver {
         val alignContent: AlignContent = AlignContent.FLEX_START,
         val gap: Int = 0,
         val wrap: Boolean = false,
-        val childCount: Int = 3
+        val childCount: Int = 3,
+        /**
+         * 逐子项的交叉轴对齐覆盖（align-self）。下标 i 对应第 i 个子项；
+         * null 表示沿用容器级 [align]。长度不足的部分视为沿用容器对齐。
+         */
+        val alignSelfs: List<Align?> = emptyList()
     )
 
     fun parseDirection(s: String?, fallback: Direction = Direction.ROW): Direction = when (s?.trim()?.lowercase()) {
@@ -103,7 +108,7 @@ object FlexLayoutResolver {
         val itemMain = if (row) cw else ch
         val itemCross = if (row) ch else cw
         val gap = props.gap.coerceIn(0, 40)
-        val stretch = props.align == Align.STRETCH
+        fun effAlign(i: Int): Align = props.alignSelfs.getOrNull(i) ?: props.align
 
         // ---- 换行行数：wrap 时按主轴能容纳的个数拆多行，否则单行 ----
         val maxPerLine = if (props.wrap) {
@@ -128,14 +133,21 @@ object FlexLayoutResolver {
             for (li in 0 until lines) lineBase.add(start + li * (itemCross + gapCross))
         }
 
-        // 单行时：交叉轴上直接用 align-items 摆子项（不引入行带）
+        // 单行时：交叉轴上直接用 align-items 摆子项（不引入行带）。
+        // 多行时：每行拥有一个「行带」[lineBase[li], lineBase[li]+itemCross]，子项在带内按自身对齐摆放。
         fun lineBand(li: Int): Pair<Int, Int> {
-            if (lines == 1) return when (props.align) {
-                Align.CENTER, Align.BASELINE -> Pair((crossAvail - itemCross) / 2, itemCross)
-                Align.FLEX_END -> Pair(crossAvail - P - itemCross, itemCross)
-                else -> Pair(P, if (stretch) (crossAvail - 2 * P).coerceAtLeast(1) else itemCross)
-            }
+            if (lines == 1) return Pair(P, (crossAvail - 2 * P).coerceAtLeast(1))
             return Pair(lineBase[li], itemCross)
+        }
+
+        // 子项在行带 [base, base+band] 内的交叉轴偏移；stretch 返回 null 表示填满整带。
+        fun crossPos(align: Align, base: Int, band: Int): Pair<Int, Int?> {
+            return when (align) {
+                Align.FLEX_START -> Pair(base, itemCross)
+                Align.CENTER, Align.BASELINE -> Pair(base + (band - itemCross) / 2, itemCross)
+                Align.FLEX_END -> Pair(base + band - itemCross, itemCross)
+                Align.STRETCH -> Pair(base, null)
+            }
         }
 
         val boxes = ArrayList<Box>(n)
@@ -158,13 +170,9 @@ object FlexLayoutResolver {
             }
             var mainPos = start + posInLine * (itemMain + gapMain)
 
-            // 交叉轴：行带内按 align-items 摆放
+            // 交叉轴：行带内按该子项的对齐摆放（优先 align-self，缺省用容器 align-items）
             val (base, band) = lineBand(li)
-            val crossPos = when (props.align) {
-                Align.CENTER, Align.BASELINE -> base + (band - itemCross) / 2
-                Align.FLEX_END -> base + band - itemCross
-                Align.STRETCH, Align.FLEX_START -> base
-            }
+            val (crossBase, crossSize) = crossPos(effAlign(i), base, band)
 
             var x: Int
             var y: Int
@@ -172,12 +180,12 @@ object FlexLayoutResolver {
             var h = ch
             if (row) {
                 x = mainPos
-                y = crossPos
-                if (stretch) h = band.coerceAtLeast(1)
+                y = crossBase
+                if (crossSize == null) h = band.coerceAtLeast(1)
             } else {
                 y = mainPos
-                x = crossPos
-                if (stretch) w = band.coerceAtLeast(1)
+                x = crossBase
+                if (crossSize == null) w = band.coerceAtLeast(1)
             }
             if (reverse) {
                 if (row) x = mainAvail - x - w else y = mainAvail - y - h

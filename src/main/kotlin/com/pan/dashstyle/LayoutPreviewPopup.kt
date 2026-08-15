@@ -112,13 +112,14 @@ object LayoutPreviewPopup {
                 alignContent = FlexLayoutResolver.parseAlignContent(alignContent.selectedItem as? String, state[0].alignContent),
                 gap = gap.value.coerceIn(0, 40),
                 wrap = (wrap.selectedItem as? String) == "wrap",
-                childCount = state[0].childCount
+                childCount = state[0].childCount,
+                alignSelfs = state[0].alignSelfs
             )
             preview.repaint()
             apply()
         }
 
-        /** 拖动反向推断：把鼠标位置映射回 justify/align（分轴磁吸）。接收画布宽高以便精确计算。 */
+        /** 拖动反向推断：拖空白整组（X 改 justify / Y 改 align）；拖单个子项改该子项 align-self。 */
         private fun dragSettings(): DragSettings {
             val pad = 12
             return DragSettings(
@@ -128,45 +129,83 @@ object LayoutPreviewPopup {
                     val boxW = preview.width - pad * 2
                     val boxH = preview.height - pad * 2
                     val boxes = FlexLayoutResolver.place(s, boxW, boxH)
-                    boxes.any { p.x in it.x..(it.x + it.w) && p.y in it.y..(it.y + it.h) }
+                    val hit = boxes.indexOfFirst { p.x in it.x..(it.x + it.w) && p.y in it.y..(it.y + it.h) }
+                    if (hit >= 0) DragTarget.Item(hit) else DragTarget.Group
                 },
-                onDrag = { p, axis, boxW, boxH ->
+                onDrag = { target, e ->
                     val s = state[0]
-                    val newProps = when (axis) {
-                        DragAxis.X -> {
-                            val cands = listOf(
-                                FlexLayoutResolver.Justify.FLEX_START,
-                                FlexLayoutResolver.Justify.CENTER,
-                                FlexLayoutResolver.Justify.FLEX_END,
-                                FlexLayoutResolver.Justify.SPACE_BETWEEN,
-                                FlexLayoutResolver.Justify.SPACE_AROUND,
-                                FlexLayoutResolver.Justify.SPACE_EVENLY
-                            )
-                            val best = cands.minByOrNull { j ->
-                                val b = FlexLayoutResolver.place(s.copy(justify = j), boxW, boxH)[0]
-                                val cx = b.x + b.w / 2.0
-                                abs(cx - p.x)
-                            } ?: s.justify
-                            s.copy(justify = best)
+                    when (target) {
+                        is DragTarget.Item -> {
+                            if (e.axis == DragAxis.X) {
+                                dragJustify(s, e)
+                            } else {
+                                dragChildAlignSelf(s, target.index, e)
+                            }
                         }
-                        DragAxis.Y -> {
-                            val cands = listOf(
-                                FlexLayoutResolver.Align.STRETCH,
-                                FlexLayoutResolver.Align.FLEX_START,
-                                FlexLayoutResolver.Align.CENTER,
-                                FlexLayoutResolver.Align.FLEX_END
-                            )
-                            val best = cands.minByOrNull { a ->
-                                val b = FlexLayoutResolver.place(s.copy(align = a), boxW, boxH)[0]
-                                val cy = b.y + b.h / 2.0
-                                abs(cy - p.y)
-                            } ?: s.align
-                            s.copy(align = best)
+                        else -> {
+                            when (e.axis) {
+                                DragAxis.X -> dragJustify(s, e)
+                                DragAxis.Y -> dragAlign(s, e)
+                            }
                         }
                     }
-                    applyNewProps(newProps)
                 }
             )
+        }
+
+        private fun dragJustify(s: FlexLayoutResolver.Props, e: DragEvent) {
+            val cands = listOf(
+                FlexLayoutResolver.Justify.FLEX_START,
+                FlexLayoutResolver.Justify.CENTER,
+                FlexLayoutResolver.Justify.FLEX_END,
+                FlexLayoutResolver.Justify.SPACE_BETWEEN,
+                FlexLayoutResolver.Justify.SPACE_AROUND,
+                FlexLayoutResolver.Justify.SPACE_EVENLY
+            )
+            val best = cands.minByOrNull { j ->
+                val b = FlexLayoutResolver.place(s.copy(justify = j), e.boxW, e.boxH)[0]
+                val cx = b.x + b.w / 2.0
+                abs(cx - e.point.x)
+            } ?: s.justify
+            if (best != s.justify) applyNewProps(s.copy(justify = best))
+        }
+
+        private fun dragAlign(s: FlexLayoutResolver.Props, e: DragEvent) {
+            val cands = listOf(
+                FlexLayoutResolver.Align.STRETCH,
+                FlexLayoutResolver.Align.FLEX_START,
+                FlexLayoutResolver.Align.CENTER,
+                FlexLayoutResolver.Align.FLEX_END
+            )
+            val best = cands.minByOrNull { a ->
+                val b = FlexLayoutResolver.place(s.copy(align = a), e.boxW, e.boxH)[0]
+                val cy = b.y + b.h / 2.0
+                abs(cy - e.point.y)
+            } ?: s.align
+            if (best != s.align) applyNewProps(s.copy(align = best))
+        }
+
+        /** 通过拖动第 [index] 个子项在交叉轴上的位置，推断该子项的 align-self（覆盖容器 align-items）。 */
+        private fun dragChildAlignSelf(s: FlexLayoutResolver.Props, index: Int, e: DragEvent) {
+            val cands = listOf(
+                FlexLayoutResolver.Align.STRETCH,
+                FlexLayoutResolver.Align.FLEX_START,
+                FlexLayoutResolver.Align.CENTER,
+                FlexLayoutResolver.Align.FLEX_END
+            )
+            val best = cands.minByOrNull { a ->
+                val rows = s.alignSelfs.toMutableList()
+                while (rows.size <= index) rows.add(null)
+                rows[index] = a
+                val b = FlexLayoutResolver.place(s.copy(alignSelfs = rows), e.boxW, e.boxH)[index]
+                val cy = b.y + b.h / 2.0
+                abs(cy - e.point.y)
+            } ?: s.alignSelfs.getOrNull(index) ?: s.align
+            val rows = s.alignSelfs.toMutableList()
+            while (rows.size <= index) rows.add(null)
+            if (rows[index] == best) return
+            rows[index] = best
+            applyNewProps(s.copy(alignSelfs = rows))
         }
 
         /** 应用新 props：更新 state、同步下拉控件、重绘画布并实时写回 CSS。 */
@@ -273,7 +312,7 @@ object LayoutPreviewPopup {
             apply()
         }
 
-        /** 拖动反向推断：X 轴改 justify-content，Y 轴改 align-content（整块网格对齐）。 */
+        /** 拖动反向推断：拖分隔线改轨道尺寸；拖空白整组改 justify-content / align-content。 */
         private fun dragSettings(): DragSettings {
             val pad = 12
             return DragSettings(
@@ -282,42 +321,76 @@ object LayoutPreviewPopup {
                     val s = state[0]
                     val boxW = preview.width - pad * 2
                     val boxH = preview.height - pad * 2
+                    val colBounds = GridLayoutResolver.trackBounds(s.columns, boxW, s.gap)
+                    val rowBounds = GridLayoutResolver.trackBounds(s.rows, boxH, s.gap)
+                    val tol = 4
+                    for (i in 1 until colBounds.size - 1) {
+                        if (abs(p.x - colBounds[i]) <= tol) return@DragSettings DragTarget.Track(i, horizontal = false)
+                    }
+                    for (i in 1 until rowBounds.size - 1) {
+                        if (abs(p.y - rowBounds[i]) <= tol) return@DragSettings DragTarget.Track(i, horizontal = true)
+                    }
                     val boxes = GridLayoutResolver.place(s, boxW, boxH)
-                    boxes.any { p.x in it.x..(it.x + it.w) && p.y in it.y..(it.y + it.h) }
+                    if (boxes.any { p.x in it.x..(it.x + it.w) && p.y in it.y..(it.y + it.h) }) DragTarget.Group
+                    else DragTarget.Group
                 },
-                onDrag = { p, axis, boxW, boxH ->
+                onDrag = { target, e ->
                     val s = state[0]
-                    val newProps = when (axis) {
-                        DragAxis.X -> {
-                            val cands = listOf(
-                                GridLayoutResolver.GridAlign.START,
-                                GridLayoutResolver.GridAlign.CENTER,
-                                GridLayoutResolver.GridAlign.END
-                            )
-                            val best = cands.minByOrNull { a ->
-                                val b = GridLayoutResolver.place(s.copy(justifyContent = a), boxW, boxH)[0]
-                                val cx = b.x + b.w / 2.0
-                                abs(cx - p.x)
-                            } ?: s.justifyContent
-                            s.copy(justifyContent = best)
+                    when (target) {
+                        is DragTarget.Track -> {
+                            if (target.horizontal) {
+                                if (s.rows.size > 1) {
+                                    var index = target.index
+                                    if (index >= s.rows.size) index = s.rows.size - 1
+                                    val newRows = GridLayoutResolver.resizeAdjacentTracks(s.rows, index - 1, e.dy / 8)
+                                    if (newRows != s.rows) applyNewProps(s.copy(rows = newRows))
+                                }
+                            } else {
+                                if (s.columns.size > 1) {
+                                    var index = target.index
+                                    if (index >= s.columns.size) index = s.columns.size - 1
+                                    val newCols = GridLayoutResolver.resizeAdjacentTracks(s.columns, index - 1, e.dx / 8)
+                                    if (newCols != s.columns) applyNewProps(s.copy(columns = newCols))
+                                }
+                            }
                         }
-                        DragAxis.Y -> {
-                            val cands = listOf(
-                                GridLayoutResolver.GridAlign.START,
-                                GridLayoutResolver.GridAlign.CENTER,
-                                GridLayoutResolver.GridAlign.END
-                            )
-                            val best = cands.minByOrNull { a ->
-                                val b = GridLayoutResolver.place(s.copy(alignContent = a), boxW, boxH)[0]
-                                val cy = b.y + b.h / 2.0
-                                abs(cy - p.y)
-                            } ?: s.alignContent
-                            s.copy(alignContent = best)
+                        else -> {
+                            when (e.axis) {
+                                DragAxis.X -> dragJustifyContent(s, e)
+                                DragAxis.Y -> dragAlignContent(s, e)
+                            }
                         }
                     }
-                    applyNewProps(newProps)
                 }
             )
+        }
+
+        private fun dragJustifyContent(s: GridLayoutResolver.Props, e: DragEvent) {
+            val cands = listOf(
+                GridLayoutResolver.GridAlign.START,
+                GridLayoutResolver.GridAlign.CENTER,
+                GridLayoutResolver.GridAlign.END
+            )
+            val best = cands.minByOrNull { a ->
+                val b = GridLayoutResolver.place(s.copy(justifyContent = a), e.boxW, e.boxH)[0]
+                val cx = b.x + b.w / 2.0
+                abs(cx - e.point.x)
+            } ?: s.justifyContent
+            if (best != s.justifyContent) applyNewProps(s.copy(justifyContent = best))
+        }
+
+        private fun dragAlignContent(s: GridLayoutResolver.Props, e: DragEvent) {
+            val cands = listOf(
+                GridLayoutResolver.GridAlign.START,
+                GridLayoutResolver.GridAlign.CENTER,
+                GridLayoutResolver.GridAlign.END
+            )
+            val best = cands.minByOrNull { a ->
+                val b = GridLayoutResolver.place(s.copy(alignContent = a), e.boxW, e.boxH)[0]
+                val cy = b.y + b.h / 2.0
+                abs(cy - e.point.y)
+            } ?: s.alignContent
+            if (best != s.alignContent) applyNewProps(s.copy(alignContent = best))
         }
 
         /** 应用新 props：更新 state、同步下拉控件、重绘画布并实时写回 CSS。 */
@@ -380,14 +453,33 @@ object LayoutPreviewPopup {
     /** 拖动轴：按位移主方向判定。 */
     private enum class DragAxis { X, Y }
 
+    /** 拖动目标：整组 / 单个子项 / 轨道分隔线。 */
+    private sealed class DragTarget {
+        object Group : DragTarget()
+        data class Item(val index: Int) : DragTarget()
+        data class Track(val index: Int, val horizontal: Boolean) : DragTarget()
+    }
+
+    /** 一次拖动事件：包含当前指向、主轴方向、位移增量与画布局内可用尺寸。 */
+    private data class DragEvent(
+        val point: CanvasPoint,
+        val axis: DragAxis,
+        val dx: Int,
+        val dy: Int,
+        val boxW: Int,
+        val boxH: Int
+    )
+
     /**
-     * 画布拖动配置。flex 实例提供反向推断逻辑（把子项磁吸位置映射回 justify/align），
-     * grid 不传此参数则画布不可拖动。
+     * 画布拖动配置。hitTest 判定命中的 [DragTarget]（null 表示该点不可拖），
+     * onDrag 根据目标语义做「反向推断」并写回 CSS。
+     *  - flex：拖空白整组（X 改 justify / Y 改 align），拖单个子项 Y 方向调该子项 align-self；
+     *  - grid：拖分隔线改轨道尺寸，拖空白整组改 justify-content / align-content。
      */
     private data class DragSettings(
         val pad: Int,
-        val hitTest: (CanvasPoint) -> Boolean,
-        val onDrag: (CanvasPoint, DragAxis, Int, Int) -> Unit
+        val hitTest: (CanvasPoint) -> DragTarget?,
+        val onDrag: (DragTarget, DragEvent) -> Unit
     )
 
     private data class CanvasPoint(val x: Int, val y: Int)
@@ -398,6 +490,7 @@ object LayoutPreviewPopup {
             private var startX = 0
             private var startY = 0
             private var axis: DragAxis? = null
+            private var target: DragTarget? = null
 
             init {
                 preferredSize = Dimension(200, 120)
@@ -408,15 +501,16 @@ object LayoutPreviewPopup {
                     addMouseListener(object : MouseAdapter() {
                         override fun mousePressed(e: MouseEvent) {
                             val p = toCanvas(e, drag)
-                            if (drag.hitTest(p)) {
-                                dragging = true
-                                startX = p.x; startY = p.y
-                                axis = null
-                            }
+                            val t = drag.hitTest(p) ?: return
+                            dragging = true
+                            target = t
+                            startX = p.x; startY = p.y
+                            axis = null
                         }
                         override fun mouseReleased(e: MouseEvent) {
                             dragging = false
                             axis = null
+                            target = null
                         }
                     })
                     addMouseMotionListener(object : MouseMotionAdapter() {
@@ -431,7 +525,8 @@ object LayoutPreviewPopup {
                             }
                             val boxW = width - drag.pad * 2
                             val boxH = height - drag.pad * 2
-                            drag.onDrag(p, axis!!, boxW, boxH)
+                            val t = target ?: return
+                            drag.onDrag(t, DragEvent(p, axis!!, dx, dy, boxW, boxH))
                         }
                     })
                 }
@@ -452,6 +547,20 @@ object LayoutPreviewPopup {
                 g2.color = JBColor(Color(0x4f8cff), Color(0x6aa0ff))
                 for (b in boxes) {
                     g2.fillRect(pad + b.x, pad + b.y, b.w, b.h)
+                }
+                // grid：叠画轨道分隔线，提示可拖拽调尺寸
+                val model = modelProvider()
+                if (model is LayoutModel.Grid) {
+                    val gp = model.props
+                    val colBounds = GridLayoutResolver.trackBounds(gp.columns, boxW, gp.gap)
+                    val rowBounds = GridLayoutResolver.trackBounds(gp.rows, boxH, gp.gap)
+                    g2.color = JBColor(Color(0x8a8d93), Color(0x5a5d63))
+                    for (i in 1 until colBounds.size - 1) {
+                        g2.drawLine(pad + colBounds[i], pad, pad + colBounds[i], pad + boxH - 1)
+                    }
+                    for (i in 1 until rowBounds.size - 1) {
+                        g2.drawLine(pad, pad + rowBounds[i], pad + boxW - 1, pad + rowBounds[i])
+                    }
                 }
             }
         }

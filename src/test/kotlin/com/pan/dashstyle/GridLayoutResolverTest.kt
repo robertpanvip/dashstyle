@@ -203,4 +203,47 @@ class GridLayoutResolverTest {
 
     // 便捷构造：px 轨道
     private fun Int.px() = GridLayoutResolver.Track.Fixed(this)
+
+    // ---------- 轨道尺寸调整（拖动分隔线） ----------
+
+    @Test
+    fun `resize flex-fr tracks shifts weight between adjacent tracks`() {
+        val tracks = listOf(GridLayoutResolver.Track.Flex(1), GridLayoutResolver.Track.Flex(1), GridLayoutResolver.Track.Flex(1))
+        // 在 0/1 之间往右拖（delta=2）：左侧变宽、右侧变窄
+        val resized = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, 2)
+        assertEquals(GridLayoutResolver.Track.Flex(3), resized[0])
+        // 1fr - 2 → 钳制到 1（minWeight=1）
+        assertEquals(GridLayoutResolver.Track.Flex(1), resized[1])
+        assertEquals(GridLayoutResolver.Track.Flex(1), resized[2])
+    }
+
+    @Test
+    fun `resize flex tracks clamps at min weight`() {
+        val tracks = listOf(GridLayoutResolver.Track.Flex(1), GridLayoutResolver.Track.Flex(1))
+        // 往左拖（delta=-2）：左侧 1-2 → 钳制到 1，右侧相应补足
+        val resized = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, -2)
+        assertEquals(GridLayoutResolver.Track.Flex(1), resized[0])
+        // 右侧 1 + (1-1) = 1
+        assertEquals(GridLayoutResolver.Track.Flex(1), resized[1])
+    }
+
+    @Test
+    fun `resize fixed px tracks moves px between adjacent tracks`() {
+        val tracks = listOf(100.px(), 100.px())
+        val resized = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, 30)
+        assertEquals(GridLayoutResolver.Track.Fixed(130), resized[0])
+        assertEquals(GridLayoutResolver.Track.Fixed(70), resized[1])
+    }
+
+    @Test
+    fun `resize out of bounds returns original`() {
+        val tracks = listOf(GridLayoutResolver.Track.Flex(1))
+        assertEquals(tracks, GridLayoutResolver.resizeAdjacentTracks(tracks, 0, 5))
+    }
+
+    @Test
+    fun `track bounds returns cumulative boundaries`() {
+        val bounds = GridLayoutResolver.trackBounds(listOf(50.px(), 50.px()), avail = 110, gap = 10)
+        assertEquals(listOf(0, 50, 110), bounds)
+    }
 }
