@@ -9,18 +9,23 @@ import com.intellij.psi.css.CssRuleset
 import com.intellij.ui.JBColor
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
 import javax.swing.BorderFactory
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JSlider
+import kotlin.math.abs
 
 /**
  * CSS 布局预览的交互弹窗（flex 与 grid 通用）。
@@ -82,7 +87,7 @@ object LayoutPreviewPopup {
         private val direction = JComboBox(arrayOf("row", "row-reverse", "column", "column-reverse"))
         private val wrap = JComboBox(arrayOf("nowrap", "wrap"))
         private val gap = SliderControl(0, 40, initial.gap)
-        private val preview = previewPanel { current() }
+        private val preview = previewPanel({ current() }, dragSettings())
 
         init {
             justify.selectedItem = initial.justify.cssValue()
@@ -109,6 +114,70 @@ object LayoutPreviewPopup {
                 wrap = (wrap.selectedItem as? String) == "wrap",
                 childCount = state[0].childCount
             )
+            preview.repaint()
+            apply()
+        }
+
+        /** 拖动反向推断：把鼠标位置映射回 justify/align（分轴磁吸）。接收画布宽高以便精确计算。 */
+        private fun dragSettings(): DragSettings {
+            val pad = 12
+            return DragSettings(
+                pad = pad,
+                hitTest = { p ->
+                    val s = state[0]
+                    val boxW = preview.width - pad * 2
+                    val boxH = preview.height - pad * 2
+                    val boxes = FlexLayoutResolver.place(s, boxW, boxH)
+                    boxes.any { p.x in it.x..(it.x + it.w) && p.y in it.y..(it.y + it.h) }
+                },
+                onDrag = { p, axis, boxW, boxH ->
+                    val s = state[0]
+                    val newProps = when (axis) {
+                        DragAxis.X -> {
+                            val cands = listOf(
+                                FlexLayoutResolver.Justify.FLEX_START,
+                                FlexLayoutResolver.Justify.CENTER,
+                                FlexLayoutResolver.Justify.FLEX_END,
+                                FlexLayoutResolver.Justify.SPACE_BETWEEN,
+                                FlexLayoutResolver.Justify.SPACE_AROUND,
+                                FlexLayoutResolver.Justify.SPACE_EVENLY
+                            )
+                            val best = cands.minByOrNull { j ->
+                                val b = FlexLayoutResolver.place(s.copy(justify = j), boxW, boxH)[0]
+                                val cx = b.x + b.w / 2.0
+                                abs(cx - p.x)
+                            } ?: s.justify
+                            s.copy(justify = best)
+                        }
+                        DragAxis.Y -> {
+                            val cands = listOf(
+                                FlexLayoutResolver.Align.STRETCH,
+                                FlexLayoutResolver.Align.FLEX_START,
+                                FlexLayoutResolver.Align.CENTER,
+                                FlexLayoutResolver.Align.FLEX_END
+                            )
+                            val best = cands.minByOrNull { a ->
+                                val b = FlexLayoutResolver.place(s.copy(align = a), boxW, boxH)[0]
+                                val cy = b.y + b.h / 2.0
+                                abs(cy - p.y)
+                            } ?: s.align
+                            s.copy(align = best)
+                        }
+                    }
+                    applyNewProps(newProps)
+                }
+            )
+        }
+
+        /** 应用新 props：更新 state、同步下拉控件、重绘画布并实时写回 CSS。 */
+        private fun applyNewProps(newProps: FlexLayoutResolver.Props) {
+            if (newProps == state[0]) return
+            state[0] = newProps
+            justify.selectedItem = newProps.justify.cssValue()
+            align.selectedItem = newProps.align.cssValue()
+            alignContent.selectedItem = newProps.alignContent.cssValue()
+            direction.selectedItem = newProps.direction.cssValue()
+            wrap.selectedItem = if (newProps.wrap) "wrap" else "nowrap"
             preview.repaint()
             apply()
         }
@@ -170,7 +239,7 @@ object LayoutPreviewPopup {
         private val alignItems = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val justifyContent = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val alignContent = JComboBox(arrayOf("stretch", "start", "center", "end"))
-        private val preview = previewPanel { current() }
+        private val preview = previewPanel({ current() })
 
         init {
             justifyItems.selectedItem = initial.justifyItems.cssValue()
@@ -248,17 +317,74 @@ object LayoutPreviewPopup {
     // ====================================================================
     // 公共：实时画布
     // ====================================================================
-    private fun previewPanel(modelProvider: () -> LayoutModel): JPanel {
+
+    /** 拖动轴：按位移主方向判定。 */
+    private enum class DragAxis { X, Y }
+
+    /**
+     * 画布拖动配置。flex 实例提供反向推断逻辑（把子项磁吸位置映射回 justify/align），
+     * grid 不传此参数则画布不可拖动。
+     */
+    private data class DragSettings(
+        val pad: Int,
+        val hitTest: (CanvasPoint) -> Boolean,
+        val onDrag: (CanvasPoint, DragAxis, Int, Int) -> Unit
+    )
+
+    private data class CanvasPoint(val x: Int, val y: Int)
+
+    private fun previewPanel(modelProvider: () -> LayoutModel, drag: DragSettings? = null): JPanel {
         return object : JPanel() {
+            private var dragging = false
+            private var startX = 0
+            private var startY = 0
+            private var axis: DragAxis? = null
+
             init {
                 preferredSize = Dimension(200, 120)
                 background = JBColor(Color(0xf7f7f8), Color(0x2b2d30))
                 border = BorderFactory.createLineBorder(JBColor(Color(0xc9cdd4), Color(0x4a4d52)))
+                if (drag != null) {
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    addMouseListener(object : MouseAdapter() {
+                        override fun mousePressed(e: MouseEvent) {
+                            val p = toCanvas(e, drag)
+                            if (drag.hitTest(p)) {
+                                dragging = true
+                                startX = p.x; startY = p.y
+                                axis = null
+                            }
+                        }
+                        override fun mouseReleased(e: MouseEvent) {
+                            dragging = false
+                            axis = null
+                        }
+                    })
+                    addMouseMotionListener(object : MouseMotionAdapter() {
+                        override fun mouseDragged(e: MouseEvent) {
+                            if (!dragging) return
+                            val p = toCanvas(e, drag)
+                            val dx = p.x - startX
+                            val dy = p.y - startY
+                            if (axis == null) {
+                                if (abs(dx) < 6 && abs(dy) < 6) return
+                                axis = if (abs(dx) >= abs(dy)) DragAxis.X else DragAxis.Y
+                            }
+                            val boxW = width - drag.pad * 2
+                            val boxH = height - drag.pad * 2
+                            drag.onDrag(p, axis!!, boxW, boxH)
+                        }
+                    })
+                }
             }
+
+            private fun toCanvas(e: MouseEvent, d: DragSettings): CanvasPoint =
+                CanvasPoint(e.x - d.pad, e.y - d.pad)
+
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
                 val g2 = g as Graphics2D
-                val pad = 12
+                val pad = drag?.pad ?: 12
                 val boxW = width - pad * 2
                 val boxH = height - pad * 2
                 val boxes = modelProvider().boxes(boxW, boxH)
