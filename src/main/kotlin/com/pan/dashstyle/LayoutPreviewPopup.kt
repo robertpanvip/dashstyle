@@ -36,11 +36,16 @@ import javax.swing.SpinnerNumberModel
 object LayoutPreviewPopup {
 
     fun create(editor: Editor, rs: CssRuleset, model: LayoutModel): JBPopup {
-        val content = when (model) {
+        val content: PopupEditor = when (model) {
             is LayoutModel.Flex -> FlexEditor(editor, rs, model.props)
             is LayoutModel.Grid -> GridEditor(editor, rs, model.props)
         }
         return content.build()
+    }
+
+    /** flex / grid 编辑器的公共抽象，统一 [build] 入口。 */
+    private interface PopupEditor {
+        fun build(): JBPopup
     }
 
     // ====================================================================
@@ -50,7 +55,7 @@ object LayoutPreviewPopup {
         private val editor: Editor,
         private val rs: CssRuleset,
         initial: FlexLayoutResolver.Props
-    ) {
+    ) : PopupEditor {
         private val state = arrayOf(initial)
 
         private val justify = JComboBox(arrayOf("flex-start", "flex-end", "center", "space-between", "space-around", "space-evenly"))
@@ -98,7 +103,7 @@ object LayoutPreviewPopup {
             }
         }
 
-        fun build(): JBPopup {
+        override fun build(): JBPopup {
             val preview = previewPanel(current())
             val form = JPanel(GridBagLayout())
             var row = 0
@@ -142,7 +147,7 @@ object LayoutPreviewPopup {
         private val editor: Editor,
         private val rs: CssRuleset,
         initial: GridLayoutResolver.Props
-    ) {
+    ) : PopupEditor {
         private val state = arrayOf(initial)
 
         private val columns = JSpinner(SpinnerNumberModel(count(initial.columns), 1, 6, 1))
@@ -193,7 +198,7 @@ object LayoutPreviewPopup {
             }
         }
 
-        fun build(): JBPopup {
+        override fun build(): JBPopup {
             val preview = previewPanel(current())
             val form = JPanel(GridBagLayout())
             var row = 0

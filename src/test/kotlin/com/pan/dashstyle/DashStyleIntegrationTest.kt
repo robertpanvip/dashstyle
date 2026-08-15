@@ -428,7 +428,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             }
             """.trimIndent()
         )
-        val provider = FlexPreviewInlayProvider()
+        val provider = LayoutPreviewInlayProvider()
         val settings = provider.createSettings()
         val offsets = mutableListOf<Int>()
         // 用动态代理实现 InlayHintsSink，只记录 addInlineElement 的首个 int 参数（offset），
