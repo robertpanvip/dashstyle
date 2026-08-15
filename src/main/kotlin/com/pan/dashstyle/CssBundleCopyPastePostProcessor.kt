@@ -2,15 +2,17 @@ package com.pan.dashstyle
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
-import com.intellij.codeInsight.editorActions.CopyPastePreProcessor
+import com.intellij.codeInsight.editorActions.CopyPastePostProcessor
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.*
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.RawText
+import com.intellij.openapi.editor.RangeMarker
+import com.intellij.openapi.editor.actions.TextTransferableData
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Ref
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.*
 import com.intellij.psi.css.CssDeclaration
@@ -18,28 +20,82 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 import org.jetbrains.annotations.NotNull
-import java.util.concurrent.atomic.AtomicReference
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
 
 /**
  * #7. 拷贝 TSX 片段时把对应的 class CSS 也拷到目标文件。
  *
- * 原理（只使用 CopyPastePreProcessor 双钩子 + invokeLater 调度，不依赖 CopyPastePostProcessor<T> 复杂泛型接口）：
- *  - `preprocessOnCopy`: 遍历被选中的 PSI，找到所有 className={styles.xxx} / styles["xxx"] /
- *    :class="$style.xxx" 等引用点，找到对应的 ruleset，序列化出 class + declarations。
- *    在复制文本末尾附一段注释 `/* __DS_CSS_BUNDLE__: <base64 json> */`
- *  - `preprocessOnPaste`: 检测 marker → 解析 JSON → 先从文本里剥离 marker 注释返回 →
- *    通过 invokeLater 等文档粘贴落地后，再用 WriteCommandAction 执行 CSS bundle 注入：
- *      a) 如果目标文件已经有对应 CSS Module import（相同 from 路径 或 相同 binding + 候选解析）→
- *         append CSS rules 到目标 Module 文件末尾
- *      b) 如果没有，就在源文件同目录找 <BaseName>.module.* → 有就追加，没有就新建并在目标文件顶部 prepend import
+ * 采用 IDEA 原生做法：实现 CopyPastePostProcessor<TextTransferableData>，
+ * 把 CSS bundle 作为独立的 DataFlavor 挂在剪贴板（不污染复制文本）。
+ *  - collectTransferableData: 复制时遍历选区 PSI，收集 styles.xxx 对应的 ruleset，
+ *    序列化成一个 CssBundleData 附加为剪贴板里的额外 DataFlavor。复制文本本身保持原样，
+ *    因此复制到普通文本编辑器不会有任何多余内容。
+ *  - extractTransferableData: 粘贴时从剪贴板读取该 DataFlavor。
+ *  - processTransferableData: 等粘贴落地后，用 WriteCommandAction 把 CSS rules 注入目标。
  */
-class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
+class CssBundleCopyPastePostProcessor : CopyPastePostProcessor<CssBundleCopyPastePostProcessor.CssBundleData>() {
+
+    class CssBundleData(private val json: String) : TextTransferableData {
+        override fun getFlavor(): DataFlavor = CSS_BUNDLE_FLAVOR
+        override fun getDataAsText(): String = json
+
+        companion object {
+            @JvmStatic
+            val CSS_BUNDLE_FLAVOR: DataFlavor = DataFlavor(
+                "text/dashstyle-css-bundle;class=java.lang.String",
+                "DashStyle CSS Bundle"
+            )
+        }
+    }
+
+    override fun collectTransferableData(
+        file: @NotNull PsiFile,
+        editor: @NotNull Editor,
+        startOffsets: IntArray,
+        endOffsets: IntArray
+    ): Collection<CssBundleData> {
+        val bundle = collectBundle(file, startOffsets, endOffsets) ?: return emptyList()
+        if (bundle.rules.isEmpty()) return emptyList()
+        return listOf(CssBundleData(gson.toJson(bundle)))
+    }
+
+    override fun extractTransferableData(content: @NotNull Transferable): CssBundleData? {
+        val data = runCatching {
+            content.getTransferData(CssBundleData.CSS_BUNDLE_FLAVOR) as? String
+        }.getOrNull() ?: return null
+        return CssBundleData(data)
+    }
+
+    override fun processTransferableData(
+        project: @NotNull Project,
+        editor: @NotNull Editor,
+        bounds: @NotNull RangeMarker,
+        caretOffset: Int,
+        indented: @NotNull Ref<Boolean>,
+        value: @NotNull CssBundleData
+    ) {
+        val file = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return
+        val bundle = runCatching {
+            gson.fromJson(value.getDataAsText(), Bundle::class.java)
+        }.getOrNull() ?: return
+        if (bundle.rules.isEmpty()) return
+
+        // 等粘贴完全落地后再注入，避免与平台粘贴写入冲突
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || !file.isValid) return@invokeLater
+            runCatching {
+                WriteCommandAction.writeCommandAction(project)
+                    .withName("Append pasted CSS Module rules")
+                    .run<Nothing> { applyBundle(project, file, bundle) }
+            }.onFailure { t ->
+                LOG.warn("DashStyle #7 applyBundle failed", t)
+            }
+        }
+    }
 
     companion object {
         private val LOG = Logger.getInstance(CssBundleCopyPastePostProcessor::class.java)
-        private const val MARKER_BEGIN = "/* __DS_CSS_BUNDLE__:"
-        private const val MARKER_END = " */"
-        private val MARKER_RE = Regex("""/\* __DS_CSS_BUNDLE__:([A-Za-z0-9+/=\n\r]+?) \*/""")
         private val gson = Gson()
 
         data class CssClassRule(
@@ -58,74 +114,6 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
         )
     }
 
-    override fun preprocessOnCopy(
-        file: PsiFile?,
-        starts: IntArray?,
-        ends: IntArray?,
-        text: String?
-    ): String? {
-        if (file == null || starts == null || ends == null || text == null) return null
-        val bundle = collectBundle(file, starts, ends) ?: return text
-        if (bundle.rules.isEmpty()) return text
-        val json = gson.toJson(bundle)
-        val base64 = java.util.Base64.getEncoder().encodeToString(json.toByteArray(Charsets.UTF_8))
-        return text + "\n" + MARKER_BEGIN + base64 + MARKER_END
-    }
-
-    @NotNull
-    override fun preprocessOnPaste(
-        project: Project?,
-        file: PsiFile?,
-        editor: Editor?,
-        text: String?,
-        rawText: RawText?
-    ): String {
-        if (project == null || file == null || editor == null || text == null) return text ?: ""
-
-        val m = MARKER_RE.find(text)
-        if (m == null) return text
-
-        // 1. 解析 bundle（解析失败至少先把 marker strip 掉避免污染粘贴内容）
-        val jsonStr = runCatching {
-            String(java.util.Base64.getDecoder().decode(m.groupValues[1]), Charsets.UTF_8)
-        }.getOrNull()
-        val bundle = jsonStr?.let { runCatching { gson.fromJson(it, Bundle::class.java) }.getOrNull() }
-
-        // 2. 精确移除 marker，不要乱改其他换行（避免把原本干净的 JSX 拆成畸形）
-        //    marker 之前一般是 `\n` 或 `\r\n`，连同这条换行一起删掉，否则粘贴末尾会多出一行空行
-        val rangeToRemove = if (m.range.first > 0 && text[m.range.first - 1] == '\n') {
-            val prevIdx = m.range.first - 1
-            val withCr = prevIdx > 0 && text[prevIdx - 1] == '\r'
-            if (withCr) (prevIdx - 1)..m.range.last else prevIdx..m.range.last
-        } else {
-            m.range.first..m.range.last
-        }
-        val stripped = text.removeRange(rangeToRemove)
-
-        // 3. 如果有 bundle，调度：等粘贴提交到文档之后，再注入 CSS rules
-        //    （用 AtomicReference 把 context 搬过去，避免闭包可变变量警告）
-        if (bundle != null) {
-            val ctxRef = AtomicReference(Triple(project, file, bundle))
-            ApplicationManager.getApplication().invokeLater {
-                val (p, f, b) = ctxRef.get() ?: return@invokeLater
-                if (!p.isDisposed && f.isValid && b.rules.isNotEmpty()) {
-                    runCatching {
-                        WriteCommandAction.writeCommandAction(p)
-                            .withName("Append pasted CSS Module rules")
-                            .run<Nothing> { applyBundle(p, f, b) }
-                    }.onFailure { t ->
-                        LOG.warn("DashStyle #7 applyBundle failed", t)
-                    }
-                }
-            }
-        }
-
-        return stripped
-    }
-
-    // ================================================================
-    // copy 端：收集 CSS bundle
-    // ================================================================
     private fun collectBundle(file: PsiFile, starts: IntArray, ends: IntArray): Bundle? {
         val rules = mutableMapOf<String, CssClassRule>()
         var importMeta: ImportMeta? = null
@@ -211,9 +199,6 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
         return out
     }
 
-    // ================================================================
-    // paste 端：应用 bundle
-    // ================================================================
     private fun applyBundle(project: Project, file: PsiFile, bundle: Bundle) {
         if (bundle.rules.isEmpty()) return
         val cssText = bundle.rules.joinToString("\n") { rule ->
@@ -331,12 +316,10 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
     ) {
         val from = computeRelPath(file.virtualFile, targetCssVf) ?: return
 
-        // Vue / 非 JS/TS：沿用保守的 PSI 策略，但 import 只插在 script 根块而非光标所在处
         val fileName = file.name.orEmpty()
         val isJsTsLike = fileName.endsWith(".js") || fileName.endsWith(".jsx") ||
             fileName.endsWith(".ts") || fileName.endsWith(".tsx")
 
-        // 避免重复插入：和 #3 CssModuleImportCopyPasteProcessor 的等价性判断保持一致
         val imports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
         if (imports.any { imp ->
                 pathsEquivalent(
@@ -348,12 +331,10 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
         val importText = "import $bindingName from '$from'\n"
 
         if (!isJsTsLike && file is XmlFile && fileName.endsWith(".vue")) {
-            // Vue 场景（insert in script setup root，非 template/script body 内部）
             val script = Util.findScriptTag(file)
             if (script != null) {
                 val existing = PsiTreeUtil.findChildrenOfType(script, ES6ImportDeclaration::class.java)
                 if (existing.isEmpty()) {
-                    // 用 Document 的方式往 <script> 内容开头插，跳过 PSI 树以免插到子 body
                     val doc = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
                     val embedded = findEmbeddedContent(script)
                     val startInDoc = embedded?.textRange?.startOffset
@@ -374,17 +355,11 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
             return
         }
 
-        // ******** 关键修复：JS/TS/JSX/TSX 一律走 Document 插入（module scope，与粘贴位置绝对无关） ********
-        // 不调用 file.addBefore(newImport, file.firstChild)：
-        //  当 file 是内嵌 JSXExpression 或 PSI 被格式化成「文件根节点的 firstChild 是 function」时，
-        //  PSI.addBefore 会把 import 插到该 function body 第一行之前（用户报告的 `function Z() { import styles from ...`），
-        //  导致 import 落在函数作用域内而非模块顶部。
         val doc = PsiDocumentManager.getInstance(project).getDocument(file)
         if (doc != null) {
             val topLevelImports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
                 .filter { it.parent == file || it.parent?.parent == file }
             if (topLevelImports.isEmpty()) {
-                // module scope 的 0 偏移插入 —— 必然在任何 function/class/statement 之前
                 doc.insertString(0, importText)
             } else {
                 val last = topLevelImports.maxByOrNull { it.textRange.endOffset } ?: return
@@ -392,7 +367,6 @@ class CssBundleCopyPastePostProcessor : CopyPastePreProcessor {
             }
             PsiDocumentManager.getInstance(project).commitDocument(doc)
         } else {
-            // 极端 fallback：没有 Document。仍避免用 file.firstChild（函数体内），改用 file.add 后再内部重排
             val newImport = makeImportPsi(project, importText) ?: return
             file.addBefore(newImport, file.firstChild)
         }
