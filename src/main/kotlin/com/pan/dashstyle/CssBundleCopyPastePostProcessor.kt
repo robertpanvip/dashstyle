@@ -3,6 +3,7 @@ package com.pan.dashstyle
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import com.intellij.codeInsight.editorActions.CopyPastePostProcessor
+import com.intellij.codeInsight.editorActions.TextBlockTransferableData
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.*
 import com.intellij.openapi.application.ApplicationManager
@@ -10,7 +11,6 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.RangeMarker
-import com.intellij.openapi.editor.actions.TextTransferableData
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Ref
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -36,9 +36,8 @@ import java.awt.datatransfer.Transferable
  */
 class CssBundleCopyPastePostProcessor : CopyPastePostProcessor<CssBundleCopyPastePostProcessor.CssBundleData>() {
 
-    class CssBundleData(private val json: String) : TextTransferableData {
+    class CssBundleData(val json: String) : TextBlockTransferableData {
         override fun getFlavor(): DataFlavor = CSS_BUNDLE_FLAVOR
-        override fun getDataAsText(): String = json
 
         companion object {
             @JvmStatic
@@ -54,17 +53,23 @@ class CssBundleCopyPastePostProcessor : CopyPastePostProcessor<CssBundleCopyPast
         editor: @NotNull Editor,
         startOffsets: IntArray,
         endOffsets: IntArray
-    ): Collection<CssBundleData> {
+    ): List<CssBundleData> {
         val bundle = collectBundle(file, startOffsets, endOffsets) ?: return emptyList()
         if (bundle.rules.isEmpty()) return emptyList()
         return listOf(CssBundleData(gson.toJson(bundle)))
     }
 
-    override fun extractTransferableData(content: @NotNull Transferable): CssBundleData? {
-        val data = runCatching {
-            content.getTransferData(CssBundleData.CSS_BUNDLE_FLAVOR) as? String
-        }.getOrNull() ?: return null
-        return CssBundleData(data)
+    override fun extractTransferableData(content: @NotNull Transferable): List<CssBundleData> {
+        val obj = runCatching {
+            content.getTransferData(CssBundleData.CSS_BUNDLE_FLAVOR)
+        }.getOrNull() ?: return emptyList()
+        val data = when (obj) {
+            is CssBundleData -> obj
+            is String -> CssBundleData(obj)
+            else -> return emptyList()
+        }
+        if (data.json.isBlank()) return emptyList()
+        return listOf(data)
     }
 
     override fun processTransferableData(
@@ -72,12 +77,13 @@ class CssBundleCopyPastePostProcessor : CopyPastePostProcessor<CssBundleCopyPast
         editor: @NotNull Editor,
         bounds: @NotNull RangeMarker,
         caretOffset: Int,
-        indented: @NotNull Ref<Boolean>,
-        value: @NotNull CssBundleData
+        indented: @NotNull Ref<in Boolean>,
+        value: @NotNull List<CssBundleData>
     ) {
+        val data = value.firstOrNull() ?: return
         val file = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return
         val bundle = runCatching {
-            gson.fromJson(value.getDataAsText(), Bundle::class.java)
+            gson.fromJson(data.json, Bundle::class.java)
         }.getOrNull() ?: return
         if (bundle.rules.isEmpty()) return
 
