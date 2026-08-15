@@ -33,7 +33,7 @@
   .popup .title .dot{display:flex;gap:5px}.popup .title .dot span{width:9px;height:9px;border-radius:50%}
   .popup .title .dot span:nth-child(1){background:#ff5f57}.popup .title .dot span:nth-child(2){background:#febc2e}.popup .title .dot span:nth-child(3){background:#28c840}
   .popup .body { padding:12px; }
-  .canvas { height:130px; background:#fafbfc; border:1px solid #e3e6ea; border-radius:6px; display:flex; }
+  .canvas { height:130px; background:#fafbfc; border:1px solid #e3e6ea; border-radius:6px; position:relative; }
   .canvas .row { display:flex; width:100%; height:100%; }
   .canvas .cell { border-radius:3px; }
   .cell.c1{background:#5b8ff9}.cell.c2{background:#5ad8a6}.cell.c3{background:#fa8c16}.cell.c4{background:#8b5cf6}
@@ -78,7 +78,7 @@
     <div class="form" id="form"></div>
   </div>
   <div class="footer">
-    <span class="hint-text" id="liveHint">实时应用 · 调整即写回 CSS</span>
+    <span class="hint-text" id="liveHint">实时应用 · 拖动子项：左右改 justify / 上下改 align</span>
   </div>
 </div>
 
@@ -138,17 +138,102 @@ const gridControls = [
 
 function renderCanvas(){
   canvas.innerHTML = '';
+  canvas.onmousedown = null;
   const s = state[mode];
-  const wrap = document.createElement('div');
-  if (mode === 'flex') {
-    wrap.className = 'row';
-    Object.assign(wrap.style, flexStyle(s));
-    for (let i=0;i<s.childCount;i++){ const c=document.createElement('div'); c.className='cell c'+(i%4+1); c.style.flex='1'; wrap.appendChild(c); }
-  } else {
-    Object.assign(wrap.style, gridStyle(s));
-    wrap.style.display='grid';
-    for (let i=0;i<s.childCount;i++){ const c=document.createElement('div'); c.className='cell c'+(i%4+1); wrap.appendChild(c); }
+  if (mode === 'flex') { renderFlexCanvas(s); }
+  else { renderGridCanvas(s); }
+}
+
+// ---- 纯 JS flex 布局计算（与插件算法一致，便于精确吸附）----
+function computeFlex(s, W, H){
+  const P=4, row = s.direction==='row'||s.direction==='row-reverse', reverse = s.direction==='row-reverse'||s.direction==='column-reverse';
+  const cw = row?26:20, ch = row?20:26;
+  const mainAvail = row? W:H, crossAvail = row? H:W;
+  const itemMain = row?cw:ch, itemCross = row?ch:cw;
+  const gap = s.gap||0;
+  const n = s.childCount;
+  const maxPerLine = s.wrap? Math.max(1, Math.floor((mainAvail-2*P+gap)/(itemMain+gap))) : n;
+  const lines = Math.max(1, Math.ceil(n/maxPerLine));
+  const boxes=[];
+  for(let i=0;i<n;i++){
+    const li = Math.floor(i/maxPerLine), pos = i%maxPerLine;
+    const count = Math.min(maxPerLine, n-li*maxPerLine);
+    let gGap=gap, start=P;
+    const total = count*itemMain+(count-1)*gap;
+    const j=s.justify;
+    if(j==='center') start=P+(mainAvail-total)/2;
+    else if(j==='flex-end') start=mainAvail-P-total;
+    else if(j==='space-between'&&count>1) gGap=(mainAvail-2*P-count*itemMain)/(count-1);
+    else if(j==='space-around'){ gGap=(mainAvail-2*P-count*itemMain)/count; start=P+gGap/2; }
+    else if(j==='space-evenly'){ gGap=(mainAvail-2*P-count*itemMain)/(count+1); start=P+gGap; }
+    const mainPos = start+pos*(itemMain+gGap);
+    // cross
+    let base=P, band=itemCross;
+    if(lines===1){ const a=s.align;
+      if(a==='center'||a==='baseline') base=(crossAvail-itemCross)/2;
+      else if(a==='flex-end') base=crossAvail-P-itemCross;
+      else if(a==='stretch') band=(crossAvail-2*P); base=P;
+    }
+    const crossPos = (s.align==='center'||s.align==='baseline')? base+(band-itemCross)/2 : (s.align==='flex-end'? base+band-itemCross : base);
+    let x,y,w=cw,h=ch;
+    if(row){ x=mainPos; y=crossPos; if(s.align==='stretch') h=Math.max(1,band); }
+    else { y=mainPos; x=crossPos; if(s.align==='stretch') w=Math.max(1,band); }
+    if(reverse){ if(row) x=mainAvail-x-w; else y=mainAvail-y-h; }
+    boxes.push({x:Math.round(x),y:Math.round(y),w,h,color:'c'+(i%4+1)});
   }
+  return boxes;
+}
+
+function renderFlexCanvas(s){
+  const rect = canvas.getBoundingClientRect();
+  const W=rect.width, H=rect.height;
+  const boxes = computeFlex(s, W, H);
+  // 绘制磁吸锚点（虚线网格）
+  const grid = document.createElement('div'); grid.style.cssText='position:absolute;inset:0;pointer-events:none;';
+  const jCands = ['flex-start','center','flex-end','space-between','space-around','space-evenly'];
+  const aCands = ['flex-start','center','flex-end','stretch'];
+  // 显示主轴候选线
+  jCands.forEach((j,idx)=>{ const b=computeFlex({...s,justify:j},W,H)[0]; const bx=b.x; const div=document.createElement('div');
+    div.style.cssText=`position:absolute;top:0;bottom:0;left:${bx}px;width:1px;background:${idx===jCands.indexOf(s.justify)?'#2563eb99':'#d0d5dd'};pointer-events:none;`;
+    grid.appendChild(div); });
+  aCands.forEach((a,idx)=>{ const b=computeFlex({...s,align:a},W,H)[0]; const by=b.y; const div=document.createElement('div');
+    div.style.cssText=`position:absolute;left:0;right:0;top:${by}px;height:1px;background:${idx===aCands.indexOf(s.align)?'#2563eb99':'#d0d5dd'};pointer-events:none;`;
+    grid.appendChild(div); });
+  canvas.appendChild(grid);
+  // 渲染子项
+  boxes.forEach(b=>{ const d=document.createElement('div'); d.className='cell '+b.color;
+    d.style.cssText=`position:absolute;left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;cursor:grab;box-shadow:0 0 0 0 rgba(37,99,235,0);`; d.dataset.i=boxes.indexOf(b); canvas.appendChild(d); });
+  // 拖动逻辑
+  let drag=null;
+  canvas.onmousedown=(e)=>{ const r=canvas.getBoundingClientRect(); const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const hit=boxes.find(b=>mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h);
+    if(!hit) return; e.preventDefault();
+    drag={startX:mx,startY:my,axis:null,lastJ:s.justify,lastA:s.align};
+    canvas.style.cursor='grabbing';
+  };
+  const globalMove=(e)=>{ if(!drag) return; const r=canvas.getBoundingClientRect(); const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const dx=mx-drag.startX, dy=my-drag.startY;
+    if(drag.axis===null){ if(Math.abs(dx)>6||Math.abs(dy)>6) drag.axis= Math.abs(dx)>=Math.abs(dy)?'x':'y'; if(!drag.axis) return; }
+    if(drag.axis==='x'){ // 推断 justify：找第一个子项 x 与鼠标 x 最接近的候选
+      let best=jCands[0], bd=1e9;
+      for(const j of jCands){ const b=computeFlex({...s,justify:j},W,H)[0]; const d=Math.abs((b.x+b.w/2)-mx); if(d<bd){bd=d;best=j;} }
+      if(best!==s.justify){ s.justify=best; renderCanvas(); updateBadge(); }
+    } else {
+      let best=aCands[0], bd=1e9;
+      for(const a of aCands){ const b=computeFlex({...s,align:a},W,H)[0]; const d=Math.abs((b.y+b.h/2)-my); if(d<bd){bd=d;best=a;} }
+      if(best!==s.align){ s.align=best; renderCanvas(); updateBadge(); }
+    }
+  };
+  const globalUp=()=>{ if(drag){ drag=null; canvas.style.cursor='grab'; } window.removeEventListener('mousemove',globalMove); window.removeEventListener('mouseup',globalUp); };
+  window.addEventListener('mousemove',globalMove); window.addEventListener('mouseup',globalUp);
+}
+
+function renderGridCanvas(s){
+  const rows = '1fr '.repeat(s.rows).trim();
+  const cols = '1fr '.repeat(s.cols).trim();
+  const wrap = document.createElement('div');
+  wrap.style.cssText='display:grid;width:100%;height:100%;grid-template-rows:'+rows+';grid-template-columns:'+cols+';gap:'+s.gap+'px;justify-items:'+s.justifyItems+';align-items:'+s.alignItems+';justify-content:'+s.justifyContent+';align-content:'+s.alignContent+';';
+  for(let i=0;i<s.childCount;i++){ const c=document.createElement('div'); c.className='cell c'+(i%4+1); wrap.appendChild(c); }
   canvas.appendChild(wrap);
 }
 
