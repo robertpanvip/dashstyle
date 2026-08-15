@@ -16,6 +16,7 @@ import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.geom.Rectangle2D
+import java.awt.geom.RoundRectangle2D
 import javax.swing.Icon
 
 /**
@@ -84,32 +85,43 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 }
 
 /**
- * gutter 迷你布局图 icon：小容器 + 内部子块布局，模拟 WebStorm 颜色预览的 gutter 色块。
+ * gutter 布局预览 icon：小容器 + 内部子块布局，模拟 WebStorm 颜色预览的 gutter 色块。
  * 总效果用强调色，单属性用普通色。
+ *
+ * 尺寸取 32×32 以在 gutter 内尽可能清晰地展示 flex 排列方向 / grid 网格；
+ * 子块之间留 1px 间隙，避免相邻块糊在一起，提升辨识度。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel,
     private val overall: Boolean
 ) : Icon {
 
-    override fun getIconWidth(): Int = 18
-    override fun getIconHeight(): Int = 18
+    override fun getIconWidth(): Int = 32
+    override fun getIconHeight(): Int = 32
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val pad = 1
+            g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+            val pad = 2
             val boxW = iconWidth - pad * 2
             val boxH = iconHeight - pad * 2
             val border = if (overall) OVERALL_BORDER else BORDER
             val fill = if (overall) OVERALL_CHILD else CHILD
+            // 容器边框
             g2.color = border
             g2.draw(Rectangle2D.Float(x + pad.toFloat(), y + pad.toFloat(), boxW - 1f, boxH - 1f))
+            // 子块（每块内缩 1px，块间留出间隙，更清晰）
             val boxes = model.boxes(boxW, boxH)
             g2.color = fill
             for (b in boxes) {
-                g2.fillRect(x + pad + b.x, y + pad + b.y, b.w, b.h)
+                val bx = x + pad + b.x
+                val by = y + pad + b.y
+                val bw = b.w - 1
+                val bh = b.h - 1
+                if (bw <= 0 || bh <= 0) continue
+                g2.fill(RoundRectangle2D.Float(bx.toFloat(), by.toFloat(), bw.toFloat(), bh.toFloat(), 1.5f, 1.5f))
             }
         } finally {
             g2.dispose()
