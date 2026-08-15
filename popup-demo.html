@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DashStyle 布局预览弹窗交互演示</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system,"Segoe UI","PingFang SC",sans-serif; background:#eef0f3; color:#1f2329; height:100vh; display:flex; align-items:center; justify-content:center; gap:40px; padding:24px; }
+  .hint { position:fixed; top:16px; left:50%; transform:translateX(-50%); color:#6b7280; font-size:13px; background:#fff; border:1px solid #e5e7eb; padding:6px 14px; border-radius:20px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+
+  /* ===== 代码编辑器 ===== */
+  .editor { width:420px; background:#fff; border:1px solid #d0d5dd; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.08); overflow:hidden; }
+  .editor .tabs { display:flex; background:#f3f4f6; border-bottom:1px solid #e5e7eb; padding:0 12px; }
+  .editor .tabs .tab { padding:8px 12px; font-size:12px; color:#6b7280; border-bottom:2px solid transparent; }
+  .editor .tabs .tab.active { color:#2563eb; border-bottom-color:#2563eb; }
+  .editor pre { padding:14px 16px; font-family:ui-monospace,Menlo,monospace; font-size:12.5px; line-height:1.7; overflow:auto; }
+  .editor .line { white-space:pre; }
+  .editor .prop { color:#c026d3; }
+  .editor .val { color:#0f766e; }
+  .editor .sel { color:#b91c1c; }
+  .editor .punct { color:#6b7280; }
+  .inlay-badge { display:inline-flex; align-items:center; gap:4px; margin-left:8px; vertical-align:middle; cursor:pointer; position:relative; }
+  .inlay-box { width:46px; height:16px; border:1px solid #9ca3af; border-radius:3px; padding:1px; display:inline-flex; gap:1px; background:#fff; transition:box-shadow .15s; }
+  .inlay-box:hover { box-shadow:0 0 0 2px rgba(37,99,235,.35); }
+  .inlay-box i { flex:1; display:block; border-radius:1px; }
+  .inlay-box i.c1{background:#5b8ff9}.inlay-box i.c2{background:#5ad8a6}.inlay-box i.c3{background:#fa8c16}
+  .inlay-badge .tag { font-size:10px; color:#2563eb; background:#eff6ff; border:1px solid #bfdbfe; border-radius:3px; padding:0 4px; }
+
+  /* ===== 弹窗 ===== */
+  .popup { width:300px; background:#fff; border:1px solid #c9cdd4; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.18); overflow:hidden; }
+  .popup .title { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#f7f8fa; border-bottom:1px solid #e3e6ea; font-size:12px; color:#444; font-weight:600; }
+  .popup .title .dot{display:flex;gap:5px}.popup .title .dot span{width:9px;height:9px;border-radius:50%}
+  .popup .title .dot span:nth-child(1){background:#ff5f57}.popup .title .dot span:nth-child(2){background:#febc2e}.popup .title .dot span:nth-child(3){background:#28c840}
+  .popup .body { padding:12px; }
+  .canvas { height:130px; background:#fafbfc; border:1px solid #e3e6ea; border-radius:6px; display:flex; }
+  .canvas .row { display:flex; width:100%; height:100%; }
+  .canvas .cell { border-radius:3px; }
+  .cell.c1{background:#5b8ff9}.cell.c2{background:#5ad8a6}.cell.c3{background:#fa8c16}.cell.c4{background:#8b5cf6}
+  .form { margin-top:12px; display:grid; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center; }
+  .form label { font-size:11.5px; color:#6b7280; text-align:right; }
+  .form select, .form input[type=number] { width:100%; font-size:12px; padding:4px 6px; border:1px solid #d0d5dd; border-radius:5px; background:#fff; color:#1f2329; }
+  .form input[type=range] { width:100%; }
+  .footer { display:flex; justify-content:flex-end; gap:8px; padding:10px 12px; border-top:1px solid #e3e6ea; background:#fafbfc; }
+  .btn { font-size:12px; padding:5px 12px; border-radius:5px; border:1px solid #d0d5dd; background:#fff; color:#1f2329; cursor:pointer; }
+  .btn.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+  .btn:hover { filter:brightness(.96); }
+  .switch { display:flex; gap:14px; margin-top:10px; }
+  .switch button { flex:1; font-size:12px; padding:6px; border-radius:6px; border:1px solid #d0d5dd; background:#fff; cursor:pointer; }
+  .switch button.active { background:#2563eb; border-color:#2563eb; color:#fff; }
+</style>
+</head>
+<body>
+<div class="hint">点击编辑器行尾的迷你布局徽标 → 弹出交互面板，调整实时预览，点「应用到样式」写回 CSS</div>
+
+<!-- 编辑器：flex -->
+<div class="editor">
+  <div class="tabs"><span class="tab active">Flex.module.css</span><span class="tab">Grid.module.css</span></div>
+  <pre>
+<span class="sel">.toolbar</span><span class="punct"> {</span>
+  <span class="prop">display</span><span class="punct">:</span> <span class="val">flex</span><span class="punct">;</span> <span class="inlay-badge" id="badgeFlex"><span class="inlay-box"><i class="c1"></i><i class="c2"></i><i class="c3"></i></span></span>
+  <span class="prop">justify-content</span><span class="punct">:</span> <span class="val">center</span><span class="punct">;</span> <span class="inlay-badge"><span class="inlay-box"><i class="c1"></i><i class="c2"></i><i class="c3"></i></span></span>
+  <span class="prop">align-items</span><span class="punct">:</span> <span class="val">center</span><span class="punct">;</span> <span class="inlay-badge"><span class="inlay-box"><i class="c1"></i><i class="c2"></i><i class="c3"></i></span></span>
+  <span class="prop">gap</span><span class="punct">:</span> <span class="val">12px</span><span class="punct">;</span> <span class="inlay-badge"><span class="inlay-box"><i class="c1"></i><i class="c2"></i><i class="c3"></i></span></span>
+<span class="punct">}</span></pre>
+</div>
+
+<!-- 弹窗 -->
+<div class="popup" id="popup">
+  <div class="title"><span>Flex 布局预览</span><span class="dot"><span></span><span></span><span></span></span></div>
+  <div class="body">
+    <div class="canvas" id="canvas"></div>
+    <div class="switch">
+      <button id="swFlex" class="active">Flex</button>
+      <button id="swGrid">Grid</button>
+    </div>
+    <div class="form" id="form"></div>
+  </div>
+  <div class="footer">
+    <button class="btn" id="reset">重置</button>
+    <button class="btn primary" id="apply">应用到样式</button>
+  </div>
+</div>
+
+<script>
+// 状态（flex 与 grid 各一份，切换弹窗 Tab 时保留）
+const state = {
+  flex: { direction:'row', justify:'center', align:'center', alignContent:'flex-start', wrap:false, gap:12, childCount:4 },
+  grid: { cols:3, rows:2, gap:10, justifyItems:'stretch', alignItems:'stretch', justifyContent:'stretch', alignContent:'stretch', childCount:6 }
+};
+let mode = 'flex';
+
+const canvas = document.getElementById('canvas');
+const form = document.getElementById('form');
+
+function flexStyle(s){
+  return {
+    'flex-direction': s.direction,
+    'justify-content': s.justify,
+    'align-items': s.align,
+    'align-content': s.alignContent,
+    'flex-wrap': s.wrap ? 'wrap' : 'nowrap',
+    'gap': s.gap + 'px'
+  };
+}
+function gridStyle(s){
+  const cols = '1fr '.repeat(s.cols).trim();
+  const rows = '1fr '.repeat(s.rows).trim();
+  return {
+    'grid-template-columns': cols,
+    'grid-template-rows': rows,
+    'gap': s.gap + 'px',
+    'justify-items': s.justifyItems,
+    'align-items': s.alignItems,
+    'justify-content': s.justifyContent,
+    'align-content': s.alignContent
+  };
+}
+
+const flexControls = [
+  ['flex-direction', 'select', ['row','row-reverse','column','column-reverse']],
+  ['justify-content', 'select', ['flex-start','flex-end','center','space-between','space-around','space-evenly']],
+  ['align-items', 'select', ['stretch','flex-start','flex-end','center','baseline']],
+  ['align-content', 'select', ['flex-start','flex-end','center','stretch','space-between','space-around','space-evenly']],
+  ['flex-wrap', 'select', ['nowrap','wrap']],
+  ['gap', 'range', [0,40]],
+  ['childCount', 'range', [1,6]]
+];
+const gridControls = [
+  ['columns(1fr)', 'range', [1,6]],
+  ['rows(1fr)', 'range', [1,4]],
+  ['justify-items', 'select', ['stretch','start','center','end']],
+  ['align-items', 'select', ['stretch','start','center','end']],
+  ['justify-content', 'select', ['stretch','start','center','end']],
+  ['align-content', 'select', ['stretch','start','center','end']],
+  ['gap', 'range', [0,40]]
+];
+
+function renderCanvas(){
+  canvas.innerHTML = '';
+  const s = state[mode];
+  const wrap = document.createElement('div');
+  if (mode === 'flex') {
+    wrap.className = 'row';
+    Object.assign(wrap.style, flexStyle(s));
+    for (let i=0;i<s.childCount;i++){ const c=document.createElement('div'); c.className='cell c'+(i%4+1); c.style.flex='1'; wrap.appendChild(c); }
+  } else {
+    Object.assign(wrap.style, gridStyle(s));
+    wrap.style.display='grid';
+    for (let i=0;i<s.childCount;i++){ const c=document.createElement('div'); c.className='cell c'+(i%4+1); wrap.appendChild(c); }
+  }
+  canvas.appendChild(wrap);
+}
+
+function renderForm(){
+  form.innerHTML='';
+  const controls = mode==='flex' ? flexControls : gridControls;
+  const s = state[mode];
+  for (const [key, type, opts] of controls){
+    const label=document.createElement('label'); label.textContent=key;
+    const input=type==='select' ? document.createElement('select') : document.createElement('input');
+    if (type==='select'){
+      for (const o of opts){ const op=document.createElement('option'); op.value=o; op.textContent=o; input.appendChild(op); }
+      input.value=s[key];
+    } else {
+      input.type='range'; input.min=opts[0]; input.max=opts[1]; input.value=s[key];
+    }
+    input.addEventListener('input', ()=>{ s[key]= type==='select'? input.value : +input.value; renderCanvas(); });
+    form.appendChild(label); form.appendChild(input);
+  }
+}
+
+function render(){ document.getElementById('popup').firstElementChild.firstElementChild.textContent = (mode==='flex'?'Flex':'Grid')+' 布局预览'; renderCanvas(); renderForm(); }
+
+document.getElementById('swFlex').onclick=()=>{ mode='flex'; document.getElementById('swFlex').classList.add('active'); document.getElementById('swGrid').classList.remove('active'); render(); };
+document.getElementById('swGrid').onclick=()=>{ mode='grid'; document.getElementById('swGrid').classList.add('active'); document.getElementById('swFlex').classList.remove('active'); render(); };
+document.getElementById('reset').onclick=()=>{ render(); };
+document.getElementById('apply').onclick=()=>{ alert('已把当前值写回 CSS ruleset'); };
+
+// 点击编辑器徽标可开/关弹窗（演示）
+document.getElementById('badgeFlex').onclick=()=>{ document.getElementById('popup').style.display = document.getElementById('popup').style.display==='none'?'':'none'; };
+
+render();
+</script>
+</body>
+</html>
