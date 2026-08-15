@@ -116,7 +116,12 @@ class ReflectorSnifferTest {
         "com.intellij.codeInsight.intention.IntentionAction",
         "com.intellij.codeInsight.intention.PsiElementBaseIntentionAction",
         // H. PsiTreeUtil（已在使用，顺便兜底版本差异）
-        "com.intellij.psi.util.PsiTreeUtil"
+        "com.intellij.psi.util.PsiTreeUtil",
+        // I. LineMarker / gutter 渲染（WebStorm 颜色预览式 gutter 色块）
+        "com.intellij.codeInsight.daemon.LineMarkerProvider",
+        "com.intellij.codeInsight.daemon.RelatedItemLineMarkerProvider",
+        "com.intellij.codeInsight.daemon.LineMarkerInfo",
+        "com.intellij.codeInsight.daemon.GutterIconRenderer"
     )
 
     private fun sniffClasses(): Map<String, Any> {

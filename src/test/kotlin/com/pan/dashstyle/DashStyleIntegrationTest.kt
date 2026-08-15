@@ -374,7 +374,9 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             "com.pan.dashstyle.DashStyleDocumentationProvider",
             "com.pan.dashstyle.InlineStyleToCssModuleIntention",
             "com.pan.dashstyle.ExtractColorsAction",
-            "com.pan.dashstyle.LayoutPreviewInlayProvider"
+            "com.pan.dashstyle.LayoutPreviewInlayProvider",
+            "com.pan.dashstyle.CssUnitInlayProvider",
+            "com.pan.dashstyle.CssUnitGutterMarkerProvider"
         )
         val cl = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
         for (cn in mustLoad) {
@@ -492,5 +494,37 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         Assert.assertEquals("新增 align-items 应为 stretch", "stretch", block.findDeclaration("align-items")?.value?.text?.trim())
         Assert.assertNotNull("flex-wrap 应被新增", block.findDeclaration("flex-wrap"))
         Assert.assertNotNull("flex-direction 应被新增", block.findDeclaration("flex-direction"))
+    }
+
+    // ========================================================================
+    // #10. CSS 单位换算助手 gutter 色块：collectSlowLineMarkers 对可换算声明生成 marker
+    //      （px / rem / clamp / calc 可换算 → 4 个色块；color:red / display:flex 不可换算 → 无）
+    // ========================================================================
+    @Test
+    fun `css unit gutter marker produces swatches for convertible declarations`() {
+        val css = myFixture.configureByText(
+            "Units.module.css",
+            """
+            .a {
+              width: 12px;
+              height: 1.5rem;
+              font-size: clamp(16px, 2vw, 24px);
+              margin: calc(100% - 20px);
+              color: red;
+              display: flex;
+            }
+            """.trimIndent()
+        )
+        val provider = CssUnitGutterMarkerProvider()
+        val markers = mutableListOf<com.intellij.codeInsight.daemon.LineMarkerInfo<*>>()
+        val elements = ApplicationManager.getApplication().runReadAction<List<PsiElement>> {
+            PsiTreeUtil.findChildrenOfType(css, PsiElement::class.java).toList()
+        }
+        ApplicationManager.getApplication().runReadAction {
+            provider.collectSlowLineMarkers(elements, markers)
+        }
+        // 可换算声明：width(12px) / height(1.5rem) / font-size(clamp) / margin(calc) → 4 个色块
+        Assert.assertEquals("应生成 4 个可换算色块；实际 markers.size=${markers.size}", 4, markers.size)
+        Assert.assertTrue("每个色块都应带 icon", markers.all { it.icon != null })
     }
 }
