@@ -168,9 +168,9 @@
 位置：[TailwindClassCompletionContributor.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassCompletionContributor.kt) / [TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)
 
 - **触发位置**：CSS 的 `@apply` 指令内（`abc { @apply <光标>; }`），CSS/SCSS/LESS 三种语言均生效
+- **触发 & 快捷键**：输入类名时自动弹出补全列表；也可手动按 **Ctrl/Cmd + Space** 强制触发；**Enter** 确认并插入候选，**Tab** 也可接受
 - **候选**：内置 200+ 常用 Tailwind 类（布局 / flex / grid / 间距 / 尺寸 / 排版 / 文本颜色 / 背景 / 边框 / 阴影 / 过渡 / 变换 / 交互等），按输入前缀匹配，空前缀返回全部
 - **预览框**：每个候选右侧灰字显示该类展开后的 CSS 声明（如 `flex → display: flex`），尾部再标分组名（`(flex)`）
-- **补全**：按 Enter 直接补全，无需额外确认
 - **数据源**：内置清单开箱即用，无需项目 `tailwind.config.js` / `node_modules`；如需扩展可在此类中追加 `TailwindClass(name, css, group)`
 - **纯逻辑层**：[TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)`search(prefix)` / `find(name)`，可独立单测
 
@@ -263,7 +263,7 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 | 复制 `<UserCard />` 到新文件但想连带它的 CSS | 正常 `Cmd/Ctrl+C` + `Cmd/Ctrl+V` 即可，DashStyle 自动打包 |
 | `.scss` 想转 `.less` 或原生 CSS Nesting | 光标在 `<style lang="...">` 或文件内任意处 → **Alt+Enter → DashStyle: Transpile preprocessor**，下拉选目标格式 |
 | 想把项目里颜色统一抽成变量并替换 | 打开 Code 菜单 → **DashStyle: Extract Colors as CSS Variables** → 编辑变量名 → OK → 剪贴板拿 `:root { }` 并就地替换 |
-| 在 CSS 里写 Tailwind 工具类 | 光标放进 `@apply ` 后 → 输入前缀（如 `ju`）→ 下拉右侧灰字预览 CSS → **Enter** 补全 |
+| 在 CSS 里写 Tailwind 工具类 | 光标放进 `@apply ` 后 → 输入前缀（如 `ju`）或按 **Ctrl/Cmd+Space** → 下拉右侧灰字预览 CSS → **Enter** 补全 |
 
 ---
 
