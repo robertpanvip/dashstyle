@@ -19,6 +19,7 @@
 | 9 | **项目公共颜色 → CSS Variable 抽取**（AnAction） | 扫选区 / 文件 / 目录 / 全项目 → 归一化等值分组 → 语义变量名（primary/success/danger/neutral…）→ 弹窗编辑 + 色块预览 → 确认后 `:root { --color-xxx }` 进剪贴板并就地替换为 `var(--x)` |
 | 10 | **Flex/Grid 布局可视化预览**（gutter LineMarker + 交互弹窗） | `display:flex/grid` 行前渲染迷你布局图（WebStorm 颜色预览式），悬浮看放大预览、点击弹出可调交互面板（拖拽子项 align-self、拖拽 grid 轨道） |
 | 11 | **CSS 尺寸/单位换算助手**（Inlay） | 长度值行尾显示 `px ≈ rem ≈ vw` 换算、`clamp()` 在视口下的实际取值、`calc()` 简化值 |
+| 12 | **Tailwind 类补全 + CSS 预览**（`@apply` 内自动补全） | 内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明，按 Enter 直接补全 |
 
 ---
 
@@ -163,6 +164,16 @@
 - **calc() 简化**：支持 `+ - * /` 与括号、px/rem/vw 混算，返回合并后的 px
 - 纯逻辑层不依赖 IDE SDK，非法输入静默返回 null，绝不抛异常
 
+### 2.12 Tailwind 类补全 + CSS 预览（新增 2026-08）
+位置：[TailwindClassCompletionContributor.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassCompletionContributor.kt) / [TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)
+
+- **触发位置**：CSS 的 `@apply` 指令内（`abc { @apply <光标>; }`），CSS/SCSS/LESS 三种语言均生效
+- **候选**：内置 200+ 常用 Tailwind 类（布局 / flex / grid / 间距 / 尺寸 / 排版 / 文本颜色 / 背景 / 边框 / 阴影 / 过渡 / 变换 / 交互等），按输入前缀匹配，空前缀返回全部
+- **预览框**：每个候选右侧灰字显示该类展开后的 CSS 声明（如 `flex → display: flex`），尾部再标分组名（`(flex)`）
+- **补全**：按 Enter 直接补全，无需额外确认
+- **数据源**：内置清单开箱即用，无需项目 `tailwind.config.js` / `node_modules`；如需扩展可在此类中追加 `TailwindClass(name, css, group)`
+- **纯逻辑层**：[TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)`search(prefix)` / `find(name)`，可独立单测
+
 ---
 
 ## 三、性能优化清单
@@ -189,6 +200,7 @@
 | [UtilTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/UtilTest.kt) | `kebabToCamel / camelToKebab` round-trip；**`normalizeColor` HEX3/6/8/rgb/rgba%/hsl/命名/非法**（16 用例）；**`suggestColorVarName` 语义/冲突/index**（8 用例）；**`scanColorsInText` 混合/重叠/边界/空/range**（5 用例） |
 | [LessAmpersandExpansionTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/LessAmpersandExpansionTest.kt) | `&` 基础替换、`&-suffix`、`&__element`、多父多子笛卡尔积、逗号分隔、伪类拼接类 |
 | [JsonToCssConverterTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/JsonToCssConverterTest.kt) | JSON 检测 / camel→kebab / 数字 px / 多属性 / **JS 字面量（无引号 key + 尾随逗号） / transform scale 无 px / unitless（opacity,z-index,flex）/ 负数与 0** |
+| [TailwindClassResolverTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/TailwindClassResolverTest.kt) | 内置清单非空且有序、每个类带 CSS/分组、前缀/大小写/未知搜索、`find` 精确匹配、关键类 CSS 声明抽查 |
 
 ### 4.2 独立验证器（src/test/java）—— 零依赖、零环境
 > `javac ...Verifier.java && java ...Verifier` 即可跑，方便未配置 Gradle/IntelliJ 环境也能回归。
@@ -232,6 +244,7 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
   - `annotator` ×3 + `highlightVisitor`（CSS Module class 置灰 / 重复声明波浪线；Vue/Svelte 内嵌 `<style module>` 场景）
   - `lineMarkerProvider`（flex/grid 布局 gutter 预览）
   - `inlayProvider`（尺寸/单位换算助手）
+  - `completion.contributor` ×3（Tailwind 类补全，CSS/SCSS/LESS）
   - `copyPastePreProcessor`（JSON→CSS / TSX+CSS 打包粘贴）
   - `intentionAction` ×4（Inline 抽取 / 缺失 class 创建 / styles import 自动补 / 预处理互转）
 - `<actions>`
@@ -250,6 +263,7 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 | 复制 `<UserCard />` 到新文件但想连带它的 CSS | 正常 `Cmd/Ctrl+C` + `Cmd/Ctrl+V` 即可，DashStyle 自动打包 |
 | `.scss` 想转 `.less` 或原生 CSS Nesting | 光标在 `<style lang="...">` 或文件内任意处 → **Alt+Enter → DashStyle: Transpile preprocessor**，下拉选目标格式 |
 | 想把项目里颜色统一抽成变量并替换 | 打开 Code 菜单 → **DashStyle: Extract Colors as CSS Variables** → 编辑变量名 → OK → 剪贴板拿 `:root { }` 并就地替换 |
+| 在 CSS 里写 Tailwind 工具类 | 光标放进 `@apply ` 后 → 输入前缀（如 `ju`）→ 下拉右侧灰字预览 CSS → **Enter** 补全 |
 
 ---
 

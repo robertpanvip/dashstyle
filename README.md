@@ -28,6 +28,8 @@
 
 - **CSS 尺寸/单位换算助手**：长度值行尾显示 `px ≈ rem ≈ vw` 换算、`clamp()` 实际取值、`calc()` 简化值
 
+- **Tailwind 类补全 + CSS 预览**：在 CSS 的 `@apply` 指令内自动补全，内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明，Enter 直接补全
+
 ### 文档
 
 各功能的详细说明、性能优化清单、测试体系与构建指引见 **[FEATURES.md](FEATURES.md)**。
