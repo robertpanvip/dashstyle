@@ -17,6 +17,11 @@ import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
+import java.awt.image.BufferedImage
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import javax.imageio.ImageIO
 import javax.swing.Icon
 
 /**
@@ -55,7 +60,7 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
                 leaf,
                 leaf.textRange,
                 LayoutGutterIcon(model, overall),
-                { if (overall) "容器总效果预览（点击调整）" else "布局预览（点击调整）" },
+                { LayoutPreviewTooltip.html(model, overall) },
                 openPopupHandler(ruleset, model),
                 GutterIconRenderer.Alignment.LEFT
             )
@@ -133,5 +138,76 @@ private class LayoutGutterIcon(
         val CHILD: JBColor = JBColor(Color(0x4f8cff), Color(0x6aa0ff))
         val OVERALL_BORDER: JBColor = JBColor(Color(0x2d7ff9), Color(0x4f9bff))
         val OVERALL_CHILD: JBColor = JBColor(Color(0x1b5fd0), Color(0x5f9bff))
+    }
+}
+
+/**
+ * gutter 图标的放大预览 tooltip。
+ *
+ * guter 图标空间有限（32×32），悬浮时把同一布局以更大尺寸（如 200×130）渲染成 PNG，
+ * 并以 HTML `<img src="file://...">` 作为 tooltip 显示，达到与 inlay 相当的清晰度。
+ * 结果按 [LayoutModel] 缓存；临时 PNG 在 JVM 退出时清理。
+ */
+private object LayoutPreviewTooltip {
+
+    private val htmlCache = ConcurrentHashMap<LayoutModel, String>()
+    private val createdFiles = ConcurrentLinkedQueue<File>()
+
+    init {
+        Runtime.getRuntime().addShutdownHook(Thread {
+            for (f in createdFiles) runCatching { f.delete() }
+        })
+    }
+
+    /** 返回放大预览的 HTML tooltip；同一模型复用已生成的 HTML。 */
+    fun html(model: LayoutModel, overall: Boolean): String {
+        htmlCache[model]?.let { return it }
+        val img = render(model)
+        val f = File.createTempFile("dashstyle-preview-", ".png")
+        ImageIO.write(img, "png", f)
+        createdFiles.add(f)
+        val label = if (overall) "容器总效果（点击调整）" else "布局预览（点击调整）"
+        val html = buildString {
+            append("<html><body style=\"padding:6px\">")
+            append("<img src=\"file://${f.absolutePath}\" border=\"0\"><br>")
+            append("<div style=\"color:#7a7e85;font:11px sans-serif;margin-top:4px;text-align:center\">$label</div>")
+            append("</body></html>")
+        }
+        htmlCache[model] = html
+        return html
+    }
+
+    /** 在 200×130 画布上渲染布局预览位图。 */
+    private fun render(model: LayoutModel): BufferedImage {
+        val w = 200
+        val h = 130
+        val img = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+        val g2 = img.createGraphics() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+            // 深色面板底
+            g2.color = Color(0x2b2d31)
+            g2.fillRoundRect(0, 0, w, h, 8, 8)
+            val pad = 12
+            val boxW = w - pad * 2
+            val boxH = h - pad * 2
+            // 容器边框
+            g2.color = Color(0x8a8d93)
+            g2.draw(Rectangle2D.Float(pad.toFloat(), pad.toFloat(), boxW - 1f, boxH - 1f))
+            // 子块（内缩 1px + 圆角）
+            g2.color = Color(0x4f9bff)
+            for (b in model.boxes(boxW, boxH)) {
+                val bw = b.w - 1
+                val bh = b.h - 1
+                if (bw <= 0 || bh <= 0) continue
+                g2.fill(RoundRectangle2D.Float(
+                    (pad + b.x).toFloat(), (pad + b.y).toFloat(), bw.toFloat(), bh.toFloat(), 3f, 3f
+                ))
+            }
+        } finally {
+            g2.dispose()
+        }
+        return img
     }
 }
