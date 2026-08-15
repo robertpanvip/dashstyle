@@ -73,7 +73,7 @@ class DashStyleHighlightAnnotator : Annotator {
         // 最终夹紧：不超过 containingFile 的长度（理论上不会越界，但为安全起见）
         val fileLen = runCatching { cssFile.textLength }.getOrNull() ?: Int.MAX_VALUE
         val start = slRange.startOffset.coerceAtLeast(0)
-        val end = slRange.endOffset.coerceAtMost(start + 1).coerceAtMost(fileLen)
+        val end = slRange.endOffset.coerceAtMost(fileLen)
         if (end <= start) return
 
         runCatching {

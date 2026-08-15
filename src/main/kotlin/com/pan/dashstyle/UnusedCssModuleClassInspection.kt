@@ -330,7 +330,14 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 if (imports.isEmpty()) continue
                 val fileVf = psiFile.virtualFile?.parent ?: continue
                 for (imp in imports) {
-                    val from = (imp.importModuleText ?: continue).trim('"', '\'')
+                    // WebStorm 2025.3 中 importModuleText 已失效（返回 null），改用 fromClause 的文本提取模块路径。
+                    val from = runCatching {
+                        imp.importModuleText
+                            ?: imp.getFromClause()?.text
+                                ?.substringAfter("from", "")
+                                ?.trim()
+                                ?.trim('\'', '"', '`')
+                    }.getOrNull()?.trim() ?: continue
                     if (!MODULE_EXTS.any { from.endsWith(it, ignoreCase = true) }) continue
                     val resolvedVf = fileVf.findFileByRel2(from.trimStart('/'))
                         ?: fileVf.findChild(from.substringAfterLast('/'))

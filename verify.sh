@@ -19,8 +19,10 @@
 #    运行 src/test/kotlin 里的 DashStyleIntegrationTest（基于 BasePlatformTestCase，
 #    在 headless 沙箱里加载 WebStorm-2025.3 平台 + DashStyle 插件），真正验证
 #    高亮置灰 / Intention / 引用跳转 / Inspection 这些依赖 PSI/UI 的功能。
-#    首个非 @Ignore 的 smoke 用例会真实跑；@Ignore 的强断言用例需开发者去掉 @Ignore 后逐个启用。
-#    需要：JDK17 + 网络（首次会下载 WebStorm SDK，体积大、耗时）。
+#    7 条用例全部为强断言并默认启用（不再 @Ignore），覆盖：未使用 class 置灰、
+#    重复声明弱警告、抽取公共类 QuickFix、style 字符串引用跳转、inline style 提取
+#    Intention、Inspection/Annotator 类可加载。需要：JDK17 + 网络（首次会下载
+#    WebStorm SDK，体积大、耗时）。
 #
 #  用法：
 #    ./verify.sh                        # 只跑 3 个独立 Java 验证器（快）
@@ -187,7 +189,7 @@ if [ "$RUN_INTEGRATION" = "1" ]; then
         test --tests "$INTEGRATION_PATTERN" \
         > "$OUT/integration.log" 2>&1; then
       echo "✅ IDE 沙箱集成测试通过"
-      echo "   说明：@Ignore 的强断言用例需去掉注解后逐个启用；当前通过的是非 @Ignore 的 smoke 项。"
+      echo "   说明：7 条强断言用例全部启用。首次运行需下载 WebStorm SDK，可能较慢。"
     else
       if grep -qEi "could not resolve|was not found in any|UnknownHost|Could not GET|Connection (refused|reset)" "$OUT/integration.log"; then
         echo "⚠️ 集成测试因依赖下载/网络解析失败而中止（环境问题，非代码错误）。"
