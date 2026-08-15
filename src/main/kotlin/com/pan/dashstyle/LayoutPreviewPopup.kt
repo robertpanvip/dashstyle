@@ -10,14 +10,12 @@ import com.intellij.ui.JBColor
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
-import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
 import javax.swing.BorderFactory
-import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -84,6 +82,7 @@ object LayoutPreviewPopup {
         private val direction = JComboBox(arrayOf("row", "row-reverse", "column", "column-reverse"))
         private val wrap = JComboBox(arrayOf("nowrap", "wrap"))
         private val gap = SliderControl(0, 40, initial.gap)
+        private val preview = previewPanel { current() }
 
         init {
             justify.selectedItem = initial.justify.cssValue()
@@ -110,6 +109,8 @@ object LayoutPreviewPopup {
                 wrap = (wrap.selectedItem as? String) == "wrap",
                 childCount = state[0].childCount
             )
+            preview.repaint()
+            apply()
         }
 
         private fun current(): LayoutModel.Flex = LayoutModel.Flex(state[0])
@@ -123,7 +124,6 @@ object LayoutPreviewPopup {
         }
 
         override fun build(): JBPopup {
-            val preview = previewPanel(current())
             val form = JPanel(GridBagLayout())
             var row = 0
             fun addRow(label: String, comp: JComponent) {
@@ -140,16 +140,10 @@ object LayoutPreviewPopup {
             addRow("flex-wrap", wrap)
             addRow("gap", gap.view)
 
-            val applyBtn = JButton("应用到样式")
-            applyBtn.addActionListener { apply() }
-            val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
-            buttons.add(applyBtn)
-
             val panel = JPanel(BorderLayout(8, 8))
             panel.border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
             panel.add(preview, BorderLayout.NORTH)
             panel.add(form, BorderLayout.CENTER)
-            panel.add(buttons, BorderLayout.SOUTH)
 
             return JBPopupFactory.getInstance()
                 .createComponentPopupBuilder(panel, justify)
@@ -176,6 +170,7 @@ object LayoutPreviewPopup {
         private val alignItems = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val justifyContent = JComboBox(arrayOf("stretch", "start", "center", "end"))
         private val alignContent = JComboBox(arrayOf("stretch", "start", "center", "end"))
+        private val preview = previewPanel { current() }
 
         init {
             justifyItems.selectedItem = initial.justifyItems.cssValue()
@@ -205,6 +200,8 @@ object LayoutPreviewPopup {
                 alignContent = GridLayoutResolver.parseAlign(alignContent.selectedItem as? String, state[0].alignContent),
                 childCount = state[0].childCount
             )
+            preview.repaint()
+            apply()
         }
 
         private fun current(): LayoutModel.Grid = LayoutModel.Grid(state[0])
@@ -218,7 +215,6 @@ object LayoutPreviewPopup {
         }
 
         override fun build(): JBPopup {
-            val preview = previewPanel(current())
             val form = JPanel(GridBagLayout())
             var row = 0
             fun addRow(label: String, comp: JComponent) {
@@ -236,16 +232,10 @@ object LayoutPreviewPopup {
             addRow("justify-content", justifyContent)
             addRow("align-content", alignContent)
 
-            val applyBtn = JButton("应用到样式")
-            applyBtn.addActionListener { apply() }
-            val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
-            buttons.add(applyBtn)
-
             val panel = JPanel(BorderLayout(8, 8))
             panel.border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
             panel.add(preview, BorderLayout.NORTH)
             panel.add(form, BorderLayout.CENTER)
-            panel.add(buttons, BorderLayout.SOUTH)
 
             return JBPopupFactory.getInstance()
                 .createComponentPopupBuilder(panel, columns.view)
@@ -258,9 +248,8 @@ object LayoutPreviewPopup {
     // ====================================================================
     // 公共：实时画布
     // ====================================================================
-    private fun previewPanel(model: LayoutModel): JPanel {
+    private fun previewPanel(modelProvider: () -> LayoutModel): JPanel {
         return object : JPanel() {
-            private var current = model
             init {
                 preferredSize = Dimension(200, 120)
                 background = JBColor(Color(0xf7f7f8), Color(0x2b2d30))
@@ -272,7 +261,7 @@ object LayoutPreviewPopup {
                 val pad = 12
                 val boxW = width - pad * 2
                 val boxH = height - pad * 2
-                val boxes = current.boxes(boxW, boxH)
+                val boxes = modelProvider().boxes(boxW, boxH)
                 g2.color = JBColor(Color(0x9aa0aa), Color(0x62666d))
                 g2.drawRect(pad, pad, boxW - 1, boxH - 1)
                 g2.color = JBColor(Color(0x4f8cff), Color(0x6aa0ff))

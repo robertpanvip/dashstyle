@@ -41,7 +41,8 @@
   .form label { font-size:11.5px; color:#6b7280; text-align:right; }
   .form select, .form input[type=number] { width:100%; font-size:12px; padding:4px 6px; border:1px solid #d0d5dd; border-radius:5px; background:#fff; color:#1f2329; }
   .form input[type=range] { width:100%; }
-  .footer { display:flex; justify-content:flex-end; gap:8px; padding:10px 12px; border-top:1px solid #e3e6ea; background:#fafbfc; }
+  .footer { display:flex; justify-content:center; align-items:center; padding:10px 12px; border-top:1px solid #e3e6ea; background:#fafbfc; }
+  .hint-text { font-size:11.5px; color:#2563eb; background:#eff6ff; border:1px solid #bfdbfe; border-radius:5px; padding:4px 12px; }
   .btn { font-size:12px; padding:5px 12px; border-radius:5px; border:1px solid #d0d5dd; background:#fff; color:#1f2329; cursor:pointer; }
   .btn.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
   .btn:hover { filter:brightness(.96); }
@@ -77,8 +78,7 @@
     <div class="form" id="form"></div>
   </div>
   <div class="footer">
-    <button class="btn" id="reset">重置</button>
-    <button class="btn primary" id="apply">应用到样式</button>
+    <span class="hint-text" id="liveHint">实时应用 · 调整即写回 CSS</span>
   </div>
 </div>
 
@@ -165,17 +165,25 @@ function renderForm(){
     } else {
       input.type='range'; input.min=opts[0]; input.max=opts[1]; input.value=s[key];
     }
-    input.addEventListener('input', ()=>{ s[key]= type==='select'? input.value : +input.value; renderCanvas(); });
+    input.addEventListener('input', ()=>{ s[key]= type==='select'? input.value : +input.value; renderCanvas(); updateBadge(); });
     form.appendChild(label); form.appendChild(input);
   }
 }
 
 function render(){ document.getElementById('popup').firstElementChild.firstElementChild.textContent = (mode==='flex'?'Flex':'Grid')+' 布局预览'; renderCanvas(); renderForm(); }
 
+// 实时更新编辑器徽标颜色块（模拟布局值写回 CSS）
+function updateBadge(){
+  const s = state[mode];
+  const row = document.querySelector('.editor pre');
+  row.style.opacity = 1;
+  // 简单动画提示：高亮闪烁
+  row.style.transition='background .3s'; row.style.background='#fffbe6';
+  setTimeout(()=>{ row.style.background=''; }, 300);
+}
+
 document.getElementById('swFlex').onclick=()=>{ mode='flex'; document.getElementById('swFlex').classList.add('active'); document.getElementById('swGrid').classList.remove('active'); render(); };
 document.getElementById('swGrid').onclick=()=>{ mode='grid'; document.getElementById('swGrid').classList.add('active'); document.getElementById('swFlex').classList.remove('active'); render(); };
-document.getElementById('reset').onclick=()=>{ render(); };
-document.getElementById('apply').onclick=()=>{ alert('已把当前值写回 CSS ruleset'); };
 
 // 点击编辑器徽标可开/关弹窗（演示）
 document.getElementById('badgeFlex').onclick=()=>{ document.getElementById('popup').style.display = document.getElementById('popup').style.display==='none'?'':'none'; };
