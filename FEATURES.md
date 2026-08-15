@@ -17,6 +17,8 @@
 | 7 | **TSX/Vue 复制 → CSS 规则随动** | 复制 TSX/Vue 标签时，把关联 class 的 CSS 规则打包；粘贴时目标有 styles import 就追加，没就新建同名 `.module.css` 并自动 import |
 | 8 | **SCSS / LESS / 原生 CSS Nesting 互转**（Intention Action） | 常用子集：变量、嵌套、`@extend`、mixin、插值；不支持的 construct 保留并加提示注释 |
 | 9 | **项目公共颜色 → CSS Variable 抽取**（AnAction） | 扫选区 / 文件 / 目录 / 全项目 → 归一化等值分组 → 语义变量名（primary/success/danger/neutral…）→ 弹窗编辑 + 色块预览 → 确认后 `:root { --color-xxx }` 进剪贴板并就地替换为 `var(--x)` |
+| 10 | **Flex/Grid 布局可视化预览**（gutter LineMarker + 交互弹窗） | `display:flex/grid` 行前渲染迷你布局图（WebStorm 颜色预览式），悬浮看放大预览、点击弹出可调交互面板（拖拽子项 align-self、拖拽 grid 轨道） |
+| 11 | **CSS 尺寸/单位换算助手**（Inlay） | 长度值行尾显示 `px ≈ rem ≈ vw` 换算、`clamp()` 在视口下的实际取值、`calc()` 简化值 |
 
 ---
 
@@ -78,8 +80,9 @@
 | [DuplicateCssDeclarationsInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/DuplicateCssDeclarationsInspection.kt) | 同一 CSS 文件里 ≥2 个 ruleset 声明块完全相同 → **黄色 + 波浪线**（仿 TS 重复代码检查视觉） | QuickFix：抽取为 `%__common-xxx` 占位类，所有重复点替换成 `@extend %__common-xxx`（Sass 语义） |
 
 ### 2.6 导入自动化
+> 说明：复制 `styles.xxx` → 粘贴时自动带 import，IntelliJ 平台自带的「Add import on paste」已能胜任，
+> DashStyle 自实现的 `CssModuleImportCopyPasteProcessor` 已于 v1.2.1 移除注册，避免两条逻辑冲突。
 - **[AddCssModuleImportIntention](file:///workspace/src/main/kotlin/com/pan/dashstyle/AddCssModuleImportIntention.kt)**：`styles` 未声明 → Alt+Enter 自动扫描同目录 `BaseName.module.(css|scss|less)`，匹配则注入 `import styles from './BaseName.module.css'`；Vue 环境自动进 `<script setup>` 顶部
-- **[CssModuleImportCopyPasteProcessor](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssModuleImportCopyPasteProcessor.kt)**：复制 `styles.xxx` / `styles["xxx"]` 时，把**来源 import 的 from 路径**作为元数据挂到剪贴板；粘贴时若目标文件里同 binding 未导入就自动加 import（已存在则不重复）
 
 ### 2.7 TSX/Vue 标签复制 → CSS 规则复制
 位置：[CssBundleCopyPastePostProcessor.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssBundleCopyPastePostProcessor.kt)
@@ -140,6 +143,25 @@
   2. 源文件：勾选替换时按 Document 分组、**从后向前 offset 逆序替换**为 `var(--color-xxx)`，每次替换前二次 `normalizeColor` 校验，避免并发改坏
 
 #### 性能优化（见 §三）
+
+### 2.10 Flex/Grid 布局可视化预览（新增 2026-08）
+位置：[LayoutPreviewGutterMarkerProvider.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutPreviewGutterMarkerProvider.kt) / [LayoutPreviewPopup.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutPreviewPopup.kt)
+
+- **gutter 迷你布局图**：`display:flex|grid` 行前渲染 32×32 布局图（WebStorm 颜色预览式），每条布局属性行前渲染「聚焦该属性」的图标；布局解析复用 [LayoutContextResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutContextResolver.kt)，按文件 `CachedValue` 缓存
+- **悬浮放大预览**：悬停 gutter 图标，把同一布局渲染成 ~200×130 的 PNG 作为 HTML tooltip，达到与行内预览相当的清晰度
+- **点击交互弹窗**：弹出可调面板，实时画布随控件重绘
+  - flex：justify-content / align-items / align-content / flex-direction / flex-wrap / gap，子项**拖动自适应 align-self**
+  - grid：grid-template-columns/rows（**拖动轨道分隔线调 fr/px**）、gap、对齐
+- **写回**：「应用到样式」把当前值写回 CSS ruleset（已存在改值，缺失则新增）
+- **纯逻辑层**：[FlexLayoutResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/FlexLayoutResolver.kt)（含逐子项 alignSelf）/ [GridLayoutResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/GridLayoutResolver.kt)（含轨道 resize），经 [LayoutModel.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutModel.kt) 密封类统一抽象，可独立单测
+
+### 2.11 CSS 尺寸/单位换算助手（新增 2026-08）
+位置：[CssUnitInlayProvider.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssUnitInlayProvider.kt) / [CssUnitAssistant.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssUnitAssistant.kt)
+
+- **px ↔ rem ↔ vw 互转**：长度值行尾显示 `12px ≈ 0.75rem ≈ 0.83vw`（可配置根字号与视口宽）
+- **clamp() 解析**：`clamp(16px, 2vw, 24px)` → 在给定视口下实际取值，标注夹到 min/max
+- **calc() 简化**：支持 `+ - * /` 与括号、px/rem/vw 混算，返回合并后的 px
+- 纯逻辑层不依赖 IDE SDK，非法输入静默返回 null，绝不抛异常
 
 ---
 
@@ -207,8 +229,11 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
   - `PsiReferenceContributor`（字符串 + member access 双引用提供者）
   - `documentationProvider`（悬浮展示完整 CSS 规则）
   - `localInspection`（未使用 class / 重复声明）
-  - `copyPastePreProcessor`（JSON→CSS / import 随动 / TSX+CSS 打包粘贴）
-  - `intentionAction` ×5（Inline 抽取 / 缺失 class 创建 / styles import 自动补 / 预处理互转 / 其它）
+  - `annotator` ×3 + `highlightVisitor`（CSS Module class 置灰 / 重复声明波浪线；Vue/Svelte 内嵌 `<style module>` 场景）
+  - `lineMarkerProvider`（flex/grid 布局 gutter 预览）
+  - `inlayProvider`（尺寸/单位换算助手）
+  - `copyPastePreProcessor`（JSON→CSS / TSX+CSS 打包粘贴）
+  - `intentionAction` ×4（Inline 抽取 / 缺失 class 创建 / styles import 自动补 / 预处理互转）
 - `<actions>`
   - `DashStyle.ExtractColors`：CodeMenu(Generate 之前) + HelpFindAction — **项目颜色 → CSS Variable 抽取**
 
@@ -228,4 +253,4 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 
 ---
 
-*文档版本与 DashStyle v1.2.0 对应。*
+*文档版本与 DashStyle v1.2.1 对应。*
