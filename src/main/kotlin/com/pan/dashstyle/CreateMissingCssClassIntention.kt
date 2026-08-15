@@ -44,6 +44,9 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         val (site, requestedName, existingContainer, _) = locateContext(editor, file) ?: return
         val kebab = if (requestedName.contains("-")) requestedName else Util.camelToKebab(requestedName)
 
+        // 若缺失类名命中内置 Tailwind 原子化类，则生成的 CSS 块用其展开声明替代空块
+        val tailwindCss = TailwindClassResolver.find(kebab)?.css
+
         // 1) 已有直接关联的 CSS Module 容器 → 直接 append
         val container = existingContainer ?: run {
             // 2) 没有容器 → 尝试找同目录候选 module 文件
@@ -91,10 +94,10 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         WriteCommandAction.writeCommandAction(project).withName("Create missing CSS class").run<Nothing> {
             when (container) {
                 is CssModuleResolver.CssContainer.ImportedFile -> {
-                    appendRuleToFile(project, container.psiFile, kebab)
+                    appendRuleToFile(project, container.psiFile, kebab, tailwindCss)
                 }
                 is CssModuleResolver.CssContainer.VueStyleTag -> {
-                    appendRuleToStyleTag(project, container.styleTag, kebab)
+                    appendRuleToStyleTag(project, container.styleTag, kebab, tailwindCss)
                 }
                 else -> {}
             }
@@ -165,9 +168,15 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         return null
     }
 
-    private fun appendRuleToFile(project: Project, psiFile: PsiFile, kebabName: String) {
+    private fun appendRuleToFile(
+        project: Project,
+        psiFile: PsiFile,
+        kebabName: String,
+        tailwindCss: String?
+    ) {
         val factory = PsiFileFactory.getInstance(project)
-        val rule = "\n.$kebabName {\n}\n"
+        val body = tailwindCss?.let { "\n  $it;\n" } ?: ""
+        val rule = "\n.$kebabName {$body}\n"
         val tmp = try {
             factory.createFileFromText("__dashstyle_tmp__.css", CSSLanguage.INSTANCE, rule)
         } catch (_: Throwable) {
@@ -177,9 +186,15 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         if (last != null) psiFile.addAfter(tmp.firstChild, last) else psiFile.add(tmp.firstChild)
     }
 
-    private fun appendRuleToStyleTag(project: Project, styleTag: XmlTag, kebabName: String) {
+    private fun appendRuleToStyleTag(
+        project: Project,
+        styleTag: XmlTag,
+        kebabName: String,
+        tailwindCss: String?
+    ) {
         val factory = PsiFileFactory.getInstance(project)
-        val rule = "\n.$kebabName {\n}\n"
+        val body = tailwindCss?.let { "\n  $it;\n" } ?: ""
+        val rule = "\n.$kebabName {$body}\n"
         val tmp = try {
             factory.createFileFromText("__dashstyle_tmp__.css", CSSLanguage.INSTANCE, rule)
         } catch (_: Throwable) {
