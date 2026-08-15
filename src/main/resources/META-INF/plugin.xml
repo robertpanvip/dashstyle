@@ -180,22 +180,23 @@
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
         <!-- ========================= CSS Flex 布局预览（#8） ========================= -->
-        <!-- 输入时自动更新：InlayHintsProvider 由高亮通道驱动，随编辑实时刷新。
-             在 display:flex 及其 flex 属性行尾渲染迷你布局预览，flex 行额外显示总效果徽标。
+        <!-- 输入时自动更新：把 flex/grid 布局预览渲染到行号前的 gutter（WebStorm 颜色预览式）。
+             在 display:flex/grid 行前渲染总效果图标，在每条布局属性行前渲染聚焦该属性的迷你布局图。
+             点击图标弹出交互面板。gutter 由高亮通道驱动，随编辑实时刷新。
              语言维度注册与 localInspection 同理（CSS/SCSS/LESS/ANY），
-             Kotlin 侧用 isStylesheetLike 实际过滤，避免无关文件被反复触发。 -->
-        <codeInsight.inlayProvider
+             Kotlin 侧用 LayoutContextResolver 实际过滤，避免无关文件被反复触发。 -->
+        <codeInsight.lineMarkerProvider
                 language="CSS"
-                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
-        <codeInsight.inlayProvider
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
                 language="SCSS"
-                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
-        <codeInsight.inlayProvider
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
                 language="LESS"
-                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
-        <codeInsight.inlayProvider
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
                 language="ANY"
-                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
 
         <!-- ========================= CSS 尺寸/单位换算助手 ========================= -->
         <codeInsight.inlayProvider
@@ -210,20 +211,6 @@
         <codeInsight.inlayProvider
                 language="ANY"
                 implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
-
-        <!-- CSS 尺寸/单位换算助手：gutter 色块预览（WebStorm 颜色预览式，行号前小色块+悬浮换算） -->
-        <codeInsight.lineMarkerProvider
-                language="CSS"
-                implementationClass="com.pan.dashstyle.CssUnitGutterMarkerProvider"/>
-        <codeInsight.lineMarkerProvider
-                language="SCSS"
-                implementationClass="com.pan.dashstyle.CssUnitGutterMarkerProvider"/>
-        <codeInsight.lineMarkerProvider
-                language="LESS"
-                implementationClass="com.pan.dashstyle.CssUnitGutterMarkerProvider"/>
-        <codeInsight.lineMarkerProvider
-                language="ANY"
-                implementationClass="com.pan.dashstyle.CssUnitGutterMarkerProvider"/>
 
         <!-- 全局 HighlightVisitor：StaticGlobalHighlightVisitor 按 ReflectorSnifferTest 嗅探到的真实签名
              （com.intellij.codeInsight.daemon.impl.HighlightVisitor，visit 只有 1 个 PsiElement 参数）

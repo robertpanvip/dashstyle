@@ -374,9 +374,9 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             "com.pan.dashstyle.DashStyleDocumentationProvider",
             "com.pan.dashstyle.InlineStyleToCssModuleIntention",
             "com.pan.dashstyle.ExtractColorsAction",
-            "com.pan.dashstyle.LayoutPreviewInlayProvider",
-            "com.pan.dashstyle.CssUnitInlayProvider",
-            "com.pan.dashstyle.CssUnitGutterMarkerProvider"
+            "com.pan.dashstyle.LayoutPreviewPopup",
+            "com.pan.dashstyle.LayoutPreviewGutterMarkerProvider",
+            "com.pan.dashstyle.CssUnitInlayProvider"
         )
         val cl = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
         for (cn in mustLoad) {
@@ -408,53 +408,6 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             DuplicateCssDeclarationsInspection.normalizeSignatureStatic(listOfNotNull(firstDecl))
         }.isSuccess // 不崩就行
         Assert.assertTrue("DuplicateCss normalizer 静态绑定签名匹配", sigSameOk)
-    }
-
-    // ========================================================================
-    // #8. CSS Flex 布局预览：display:flex 行生成「总效果」徽标，
-    //     每个 flex 属性行尾生成迷你预览（用 fake InlayHintsSink 直接驱动 collector）
-    // ========================================================================
-    @Test
-    fun `flex preview provider adds overall badge and per-property inlays`() {
-        val css = myFixture.configureByText(
-            "Flex.module.css",
-            """
-            .toolbar {
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              gap: 12px;
-            }
-            .not-flex {
-              display: block;
-            }
-            """.trimIndent()
-        )
-        val provider = LayoutPreviewInlayProvider()
-        val settings = provider.createSettings()
-        val offsets = mutableListOf<Int>()
-        // 用动态代理实现 InlayHintsSink，只记录 addInlineElement 的首个 int 参数（offset），
-        // 绕开纯 Kotlin collector 调用走哪个重载的签名匹配问题。
-        val sink = java.lang.reflect.Proxy.newProxyInstance(
-            javaClass.classLoader,
-            arrayOf(InlayHintsSink::class.java)
-        ) { _, method, args ->
-            if (method.name == "addInlineElement" && args != null && args.isNotEmpty() && args[0] is Int) {
-                offsets.add(args[0] as Int)
-            }
-            null
-        } as InlayHintsSink
-        val collector = provider.getCollectorFor(css, myFixture.editor, settings, sink)
-
-        ApplicationManager.getApplication().runReadAction { collector.collect(css, myFixture.editor, sink) }
-
-        // 期望：display:flex 行 1 个「总效果」徽标 + justify-content / align-items / gap 共 3 个属性预览
-        Assert.assertEquals(
-            "flex 容器应生成 1 总效果 + 3 属性预览；实际 offsets=$offsets",
-            4, offsets.size
-        )
-        // display:block 的 ruleset 不应生成任何 inlay
-        Assert.assertTrue("非 flex 容器不应生成 inlay", offsets.all { it > 0 })
     }
 
     // ========================================================================
@@ -497,25 +450,26 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     }
 
     // ========================================================================
-    // #10. CSS 单位换算助手 gutter 色块：collectSlowLineMarkers 对可换算声明生成 marker
-    //      （px / rem / clamp / calc 可换算 → 4 个色块；color:red / display:flex 不可换算 → 无）
+    // #10. CSS 布局预览 gutter：collectSlowLineMarkers 对 flex/grid 布局生成 gutter 图标
+    //      （display 行总效果 + 每条布局属性行 → 各 1 个图标；无 flex/grid 的 ruleset → 无图标）
     // ========================================================================
     @Test
-    fun `css unit gutter marker produces swatches for convertible declarations`() {
+    fun `layout preview gutter marker produces icons for flex declarations`() {
         val css = myFixture.configureByText(
-            "Units.module.css",
+            "Layout.module.css",
             """
-            .a {
-              width: 12px;
-              height: 1.5rem;
-              font-size: clamp(16px, 2vw, 24px);
-              margin: calc(100% - 20px);
-              color: red;
+            .toolbar {
               display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 8px;
+            }
+            .plain {
+              color: red;
             }
             """.trimIndent()
         )
-        val provider = CssUnitGutterMarkerProvider()
+        val provider = LayoutPreviewGutterMarkerProvider()
         val markers = mutableListOf<com.intellij.codeInsight.daemon.LineMarkerInfo<*>>()
         val elements = ApplicationManager.getApplication().runReadAction<List<PsiElement>> {
             PsiTreeUtil.findChildrenOfType(css, PsiElement::class.java).toList()
@@ -523,8 +477,41 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         ApplicationManager.getApplication().runReadAction {
             provider.collectSlowLineMarkers(elements, markers)
         }
-        // 可换算声明：width(12px) / height(1.5rem) / font-size(clamp) / margin(calc) → 4 个色块
-        Assert.assertEquals("应生成 4 个可换算色块；实际 markers.size=${markers.size}", 4, markers.size)
-        Assert.assertTrue("每个色块都应带 icon", markers.all { it.icon != null })
+        // display 行 → 总效果图标；justify-content / align-items / gap → 3 个属性图标 = 4 个
+        Assert.assertEquals(
+            "应生成 4 个布局 gutter 图标（display+3 属性）；实际 markers.size=${markers.size}",
+            4, markers.size
+        )
+        Assert.assertTrue("每个图标都应带 icon", markers.all { it.icon != null })
+    }
+
+    // ========================================================================
+    // #11. CSS 布局预览 gutter：grid 同样生成图标，且图标指向可交互的布局模型
+    // ========================================================================
+    @Test
+    fun `layout preview gutter marker produces icons for grid declarations`() {
+        val css = myFixture.configureByText(
+            "Grid.module.css",
+            """
+            .grid {
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 8px;
+            }
+            """.trimIndent()
+        )
+        val provider = LayoutPreviewGutterMarkerProvider()
+        val markers = mutableListOf<com.intellij.codeInsight.daemon.LineMarkerInfo<*>>()
+        val elements = ApplicationManager.getApplication().runReadAction<List<PsiElement>> {
+            PsiTreeUtil.findChildrenOfType(css, PsiElement::class.java).toList()
+        }
+        ApplicationManager.getApplication().runReadAction {
+            provider.collectSlowLineMarkers(elements, markers)
+        }
+        // display 行 → 总效果图标；grid-template-columns / gap → 2 个属性图标 = 3 个
+        Assert.assertEquals(
+            "应生成 3 个 grid gutter 图标（display+2 属性）；实际 markers.size=${markers.size}",
+            3, markers.size
+        )
     }
 }
