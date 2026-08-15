@@ -1,6 +1,7 @@
 package com.pan.dashstyle
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
+import com.intellij.codeInsight.hints.InlayHintsSink
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
@@ -371,7 +372,8 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             "com.pan.dashstyle.DuplicateCssDeclarationsInspection",
             "com.pan.dashstyle.DashStyleDocumentationProvider",
             "com.pan.dashstyle.InlineStyleToCssModuleIntention",
-            "com.pan.dashstyle.ExtractColorsAction"
+            "com.pan.dashstyle.ExtractColorsAction",
+            "com.pan.dashstyle.FlexPreviewInlayProvider"
         )
         val cl = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
         for (cn in mustLoad) {
@@ -403,5 +405,52 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             DuplicateCssDeclarationsInspection.normalizeSignatureStatic(listOfNotNull(firstDecl))
         }.isSuccess // 不崩就行
         Assert.assertTrue("DuplicateCss normalizer 静态绑定签名匹配", sigSameOk)
+    }
+
+    // ========================================================================
+    // #8. CSS Flex 布局预览：display:flex 行生成「总效果」徽标，
+    //     每个 flex 属性行尾生成迷你预览（用 fake InlayHintsSink 直接驱动 collector）
+    // ========================================================================
+    @Test
+    fun `flex preview provider adds overall badge and per-property inlays`() {
+        val css = myFixture.configureByText(
+            "Flex.module.css",
+            """
+            .toolbar {
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              gap: 12px;
+            }
+            .not-flex {
+              display: block;
+            }
+            """.trimIndent()
+        )
+        val provider = FlexPreviewInlayProvider()
+        val settings = provider.createSettings()
+        val offsets = mutableListOf<Int>()
+        // 用动态代理实现 InlayHintsSink，只记录 addInlineElement 的首个 int 参数（offset），
+        // 绕开纯 Kotlin collector 调用走哪个重载的签名匹配问题。
+        val sink = java.lang.reflect.Proxy.newProxyInstance(
+            javaClass.classLoader,
+            arrayOf(InlayHintsSink::class.java)
+        ) { _, method, args ->
+            if (method.name == "addInlineElement" && args != null && args.isNotEmpty() && args[0] is Int) {
+                offsets.add(args[0] as Int)
+            }
+            null
+        } as InlayHintsSink
+        val collector = provider.getCollectorFor(css, myFixture.editor, settings, sink)
+
+        ApplicationManager.getApplication().runReadAction { collector.collect(css, myFixture.editor, sink) }
+
+        // 期望：display:flex 行 1 个「总效果」徽标 + justify-content / align-items / gap 共 3 个属性预览
+        Assert.assertEquals(
+            "flex 容器应生成 1 总效果 + 3 属性预览；实际 offsets=$offsets",
+            4, offsets.size
+        )
+        // display:block 的 ruleset 不应生成任何 inlay
+        Assert.assertTrue("非 flex 容器不应生成 inlay", offsets.all { it > 0 })
     }
 }

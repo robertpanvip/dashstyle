@@ -179,6 +179,24 @@
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
+        <!-- ========================= CSS Flex 布局预览（#8） ========================= -->
+        <!-- 输入时自动更新：InlayHintsProvider 由高亮通道驱动，随编辑实时刷新。
+             在 display:flex 及其 flex 属性行尾渲染迷你布局预览，flex 行额外显示总效果徽标。
+             语言维度注册与 localInspection 同理（CSS/SCSS/LESS/ANY），
+             Kotlin 侧用 isStylesheetLike 实际过滤，避免无关文件被反复触发。 -->
+        <codeInsight.inlayProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="ANY"
+                implementationClass="com.pan.dashstyle.FlexPreviewInlayProvider"/>
+
         <!-- 全局 HighlightVisitor：StaticGlobalHighlightVisitor 按 ReflectorSnifferTest 嗅探到的真实签名
              （com.intellij.codeInsight.daemon.impl.HighlightVisitor，visit 只有 1 个 PsiElement 参数）
              静态实现，专门负责 Vue/Svelte 等带内嵌 <style module> 场景——这些文件的内嵌 CssRuleset 不在
