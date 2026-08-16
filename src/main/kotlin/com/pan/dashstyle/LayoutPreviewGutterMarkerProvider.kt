@@ -99,15 +99,15 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 }
 
 /**
- * gutter 总效果布局预览 icon：在 24×40 内展示 flex/grid 布局的实时预览。
+ * gutter 总效果布局预览 icon：在 35×25 内展示 flex/grid 布局的实时预览。
  * 通过 model.boxes() 获取子项实际摆位，然后缩放到容器内，确保不溢出。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
 ) : Icon {
 
-    override fun getIconWidth(): Int = 24
-    override fun getIconHeight(): Int = 40
+    override fun getIconWidth(): Int = 35
+    override fun getIconHeight(): Int = 25
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
@@ -117,11 +117,11 @@ private class LayoutGutterIcon(
             g2.translate(x, y)
 
             val pad = 2
-            val innerW = 20; val innerH = 36
+            val innerW = 31; val innerH = 21
             // 容器边框
             g2.color = OVERALL_BORDER
             g2.stroke = java.awt.BasicStroke(1.0f)
-            g2.draw(Rectangle2D.Float(pad.toFloat(), pad.toFloat(), 19f, 35f))
+            g2.draw(Rectangle2D.Float(pad.toFloat(), pad.toFloat(), 30f, 20f))
 
             // 获取子项布局，缩放到内区
             val boxes = model.boxes(innerW, innerH)
