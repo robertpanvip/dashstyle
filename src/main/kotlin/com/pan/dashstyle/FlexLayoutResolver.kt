@@ -104,8 +104,9 @@ object FlexLayoutResolver {
         val row = props.direction == Direction.ROW || props.direction == Direction.ROW_REVERSE
         val reverse = props.direction == Direction.ROW_REVERSE || props.direction == Direction.COLUMN_REVERSE
         val P = 4
-        val cw = if (row) 26 else 20
-        val ch = if (row) 20 else 26
+        // 子盒尺寸用小号，让 justify/gap/align 的差异更直观。
+        val cw = if (row) 20 else 14
+        val ch = if (row) 14 else 20
         val mainAvail = if (row) W else H
         val crossAvail = if (row) H else W
         val itemMain = if (row) cw else ch
@@ -113,10 +114,8 @@ object FlexLayoutResolver {
         val gap = props.gap.coerceIn(0, 40)
         fun effAlign(i: Int): Align = props.alignSelfs.getOrNull(i) ?: props.align
 
-        // ---- 换行行数：wrap 时按主轴能容纳的个数拆多行，否则单行 ----
-        val maxPerLine = if (props.wrap) {
-            ((mainAvail - 2 * P + gap) / (itemMain + gap)).coerceAtLeast(1)
-        } else n
+        // ---- 换行行数（预览规则）：nowrap 显示单行，wrap 显示恰好 2 行 ----
+        val maxPerLine = if (props.wrap) ((n + 1) / 2).coerceAtLeast(1) else n
         val lines = ((n + maxPerLine - 1) / maxPerLine).coerceAtLeast(1)
 
         // ---- align-content 决定各行在交叉轴上的分布（仅多行时有意义）----
