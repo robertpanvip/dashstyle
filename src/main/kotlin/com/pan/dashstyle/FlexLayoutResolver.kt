@@ -40,6 +40,7 @@ object FlexLayoutResolver {
     }
 
     fun parseJustify(s: String?, fallback: Justify = Justify.FLEX_START): Justify = when (s?.trim()?.lowercase()) {
+        "flex-start" -> Justify.FLEX_START
         "flex-end" -> Justify.FLEX_END
         "center" -> Justify.CENTER
         "space-between" -> Justify.SPACE_BETWEEN
