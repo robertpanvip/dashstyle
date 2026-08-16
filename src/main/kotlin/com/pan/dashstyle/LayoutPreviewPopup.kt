@@ -83,7 +83,7 @@ object LayoutPreviewPopup {
         private val triggerProperty: String? = null  // 触发属性名，为空表示从 display 行触发
     ) : PopupEditor {
         // align-content 只在 wrap 多行时生效，预览时强制 wrap 让用户看到效果
-        private val state = arrayOf(if (triggerProperty == "align-content") initial.copy(wrap = true) else initial)
+        private val state = arrayOf(initial)
 
         private val justify = JComboBox(arrayOf("flex-start", "flex-end", "center", "space-between", "space-around", "space-evenly"))
         private val align = JComboBox(arrayOf("stretch", "flex-start", "flex-end", "center", "baseline"))
@@ -256,9 +256,10 @@ object LayoutPreviewPopup {
             val showAll = triggerProperty == null
             if (showAll || triggerProperty == "justify-content") addRow("justify-content", justify)
             if (showAll || triggerProperty == "align-items") addRow("align-items", align)
+            // align-content 需要 wrap 多行才生效，同时显示 flex-wrap 控件
             if (showAll || triggerProperty == "align-content") addRow("align-content", alignContent)
             if (showAll || triggerProperty == "flex-direction") addRow("flex-direction", direction)
-            if (showAll || triggerProperty == "flex-wrap") addRow("flex-wrap", wrap)
+            if (showAll || triggerProperty == "flex-wrap" || triggerProperty == "align-content") addRow("flex-wrap", wrap)
             if (showAll || triggerProperty == "gap" || triggerProperty == "row-gap") addRow("gap", gap.view)
 
             val panel = JPanel(BorderLayout(8, 8))
