@@ -118,9 +118,11 @@ object LayoutPreviewPopup {
                 childCount = state[0].childCount,
                 alignSelfs = state[0].alignSelfs
             )
-            preview.revalidate()
-            preview.repaint()
             apply()
+            javax.swing.SwingUtilities.invokeLater {
+                preview.revalidate()
+                preview.repaint()
+            }
         }
 
         /** 拖动反向推断：拖空白整组（X 改 justify / Y 改 align）；拖单个子项改该子项 align-self。 */
@@ -320,9 +322,11 @@ object LayoutPreviewPopup {
                 alignContent = GridLayoutResolver.parseAlign(alignContent.selectedItem?.toString(), state[0].alignContent),
                 childCount = state[0].childCount
             )
-            preview.revalidate()
-            preview.repaint()
             apply()
+            javax.swing.SwingUtilities.invokeLater {
+                preview.revalidate()
+                preview.repaint()
+            }
         }
 
         /** 拖动反向推断：拖分隔线改轨道尺寸；拖空白整组改 justify-content / align-content。 */
