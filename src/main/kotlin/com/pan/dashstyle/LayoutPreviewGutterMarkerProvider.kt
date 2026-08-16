@@ -100,15 +100,15 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 
 /**
  * gutter 总效果布局预览 icon：根据实际布局模型渲染子块位置。
- * 仅用于 `display:flex/grid` 行，18×18 紧凑显示。
+ * 仅用于 `display:flex/grid` 行，24×24 紧凑显示。
  * 完整布局预览在 tooltip 中展示。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
 ) : Icon {
 
-    override fun getIconWidth(): Int = 18
-    override fun getIconHeight(): Int = 18
+    override fun getIconWidth(): Int = 24
+    override fun getIconHeight(): Int = 24
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
@@ -116,23 +116,24 @@ private class LayoutGutterIcon(
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
             val pad = 2
+            val childMargin = 1 // 子块与容器边框之间的内边距，避免子块溢出
             val innerW = getIconWidth() - pad * 2
             val innerH = getIconHeight() - pad * 2
             // 容器边框（强调色）
             g2.color = OVERALL_BORDER
-            g2.stroke = java.awt.BasicStroke(0.8f)
+            g2.stroke = java.awt.BasicStroke(1.0f)
             g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(),
                 (innerW - 1).toFloat(), (innerH - 1).toFloat()))
-            // 子块：根据实际布局模型摆位
+            // 子块：根据实际布局模型摆位，内部缩进 childMargin 避免溢出边框
             g2.color = OVERALL_CHILD
             for (b in model.boxes(innerW, innerH)) {
-                val bw = b.w.coerceAtLeast(2)
-                val bh = b.h.coerceAtLeast(2)
+                val bw = (b.w - childMargin * 2).coerceAtLeast(2)
+                val bh = (b.h - childMargin * 2).coerceAtLeast(2)
                 if (bw <= 0 || bh <= 0) continue
                 g2.fill(RoundRectangle2D.Float(
-                    (x + pad + b.x).toFloat(),
-                    (y + pad + b.y).toFloat(),
-                    bw.toFloat(), bh.toFloat(), 1f, 1f))
+                    (x + pad + b.x + childMargin).toFloat(),
+                    (y + pad + b.y + childMargin).toFloat(),
+                    bw.toFloat(), bh.toFloat(), 2f, 2f))
             }
         } finally {
             g2.dispose()
