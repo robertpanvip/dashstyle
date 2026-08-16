@@ -56,40 +56,39 @@ class StaticGlobalHighlightVisitor : HighlightVisitor, PossiblyDumbAware {
 
     // ========================= HighlightVisitor 真实签名（WS-2025.3） =========================
     override fun suitableForFile(file: PsiFile): Boolean {
+        // 注意：plugin.xml 里这个 visitor 目前已经被注释掉（2026-08-14 修复「普通 TS 高亮全没了」）。
+        // 如果以后重新启用，suitableForFile 必须严格限制在「有真正内嵌 CssRuleset 注入」的文件后缀里，
+        // 绝不可以包含 .tsx / .jsx / .html —— 否则 WS-2025.3 的 GeneralHighlightingPass 只要在
+        // 该文件的 HighlightVisitor 链里被任何异常打断就会「整片高亮消失」。
         val name = file.name?.lowercase().orEmpty()
-        // 只对"可能内嵌 <style>"的宿主文件返回 true，避免在每个 JSX/TSX 大文件上按元素走 visit()。
+// 只对"可能内嵌 <style>"的宿主文件返回 true，避免在每个 JSX/TSX 大文件上按元素走 visit()。
         // Vue / Svelte / Astro / Html 内嵌 CSS 的 annotator 语言过滤可能命中不了，HighlightVisitor 才需要兜底；
         // 纯 .css/.scss/.less（有 annotator）以及 .tsx/.jsx（样式来自 .module.*，无内嵌 <style>）不在此列。
         return name.endsWith(".vue") || name.endsWith(".svelte") || name.endsWith(".astro") ||
-                name.endsWith(".html") || name.endsWith(".htm")
+                name.endsWith(".html") || name.endsWith(".htm") ||
+                name.endsWith(".vue.ts") // 一些插件会生成虚拟文件名（只接受 vue 派生）
     }
 
     override fun visit(element: PsiElement) {
-        // 真实签名无 AnnotationHolder 第二个参数 → 需要 IDE 的 AnnotationHolder/Session 绑定到当前 AnnotationSession
-        // 直接复用 DashStyleHighlightAnnotator 的逻辑，但通过"从 PsiElement.project 获取 annotation service"的思路：
-        // 最简单且跨版本稳的办法：通过 com.intellij.lang.annotation.AnnotationSessionKt.getHolder(element) 或
-        //   holderProvider 在 element 上找。但高版本 IDE 中 AnnotationHolder 已经被拆成 builder 模式，
-        //   所以这里**保守做法**：只对真正内嵌在非 CSS 文件的 CssRuleset 才画，
-        //   复用 UnusedCssModuleClassInspection 的 registerProblem(LIKE_UNUSED_SYMBOL) 路径，
-        //   它不依赖 holder——inspection 的 QuickFix 会自然触发 problem highlight。
-        val rs = element as? CssRuleset ?: return
-        val containingFile = rs.containingFile ?: return
+        val rs = runCatching { element as? CssRuleset }.getOrNull() ?: return
+        val containingFile = runCatching { rs.containingFile }.getOrNull() ?: return
         val fileName = containingFile.name?.lowercase().orEmpty()
-        val isEmbedded = fileName.endsWith(".vue") || fileName.endsWith(".svelte") || fileName.endsWith(".astro")
-        if (!isEmbedded) return // 纯 CSS 文件走 annotator 就够了
+        // 只处理真正有内嵌 <style module> 的文件类型（Vue / Svelte / Astro）
+        val isEmbedded = fileName.endsWith(".vue") || fileName.endsWith(".svelte") || fileName.endsWith(".astro") ||
+                fileName.endsWith(".vue.ts")
+        if (!isEmbedded) return
 
-        val markKey = System.identityHashCode(rs) * 31 + (containingFile.virtualFile?.path?.hashCode() ?: 0)
-        val already = alreadyDrawnThreadLocal.get()
+        val markKey = try {
+            System.identityHashCode(rs) * 31 + (containingFile.virtualFile?.path?.hashCode() ?: 0)
+        } catch (_: Throwable) {
+            System.identityHashCode(rs)
+        }
+        val already = runCatching { alreadyDrawnThreadLocal.get() }.getOrNull() ?: return
         if (!already.add(markKey)) return
 
-        // 走 Inspection 的 registerProblem，问题展示由 IDE 的 GeneralHighlightingPass 统一渲染（不需要我们拿 holder）
-        val project = rs.project
-        runCatching {
-            unusedInspection.inspectRulesetAndRegisterProblems(rs, project)
-        }
-        runCatching {
-            duplicateInspection.inspectRulesetAndRegisterProblems(rs, project)
-        }
+        val project = runCatching { rs.project }.getOrNull() ?: return
+        runCatching { unusedInspection.inspectRulesetAndRegisterProblems(rs, project) }
+        runCatching { duplicateInspection.inspectRulesetAndRegisterProblems(rs, project) }
     }
 
     override fun clone(): HighlightVisitor = StaticGlobalHighlightVisitor()
@@ -104,15 +103,25 @@ class StaticGlobalHighlightVisitor : HighlightVisitor, PossiblyDumbAware {
         holder: com.intellij.codeInsight.daemon.impl.analysis.HighlightInfoHolder,
         action: Runnable
     ): Boolean {
-        // 返回 false：使用默认实现（即 suitableForFile → 遍历整棵 PsiTree，对每个 PsiElement 调 visit(element)）
-        // 如果我们要完全自定义访问顺序才会返回 true 并自己遍历
+        // 强防御：任何 Throwable 都不能 propagate，否则会把默认高亮 pass 干掉，
+        // 造成「TS 文件所有高亮全没了」的严重症状。
         try {
-            // 每次 analyze 开始前清空"已画缓存"（因为 holder 是新的一次 daemon pass）
-            alreadyDrawnThreadLocal.get().clear()
-            action.run()
+            val set = runCatching { alreadyDrawnThreadLocal.get() }.getOrNull()
+            set?.clear()
+            try {
+                action.run()
+            } catch (t: Throwable) {
+                // 外部传入的 action 内部出错（比如后续 visitor 炸了），我们也兜住抛回给上层之前
+                // 先清 ThreadLocal，避免内存泄漏 + 下次 daemon pass 脏缓存
+                runCatching { alreadyDrawnThreadLocal.remove() }
+                throw t
+            }
+        } catch (_: Throwable) {
+            // 自己内部的错误，绝对不能把异常带出 analyze()
         } finally {
-            alreadyDrawnThreadLocal.remove()
+            runCatching { alreadyDrawnThreadLocal.remove() }
         }
+        // 返回 false：让默认实现继续走树遍历 / 后续 visitor 继续处理
         return false
     }
 
