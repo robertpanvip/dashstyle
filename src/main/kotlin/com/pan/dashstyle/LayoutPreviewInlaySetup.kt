@@ -100,7 +100,7 @@ private class LayoutHintCollector(
     private var mouseListenerRegistered = false
 
     override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
-        if (element !== file) return false
+        // 不检查 element !== file，直接处理所有元素
         // 注册鼠标监听（仅一次）
         if (!mouseListenerRegistered) {
             ClickHandlerRegistry.register(editor, file)
@@ -111,19 +111,19 @@ private class LayoutHintCollector(
             // overall 布局预览（display:flex/grid 行）
             val model = previewModelFor(ctx.overall)
             sink.addInlineElement(
-                ctx.display.textRange.endOffset, false,
+                ctx.display.textRange.endOffset, true,
                 OverallPreviewPresentation(model), false
             )
             // 属性简便图标（justify-content / align-items / gap 等）
             for ((d, m) in ctx.perProperty) {
                 val propName = d.propertyName?.trim()?.lowercase() ?: ""
                 sink.addInlineElement(
-                    d.textRange.endOffset, false,
+                    d.textRange.endOffset, true,
                     PropertyPreviewPresentation(propName, m), false
                 )
             }
         }
-        return false
+        return true
     }
 
     private fun previewModelFor(model: LayoutModel): LayoutModel {
