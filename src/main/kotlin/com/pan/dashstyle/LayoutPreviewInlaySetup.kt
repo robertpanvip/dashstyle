@@ -143,6 +143,7 @@ class LayoutPreviewInlaySetup : ProjectManagerListener {
         val inlay = editor.inlayModel.addInlineElement(
             decl.textRange.endOffset,
             true,
+            0,
             PropertyPreviewRenderer(propName, model)
         )
         if (inlay != null) {
@@ -279,23 +280,37 @@ class LayoutPreviewInlaySetup : ProjectManagerListener {
             }
         }
 
+        private fun flexProps(model: LayoutModel): FlexLayoutResolver.Props? =
+            (model as? LayoutModel.Flex)?.props
+
+        private fun gridProps(model: LayoutModel): GridLayoutResolver.Props? =
+            (model as? LayoutModel.Grid)?.props
+
         /**
-         * justify-content 图标：水平方向，3 个小方块按 justify 值摆放。
-         * flex-start → 左；center → 中；flex-end → 右；space-between/around/evenly → 均匀分布
+         * justify-content 图标：水平方向，小方块按 justify/justifyContent 值摆放。
+         * 支持 flex 和 grid 两种模型。
          */
         private fun drawJustifyIcon(g2: Graphics2D, x: Int, y: Int, w: Int, h: Int, model: LayoutModel) {
-            val props = (model as? LayoutModel.Flex)?.props ?: return
             val boxW = 6
             val boxH = (h * 0.6).toInt().coerceAtLeast(4)
             val boxY = y + (h - boxH) / 2
-            val positions = when (props.justify) {
-                FlexLayoutResolver.Justify.FLEX_START -> listOf(0)
-                FlexLayoutResolver.Justify.CENTER -> listOf((w - boxW) / 2)
-                FlexLayoutResolver.Justify.FLEX_END -> listOf(w - boxW)
-                FlexLayoutResolver.Justify.SPACE_BETWEEN -> listOf(0, w - boxW)
-                FlexLayoutResolver.Justify.SPACE_AROUND -> listOf(0, w - boxW)
-                FlexLayoutResolver.Justify.SPACE_EVENLY -> listOf(0, w - boxW)
-            }
+            val positions = flexProps(model)?.let { fp ->
+                when (fp.justify) {
+                    FlexLayoutResolver.Justify.FLEX_START -> listOf(0)
+                    FlexLayoutResolver.Justify.CENTER -> listOf((w - boxW) / 2)
+                    FlexLayoutResolver.Justify.FLEX_END -> listOf(w - boxW)
+                    FlexLayoutResolver.Justify.SPACE_BETWEEN -> listOf(0, w - boxW)
+                    FlexLayoutResolver.Justify.SPACE_AROUND -> listOf(0, w - boxW)
+                    FlexLayoutResolver.Justify.SPACE_EVENLY -> listOf(0, w - boxW)
+                }
+            } ?: gridProps(model)?.let { gp ->
+                when (gp.justifyContent) {
+                    GridLayoutResolver.GridAlign.START -> listOf(0)
+                    GridLayoutResolver.GridAlign.CENTER -> listOf((w - boxW) / 2)
+                    GridLayoutResolver.GridAlign.END -> listOf(w - boxW)
+                    GridLayoutResolver.GridAlign.STRETCH -> listOf(0, w - boxW)
+                }
+            } ?: return
             g2.color = PROP_CHILD
             for (px in positions) {
                 g2.fill(RoundRectangle2D.Float(
@@ -304,49 +319,54 @@ class LayoutPreviewInlaySetup : ProjectManagerListener {
         }
 
         /**
-         * align-items 图标：垂直方向，3 个小方块按 align 值摆放。
+         * align-items 图标：垂直方向，小方块按 align/alignItems 值摆放。
+         * 支持 flex 和 grid 两种模型。
          */
         private fun drawAlignIcon(g2: Graphics2D, x: Int, y: Int, w: Int, h: Int, model: LayoutModel) {
-            val props = (model as? LayoutModel.Flex)?.props ?: return
             val boxW = (w * 0.6).toInt().coerceAtLeast(4)
             val boxH = 6
             val boxX = x + (w - boxW) / 2
-            val positions = when (props.align) {
-                FlexLayoutResolver.Align.FLEX_START -> listOf(0)
-                FlexLayoutResolver.Align.CENTER, FlexLayoutResolver.Align.BASELINE -> listOf((h - boxH) / 2)
-                FlexLayoutResolver.Align.FLEX_END -> listOf(h - boxH)
-                FlexLayoutResolver.Align.STRETCH -> listOf(0)
-            }
+            val (py, bh) = flexProps(model)?.let { fp ->
+                when (fp.align) {
+                    FlexLayoutResolver.Align.FLEX_START -> Pair(0, boxH)
+                    FlexLayoutResolver.Align.CENTER, FlexLayoutResolver.Align.BASELINE -> Pair((h - boxH) / 2, boxH)
+                    FlexLayoutResolver.Align.FLEX_END -> Pair(h - boxH, boxH)
+                    FlexLayoutResolver.Align.STRETCH -> Pair(0, h)
+                }
+            } ?: gridProps(model)?.let { gp ->
+                when (gp.alignItems) {
+                    GridLayoutResolver.GridAlign.START -> Pair(0, boxH)
+                    GridLayoutResolver.GridAlign.CENTER -> Pair((h - boxH) / 2, boxH)
+                    GridLayoutResolver.GridAlign.END -> Pair(h - boxH, boxH)
+                    GridLayoutResolver.GridAlign.STRETCH -> Pair(0, h)
+                }
+            } ?: return
             g2.color = PROP_CHILD
-            for (py in positions) {
-                val bh = if (props.align == FlexLayoutResolver.Align.STRETCH) h else boxH
-                g2.fill(RoundRectangle2D.Float(
-                    boxX.toFloat(), (y + py).toFloat(), boxW.toFloat(), bh.toFloat(), 1.5f, 1.5f))
-            }
+            g2.fill(RoundRectangle2D.Float(
+                boxX.toFloat(), (y + py).toFloat(), boxW.toFloat(), bh.toFloat(), 1.5f, 1.5f))
         }
 
         /**
          * gap 图标：两个小方块，中间间距表示 gap 大小。
+         * 支持 flex 和 grid 两种模型。
          */
         private fun drawGapIcon(g2: Graphics2D, x: Int, y: Int, w: Int, h: Int, model: LayoutModel) {
-            val props = (model as? LayoutModel.Flex)?.props ?: return
+            val gapVal = flexProps(model)?.gap ?: gridProps(model)?.gap ?: return
             val boxW = 6
             val boxH = (h * 0.6).toInt().coerceAtLeast(4)
             val boxY = y + (h - boxH) / 2
-            val gapNorm = props.gap.coerceIn(0, 20)
+            val gapNorm = gapVal.coerceIn(0, 20)
             val gapPx = (gapNorm.toFloat() / 20 * (w - boxW * 2)).toInt().coerceAtLeast(2)
 
             g2.color = PROP_CHILD
-            // 左方块
             g2.fill(RoundRectangle2D.Float(
                 x.toFloat(), boxY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
-            // 右方块
             g2.fill(RoundRectangle2D.Float(
                 (x + boxW + gapPx).toFloat(), boxY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
         }
 
         private fun drawDirectionIcon(g2: Graphics2D, x: Int, y: Int, w: Int, h: Int, model: LayoutModel) {
-            val props = (model as? LayoutModel.Flex)?.props ?: return
+            val props = flexProps(model) ?: return
             val isRow = props.direction == FlexLayoutResolver.Direction.ROW ||
                     props.direction == FlexLayoutResolver.Direction.ROW_REVERSE
             g2.color = PROP_CHILD
@@ -364,18 +384,16 @@ class LayoutPreviewInlaySetup : ProjectManagerListener {
         }
 
         private fun drawWrapIcon(g2: Graphics2D, x: Int, y: Int, w: Int, h: Int, model: LayoutModel) {
-            val props = (model as? LayoutModel.Flex)?.props ?: return
+            val props = flexProps(model) ?: return
             val pw = (w * 0.2).toInt().coerceAtLeast(3)
             val ph = (h * 0.3).toInt().coerceAtLeast(3)
             g2.color = PROP_CHILD
             if (props.wrap) {
-                // 两行排列
                 g2.fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), pw.toFloat(), ph.toFloat(), 1f, 1f))
                 g2.fill(RoundRectangle2D.Float((x + pw + 2).toFloat(), y.toFloat(), pw.toFloat(), ph.toFloat(), 1f, 1f))
                 g2.fill(RoundRectangle2D.Float(x.toFloat(), (y + ph + 2).toFloat(), pw.toFloat(), ph.toFloat(), 1f, 1f))
                 g2.fill(RoundRectangle2D.Float((x + pw + 2).toFloat(), (y + ph + 2).toFloat(), pw.toFloat(), ph.toFloat(), 1f, 1f))
             } else {
-                // 单行排列
                 g2.fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), pw.toFloat(), ph.toFloat(), 1f, 1f))
                 g2.fill(RoundRectangle2D.Float((x + pw + 2).toFloat(), y.toFloat(), pw.toFloat(), ph.toFloat(), 1f, 1f))
                 g2.fill(RoundRectangle2D.Float((x + (pw + 2) * 2).toFloat(), y.toFloat(), pw.toFloat(), ph.toFloat(), 1f, 1f))
@@ -383,16 +401,24 @@ class LayoutPreviewInlaySetup : ProjectManagerListener {
         }
 
         private fun drawAlignContentIcon(g2: Graphics2D, x: Int, y: Int, w: Int, h: Int, model: LayoutModel) {
-            val props = (model as? LayoutModel.Flex)?.props ?: return
             val boxW = (w * 0.35).toInt().coerceAtLeast(4)
             val boxH = (h * 0.25).toInt().coerceAtLeast(3)
+            val positions = flexProps(model)?.let { fp ->
+                when (fp.alignContent) {
+                    FlexLayoutResolver.AlignContent.FLEX_START -> listOf(0, h / 2)
+                    FlexLayoutResolver.AlignContent.CENTER -> listOf(h / 4, h * 3 / 4 - boxH)
+                    FlexLayoutResolver.AlignContent.FLEX_END -> listOf(h - boxH * 2, h - boxH)
+                    else -> listOf(0, h / 2)
+                }
+            } ?: gridProps(model)?.let { gp ->
+                when (gp.alignContent) {
+                    GridLayoutResolver.GridAlign.START -> listOf(0, h / 2)
+                    GridLayoutResolver.GridAlign.CENTER -> listOf(h / 4, h * 3 / 4 - boxH)
+                    GridLayoutResolver.GridAlign.END -> listOf(h - boxH * 2, h - boxH)
+                    GridLayoutResolver.GridAlign.STRETCH -> listOf(0, h / 2)
+                }
+            } ?: return
             g2.color = PROP_CHILD
-            val positions = when (props.alignContent) {
-                FlexLayoutResolver.AlignContent.FLEX_START -> listOf(0, h / 2)
-                FlexLayoutResolver.AlignContent.CENTER -> listOf(h / 4, h * 3 / 4 - boxH)
-                FlexLayoutResolver.AlignContent.FLEX_END -> listOf(h - boxH * 2, h - boxH)
-                else -> listOf(0, h / 2)
-            }
             for (py in positions) {
                 g2.fill(RoundRectangle2D.Float(x.toFloat(), (y + py).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             }
