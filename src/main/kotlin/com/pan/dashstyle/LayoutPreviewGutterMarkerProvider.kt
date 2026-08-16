@@ -116,11 +116,11 @@ private class LayoutGutterIcon(
             val pad = 2
             // 容器边框（强调色）
             g2.color = OVERALL_BORDER
-            g2.draw(Rectangle2D.Float(x + pad, y + pad, 11f, 11f))
+            g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(), 11f, 11f))
             // 2 个简化子块，不依赖 FlexLayoutResolver 摆位
             g2.color = OVERALL_CHILD
-            g2.fill(RoundRectangle2D.Float(x + pad + 1, y + pad + 2, 3f, 7f, 1f, 1f))
-            g2.fill(RoundRectangle2D.Float(x + pad + 6, y + pad + 2, 3f, 7f, 1f, 1f))
+            g2.fill(RoundRectangle2D.Float((x + pad + 1).toFloat(), (y + pad + 2).toFloat(), 3f, 7f, 1f, 1f))
+            g2.fill(RoundRectangle2D.Float((x + pad + 6).toFloat(), (y + pad + 2).toFloat(), 3f, 7f, 1f, 1f))
         } finally {
             g2.dispose()
         }

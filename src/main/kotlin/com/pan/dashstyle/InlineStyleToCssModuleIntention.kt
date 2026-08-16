@@ -59,7 +59,12 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         // 写操作都要求 EDT，因此统一切到 EDT 再执行。
         val app = ApplicationManager.getApplication()
         if (!app.isDispatchThread) {
-            app.invokeAndWait { invoke(project, editor, file) }
+            // 修复：从 read-action 中调用 invokeAndWait 可能导致死锁
+            if (app.isReadAccessAllowed) {
+                app.invokeLater { invoke(project, editor, file) }
+            } else {
+                app.invokeAndWait { invoke(project, editor, file) }
+            }
             return
         }
         val offset = editor.caretModel.offset
