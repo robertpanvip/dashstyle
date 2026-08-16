@@ -98,21 +98,21 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 /**
  * gutter 总效果布局预览 icon：小容器 + 内部子块布局。
  * 仅用于 `display:flex/grid` 行，展示完整的 flex/grid 排列效果。
- * 尺寸 24×24 以在 gutter 内紧凑展示，不挤占行号。
+ * 尺寸 32×32 以容纳 FlexLayoutResolver 的固定子项大小（26×20）。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
 ) : Icon {
 
-    override fun getIconWidth(): Int = 24
-    override fun getIconHeight(): Int = 24
+    override fun getIconWidth(): Int = 32
+    override fun getIconHeight(): Int = 32
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-            val pad = 2
+            val pad = 3
             val boxW = iconWidth - pad * 2
             val boxH = iconHeight - pad * 2
             // 容器边框（强调色）
