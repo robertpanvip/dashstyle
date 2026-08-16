@@ -44,18 +44,30 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
         val contexts = LayoutContextResolver.contexts(file)
         if (contexts.isEmpty()) return
 
-        // 只显示 display:flex/grid 行的总效果图标，不显示每个属性的独立图标
+        // 声明 → (模型, 是否总效果图标)
+        val declToModel = HashMap<CssDeclaration, Pair<LayoutModel, Boolean>>()
+        for (ctx in contexts) {
+            declToModel[ctx.display] = ctx.overall to true
+            for ((d, model) in ctx.perProperty) declToModel[d] = model to false
+        }
+
         for (element in elements) {
             if (element !is CssDeclaration) continue
-            val ctx = contexts.firstOrNull { it.display == element } ?: continue
+            val (model, overall) = declToModel[element] ?: continue
             val leaf = PsiTreeUtil.getDeepestFirst(element) ?: continue
             val ruleset = PsiTreeUtil.getParentOfType(element, CssRuleset::class.java) ?: continue
+            val propName = element.propertyName?.trim()?.lowercase().orEmpty()
+            val icon = if (overall) {
+                LayoutGutterIcon(model)
+            } else {
+                PerPropertyGutterIcon(propName)
+            }
             val marker = LineMarkerInfo(
                 leaf,
                 leaf.textRange,
-                LayoutGutterIcon(ctx.overall),
-                { LayoutPreviewTooltip.html(ctx.overall, true) },
-                openPopupHandler(ruleset, ctx.overall),
+                icon,
+                { LayoutPreviewTooltip.html(model, overall) },
+                openPopupHandler(ruleset, model, propName.takeIf { !overall }),
                 GutterIconRenderer.Alignment.LEFT
             )
             result.add(marker)
@@ -68,14 +80,15 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 
     private fun openPopupHandler(
         ruleset: CssRuleset,
-        model: LayoutModel
+        model: LayoutModel,
+        triggerProperty: String? = null
     ): GutterIconNavigationHandler<PsiElement> {
         return object : GutterIconNavigationHandler<PsiElement> {
             override fun navigate(e: java.awt.event.MouseEvent, element: PsiElement) {
                 val doc = element.containingFile?.viewProvider?.document
                 val editor = doc?.let { EditorFactory.getInstance().getEditors(it).firstOrNull() }
                 if (editor != null && e.component != null) {
-                    val popup = LayoutPreviewPopup.create(editor, ruleset, model)
+                    val popup = LayoutPreviewPopup.create(editor, ruleset, model, triggerProperty)
                     popup.showInScreenCoordinates(e.component, e.locationOnScreen)
                 }
             }
