@@ -99,9 +99,9 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 }
 
 /**
- * gutter 总效果布局预览 icon：根据实际布局模型渲染子块位置。
- * 仅用于 `display:flex/grid` 行，24×24 紧凑显示。
- * 完整布局预览在 tooltip 中展示。
+ * gutter 总效果布局预览 icon：在 24×24 内画一个简化的 flex/grid 容器 + 小方块。
+ * 不依赖 model.boxes()（FlexLayoutResolver 内部硬编码子项 26×20，对 gutter 来说太大），
+ * 固定画 2 个小方块表示子项，简单且不溢出。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
@@ -115,29 +115,26 @@ private class LayoutGutterIcon(
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-            // viewBox: 平移原点至 (x, y)，之后所有坐标都相对于 (0,0)
             g2.translate(x, y)
 
-            val pad = 2
-            val innerW = getIconWidth() - pad * 2  // 20
-            val innerH = getIconHeight() - pad * 2  // 20
             // 容器边框
             g2.color = OVERALL_BORDER
             g2.stroke = java.awt.BasicStroke(1.0f)
-            g2.draw(Rectangle2D.Float(pad.toFloat(), pad.toFloat(),
-                (innerW - 1).toFloat(), (innerH - 1).toFloat()))
-            // 子块：限制最大尺寸，让子块看起来是小方块而非填满容器
+            g2.draw(Rectangle2D.Float(2f, 2f, 19f, 19f))
+
+            // 两个小方块，始终在容器内居中
+            val isRow = model is LayoutModel.Flex && model.props.direction in listOf(
+                FlexLayoutResolver.Direction.ROW, FlexLayoutResolver.Direction.ROW_REVERSE
+            )
             g2.color = OVERALL_CHILD
-            val maxChildW = (innerW * 0.45).toInt().coerceAtLeast(4)
-            val maxChildH = (innerH * 0.7).toInt().coerceAtLeast(4)
-            for (b in model.boxes(innerW, innerH)) {
-                var bw = b.w.coerceAtMost(maxChildW).coerceAtLeast(2)
-                var bh = b.h.coerceAtMost(maxChildH).coerceAtLeast(2)
-                val cx = b.x + (b.w - bw) / 2
-                val cy = b.y + (b.h - bh) / 2
-                g2.fill(RoundRectangle2D.Float(
-                    (pad + cx).toFloat(), (pad + cy).toFloat(),
-                    bw.toFloat(), bh.toFloat(), 2f, 2f))
+            if (isRow) {
+                // 水平排列：两个小方块并排
+                g2.fill(RoundRectangle2D.Float(5f, 7f, 5f, 8f, 2f, 2f))
+                g2.fill(RoundRectangle2D.Float(13f, 7f, 5f, 8f, 2f, 2f))
+            } else {
+                // 垂直排列：两个小方块上下叠
+                g2.fill(RoundRectangle2D.Float(7f, 5f, 8f, 5f, 2f, 2f))
+                g2.fill(RoundRectangle2D.Float(7f, 13f, 8f, 5f, 2f, 2f))
             }
         } finally {
             g2.dispose()
