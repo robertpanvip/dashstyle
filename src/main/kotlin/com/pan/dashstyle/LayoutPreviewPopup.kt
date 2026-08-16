@@ -109,12 +109,12 @@ object LayoutPreviewPopup {
 
         private fun refresh() {
             state[0] = FlexLayoutResolver.Props(
-                direction = FlexLayoutResolver.parseDirection(direction.selectedItem as? String, state[0].direction),
-                justify = FlexLayoutResolver.parseJustify(justify.selectedItem as? String, state[0].justify),
-                align = FlexLayoutResolver.parseAlign(align.selectedItem as? String, state[0].align),
-                alignContent = FlexLayoutResolver.parseAlignContent(alignContent.selectedItem as? String, state[0].alignContent),
+                direction = FlexLayoutResolver.parseDirection(direction.selectedItem?.toString(), state[0].direction),
+                justify = FlexLayoutResolver.parseJustify(justify.selectedItem?.toString(), state[0].justify),
+                align = FlexLayoutResolver.parseAlign(align.selectedItem?.toString(), state[0].align),
+                alignContent = FlexLayoutResolver.parseAlignContent(alignContent.selectedItem?.toString(), state[0].alignContent),
                 gap = gap.value.coerceIn(0, 40),
-                wrap = (wrap.selectedItem as? String) == "wrap",
+                wrap = (wrap.selectedItem?.toString()) == "wrap",
                 childCount = state[0].childCount,
                 alignSelfs = state[0].alignSelfs
             )
@@ -227,12 +227,16 @@ object LayoutPreviewPopup {
         private fun current(): LayoutModel.Flex = LayoutModel.Flex(state[0])
 
         private fun apply() {
-            val project = editor.project ?: return
-            val block = rs.block ?: return
-            WriteCommandAction.runWriteCommandAction(project) {
-                applyFlex(block, state[0], triggerProperty)
+        val project = editor.project ?: return
+        val block = rs.block ?: return
+        WriteCommandAction.runWriteCommandAction(project) {
+            applyFlex(block, state[0], triggerProperty)
+            val doc = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(rs.containingFile)
+            if (doc != null) {
+                com.intellij.psi.PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(doc)
             }
         }
+    }
 
         override fun build(): JBPopup {
             val form = JPanel(GridBagLayout())
@@ -610,21 +614,19 @@ object LayoutPreviewPopup {
     private fun setOrAdd(block: CssBlock, name: String, value: String) {
         val existing = block.findDeclaration(name)
         if (existing != null) {
-            // 直接替换 value 元素的文本
+            // 优先用 document.replaceString 替换 value 文本
             val valueNode = existing.value
-            if (valueNode != null) {
+            val project = block.project
+            val doc = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(block.containingFile)
+            if (valueNode != null && doc != null) {
+                val range = valueNode.textRange
                 val oldText = valueNode.text
                 val newText = if (oldText.startsWith("\"")) "\"$value\"" else value
                 if (oldText != newText) {
-                    val range = valueNode.textRange
-                    val document = com.intellij.psi.PsiDocumentManager.getInstance(block.project).getDocument(block.containingFile)
-                    if (document != null) {
-                        document.replaceString(range.startOffset, range.endOffset, newText)
-                    } else {
-                        valueNode.replace(valueNode)
-                    }
+                    doc.replaceString(range.startOffset, range.endOffset, newText)
                 }
             } else {
+                // 回退到 setValue API
                 existing.setValue(value)
             }
         } else {
