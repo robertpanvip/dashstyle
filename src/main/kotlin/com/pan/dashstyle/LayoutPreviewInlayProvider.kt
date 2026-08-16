@@ -75,9 +75,11 @@ class LayoutPreviewInlayProvider : InlayHintsProvider<LayoutPreviewInlayProvider
         sink: InlayHintsSink
     ): InlayHintsCollector {
         return object : InlayHintsCollector {
+            private var collected = false
+
             override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
-                if (element !== file) return false
-                if (!settings.showLayoutPreview) return false
+                if (collected || !settings.showLayoutPreview) return false
+                collected = true
                 val contexts = LayoutContextResolver.contexts(file)
                 for (ctx in contexts) {
                     // 在 display:flex/grid 行尾渲染总效果预览
