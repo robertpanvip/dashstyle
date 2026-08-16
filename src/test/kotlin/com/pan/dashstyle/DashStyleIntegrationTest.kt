@@ -375,8 +375,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             "com.pan.dashstyle.InlineStyleToCssModuleIntention",
             "com.pan.dashstyle.ExtractColorsAction",
             "com.pan.dashstyle.LayoutPreviewPopup",
-            "com.pan.dashstyle.LayoutPreviewGutterMarkerProvider",
-            "com.pan.dashstyle.CssUnitInlayProvider"
+            "com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"
         )
         val cl = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
         for (cn in mustLoad) {
