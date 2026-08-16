@@ -218,8 +218,18 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 }
                 cur is XmlAttribute -> {
                     val n = cur.name
-                    if (n == "style" || n == ":style" || n == "v-bind:style")
-                        return StyleAttrLoc(cur, StyleAttrLoc.Lang.VUE, xmlAttribute = cur)
+                    if (n == "style" || n == ":style" || n == "v-bind:style") {
+                        // 某些 IntelliJ 版本中 JSX 属性可能被解析为 XmlAttribute，
+                        // 此时需根据文件扩展名判断语言类型，避免 React 项目误生成 Vue 语法
+                        val ext = file?.virtualFile?.extension?.lowercase()
+                        val lang = when {
+                            ext == "vue" -> StyleAttrLoc.Lang.VUE
+                            n == ":style" || n == "v-bind:style" -> StyleAttrLoc.Lang.VUE
+                            ext in listOf("tsx", "jsx", "ts", "js") -> StyleAttrLoc.Lang.JSX_TSX
+                            else -> StyleAttrLoc.Lang.VUE
+                        }
+                        return StyleAttrLoc(cur, lang, xmlAttribute = cur)
+                    }
                 }
             }
             // 兜底：当前节点文本或其祖先文本包含 style=...（支持光标在 value 内部节点深处）
@@ -515,7 +525,15 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         val file = loc.attrPsi.containingFile ?: return
         val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
 
-        when (loc.sourceLanguage) {
+        // 根据文件扩展名确认语言类型，避免因 PSI 检测错误导致在 React 中生成 Vue 语法
+        val ext = file.virtualFile?.extension?.lowercase()
+        val effectiveLang = when {
+            ext == "vue" -> StyleAttrLoc.Lang.VUE
+            ext in listOf("tsx", "jsx", "ts", "js") -> StyleAttrLoc.Lang.JSX_TSX
+            else -> loc.sourceLanguage
+        }
+
+        when (effectiveLang) {
             StyleAttrLoc.Lang.JSX_TSX -> {
                 val parent = loc.attrPsi.parent
                 val existingClassName = findClassNameAttr(parent)
