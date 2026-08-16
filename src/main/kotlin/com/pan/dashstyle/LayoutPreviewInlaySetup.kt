@@ -98,10 +98,12 @@ private class LayoutHintCollector(
 
     /** 延迟注册鼠标监听（只注册一次）。 */
     private var mouseListenerRegistered = false
+    /** 是否已添加 inlay，防止重复处理。 */
+    private var collected = false
 
     override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
-        // 只处理文件根元素，由框架保证只调用一次
-        if (element !== file) return false
+        if (collected) return false
+        collected = true
         // 注册鼠标监听（仅一次）
         if (!mouseListenerRegistered) {
             ClickHandlerRegistry.register(editor, file)
