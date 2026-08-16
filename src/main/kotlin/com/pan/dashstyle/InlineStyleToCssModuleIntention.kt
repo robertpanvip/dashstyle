@@ -59,12 +59,11 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         // 写操作都要求 EDT，因此统一切到 EDT 再执行。
         val app = ApplicationManager.getApplication()
         if (!app.isDispatchThread) {
-            // 修复：从 read-action 中调用 invokeAndWait 可能导致死锁
-            if (app.isReadAccessAllowed) {
-                app.invokeLater { invoke(project, editor, file) }
-            } else {
-                app.invokeAndWait { invoke(project, editor, file) }
-            }
+            // 当在后台线程且有 read-access 时（文件副本上的意图预览/分析），
+            // 直接返回，不执行任何操作。实际意图执行会在 EDT 上重新调用。
+            // 不能使用 invokeLater，因为框架会将其视为 side effect 并报错。
+            if (app.isReadAccessAllowed) return
+            app.invokeAndWait { invoke(project, editor, file) }
             return
         }
         val offset = editor.caretModel.offset
