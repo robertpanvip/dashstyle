@@ -144,9 +144,11 @@ object ClickHandlerRegistry {
             override fun mouseClicked(event: EditorMouseEvent) {
                 val e = event.mouseEvent
                 if (e.clickCount < 1) return
-                // 只处理 inlay 上的点击，通过 inlay 的 offset 精确匹配
-                val inlay = event.inlay ?: return
-                val clickOffset = inlay.offset
+
+                // 优先用 event.inlay 精确匹配，为 null 时回退到 offset 匹配
+                val inlay = event.inlay
+                val clickOffset = inlay?.offset
+                    ?: editor.logicalPositionToOffset(editor.xyToLogicalPosition(e.point))
 
                 val contexts = LayoutContextResolver.contexts(file)
                 for (ctx in contexts) {
