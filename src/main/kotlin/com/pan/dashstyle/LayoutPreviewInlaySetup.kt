@@ -71,7 +71,7 @@ class CssLayoutPreviewInlayProvider : InlayHintsProvider<CssLayoutPreviewInlayPr
     ): InlayHintsCollector? {
         if (!settings.showLayoutPreview) return null
         if (!isStylesheetLike(file)) return null
-        return LayoutHintCollector(file, editor, sink)
+        return LayoutHintCollector(file, editor)
     }
 
     private fun isStylesheetLike(file: PsiFile): Boolean {
@@ -92,28 +92,25 @@ class CssLayoutPreviewInlayProvider : InlayHintsProvider<CssLayoutPreviewInlayPr
  */
 private class LayoutHintCollector(
     private val file: PsiFile,
-    private val editor: Editor,
-    private val sink: InlayHintsSink
+    private val editor: Editor
 ) : InlayHintsCollector {
 
-    override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
-        // 用文件级标志位防止重复处理（跨 collector 实例）
-        if (PROCESSED_FILES.containsKey(file)) return false
-        PROCESSED_FILES[file] = Unit
+    private var collected = false
 
-        // 注册鼠标监听（仅一次）
+    override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
+        if (collected) return false
+        collected = true
+
         ClickHandlerRegistry.register(editor, file)
 
         val addedOffsets = HashSet<Int>()
         val contexts = LayoutContextResolver.contexts(file)
         for (ctx in contexts) {
-            // overall 布局预览（display:flex/grid 行）
             val off = ctx.display.textRange.endOffset
             if (addedOffsets.add(off)) {
                 val model = previewModelFor(ctx.overall)
                 sink.addInlineElement(off, false, OverallPreviewPresentation(model), false)
             }
-            // 属性简便图标（justify-content / align-items / gap 等）
             for ((d, m) in ctx.perProperty) {
                 val propOff = d.textRange.endOffset
                 if (addedOffsets.add(propOff)) {
@@ -125,16 +122,8 @@ private class LayoutHintCollector(
         return false
     }
 
-    private fun previewModelFor(model: LayoutModel): LayoutModel {
-        return when (model) {
-            is LayoutModel.Flex -> LayoutModel.Flex(model.props.copy(childCount = 3))
-            else -> model
-        }
-    }
-
-    companion object {
-        private val PROCESSED_FILES = java.util.WeakHashMap<PsiFile, Unit>()
-    }
+    private fun previewModelFor(model: LayoutModel): LayoutModel =
+        if (model is LayoutModel.Flex) LayoutModel.Flex(model.props.copy(childCount = 3)) else model
 }
 
 /**
