@@ -116,7 +116,6 @@ private class LayoutGutterIcon(
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
             val pad = 2
-            val childMargin = 1 // 子块与容器边框之间的内边距，避免子块溢出
             val innerW = getIconWidth() - pad * 2
             val innerH = getIconHeight() - pad * 2
             // 容器边框（强调色）
@@ -124,15 +123,19 @@ private class LayoutGutterIcon(
             g2.stroke = java.awt.BasicStroke(1.0f)
             g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(),
                 (innerW - 1).toFloat(), (innerH - 1).toFloat()))
-            // 子块：根据实际布局模型摆位，内部缩进 childMargin 避免溢出边框
+            // 子块：根据实际布局模型摆位，但限制最大尺寸让子块看起来是小方块而非填满容器
             g2.color = OVERALL_CHILD
+            val maxChildW = (innerW * 0.45).toInt().coerceAtLeast(4)
+            val maxChildH = (innerH * 0.7).toInt().coerceAtLeast(4)
             for (b in model.boxes(innerW, innerH)) {
-                val bw = (b.w - childMargin * 2).coerceAtLeast(2)
-                val bh = (b.h - childMargin * 2).coerceAtLeast(2)
-                if (bw <= 0 || bh <= 0) continue
+                var bw = b.w.coerceAtMost(maxChildW).coerceAtLeast(2)
+                var bh = b.h.coerceAtMost(maxChildH).coerceAtLeast(2)
+                // 在原始位置内居中
+                val cx = b.x + (b.w - bw) / 2
+                val cy = b.y + (b.h - bh) / 2
                 g2.fill(RoundRectangle2D.Float(
-                    (x + pad + b.x + childMargin).toFloat(),
-                    (y + pad + b.y + childMargin).toFloat(),
+                    (x + pad + cx).toFloat(),
+                    (y + pad + cy).toFloat(),
                     bw.toFloat(), bh.toFloat(), 2f, 2f))
             }
         } finally {
