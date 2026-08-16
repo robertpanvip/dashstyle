@@ -34,13 +34,15 @@ import kotlin.math.abs
  *  - 实时画布：随控件调整即时重绘布局（复用 LayoutModel 的摆位逻辑）
  *  - 按容器类型的属性控件（flex：主轴/交叉轴；grid：轨道/对齐）
  *  - 「应用到样式」按钮：把当前值写回 CSS ruleset（已存在改值，缺失则新增）
+ *
+ * @param triggerProperty 触发该弹窗的属性名（如 "align-items"，为空表示从 display 行触发）
  */
 object LayoutPreviewPopup {
 
-    fun create(editor: Editor, rs: CssRuleset, model: LayoutModel): JBPopup {
+    fun create(editor: Editor, rs: CssRuleset, model: LayoutModel, triggerProperty: String? = null): JBPopup {
         val content: PopupEditor = when (model) {
-            is LayoutModel.Flex -> FlexEditor(editor, rs, model.props)
-            is LayoutModel.Grid -> GridEditor(editor, rs, model.props)
+            is LayoutModel.Flex -> FlexEditor(editor, rs, model.props, triggerProperty)
+            is LayoutModel.Grid -> GridEditor(editor, rs, model.props, triggerProperty)
         }
         return content.build()
     }
@@ -77,7 +79,8 @@ object LayoutPreviewPopup {
     private class FlexEditor(
         private val editor: Editor,
         private val rs: CssRuleset,
-        initial: FlexLayoutResolver.Props
+        initial: FlexLayoutResolver.Props,
+        private val triggerProperty: String? = null  // 触发属性名，为空表示从 display 行触发
     ) : PopupEditor {
         private val state = arrayOf(initial)
 
@@ -227,7 +230,7 @@ object LayoutPreviewPopup {
             val project = editor.project ?: return
             val block = rs.block ?: return
             WriteCommandAction.runWriteCommandAction(project) {
-                applyFlex(block, state[0])
+                applyFlex(block, state[0], triggerProperty)
             }
         }
 
@@ -241,21 +244,24 @@ object LayoutPreviewPopup {
                 c.gridx = 1; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1.0
                 form.add(comp, c); row++
             }
-            addRow("justify-content", justify)
-            addRow("align-items", align)
-            addRow("align-content", alignContent)
-            addRow("flex-direction", direction)
-            addRow("flex-wrap", wrap)
-            addRow("gap", gap.view)
+            // 根据触发属性显示对应控件，null（display 行触发）显示全部
+            val showAll = triggerProperty == null
+            if (showAll || triggerProperty == "justify-content") addRow("justify-content", justify)
+            if (showAll || triggerProperty == "align-items") addRow("align-items", align)
+            if (showAll || triggerProperty == "align-content") addRow("align-content", alignContent)
+            if (showAll || triggerProperty == "flex-direction") addRow("flex-direction", direction)
+            if (showAll || triggerProperty == "flex-wrap") addRow("flex-wrap", wrap)
+            if (showAll || triggerProperty == "gap" || triggerProperty == "row-gap") addRow("gap", gap.view)
 
             val panel = JPanel(BorderLayout(8, 8))
             panel.border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
             panel.add(preview, BorderLayout.NORTH)
             panel.add(form, BorderLayout.CENTER)
 
+            val title = if (showAll) "Flex 布局预览" else "Flex 布局预览 — $triggerProperty"
             return JBPopupFactory.getInstance()
                 .createComponentPopupBuilder(panel, justify)
-                .setTitle("Flex 布局预览")
+                .setTitle(title)
                 .setMovable(true).setResizable(false).setCancelKeyEnabled(true)
                 .createPopup()
         }
@@ -267,7 +273,8 @@ object LayoutPreviewPopup {
     private class GridEditor(
         private val editor: Editor,
         private val rs: CssRuleset,
-        initial: GridLayoutResolver.Props
+        initial: GridLayoutResolver.Props,
+        private val triggerProperty: String? = null
     ) : PopupEditor {
         private val state = arrayOf(initial)
 
@@ -409,7 +416,7 @@ object LayoutPreviewPopup {
             val project = editor.project ?: return
             val block = rs.block ?: return
             WriteCommandAction.runWriteCommandAction(project) {
-                applyGrid(block, state[0])
+                applyGrid(block, state[0], triggerProperty)
             }
         }
 
@@ -425,22 +432,24 @@ object LayoutPreviewPopup {
                 c.gridx = 1; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1.0
                 form.add(comp, c); row++
             }
-            addRow("columns(1fr)", columns.view)
-            addRow("rows(1fr)", rows.view)
-            addRow("gap", gap.view)
-            addRow("justify-items", justifyItems)
-            addRow("align-items", alignItems)
-            addRow("justify-content", justifyContent)
-            addRow("align-content", alignContent)
+            val showAll = triggerProperty == null
+            if (showAll || triggerProperty == "grid-template-columns") addRow("columns(1fr)", columns.view)
+            if (showAll || triggerProperty == "grid-template-rows") addRow("rows(1fr)", rows.view)
+            if (showAll || triggerProperty == "gap" || triggerProperty == "column-gap") addRow("gap", gap.view)
+            if (showAll || triggerProperty == "justify-items") addRow("justify-items", justifyItems)
+            if (showAll || triggerProperty == "align-items") addRow("align-items", alignItems)
+            if (showAll || triggerProperty == "justify-content") addRow("justify-content", justifyContent)
+            if (showAll || triggerProperty == "align-content") addRow("align-content", alignContent)
 
             val panel = JPanel(BorderLayout(8, 8))
             panel.border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
             panel.add(preview, BorderLayout.NORTH)
             panel.add(form, BorderLayout.CENTER)
 
+            val title = if (showAll) "Grid 布局预览" else "Grid 布局预览 — $triggerProperty"
             return JBPopupFactory.getInstance()
                 .createComponentPopupBuilder(panel, columns.view)
-                .setTitle("Grid 布局预览")
+                .setTitle(title)
                 .setMovable(true).setResizable(false).setCancelKeyEnabled(true)
                 .createPopup()
         }
@@ -576,23 +585,25 @@ object LayoutPreviewPopup {
         }
     }
 
-    private fun applyFlex(block: CssBlock, props: FlexLayoutResolver.Props) {
-        setOrAdd(block, "justify-content", props.justify.cssValue())
-        setOrAdd(block, "align-items", props.align.cssValue())
-        setOrAdd(block, "align-content", props.alignContent.cssValue())
-        setOrAdd(block, "flex-direction", props.direction.cssValue())
-        setOrAdd(block, "flex-wrap", if (props.wrap) "wrap" else "nowrap")
-        setOrAdd(block, "gap", "${props.gap}px")
+    private fun applyFlex(block: CssBlock, props: FlexLayoutResolver.Props, triggerProperty: String? = null) {
+        val showAll = triggerProperty == null
+        if (showAll || triggerProperty == "justify-content") setOrAdd(block, "justify-content", props.justify.cssValue())
+        if (showAll || triggerProperty == "align-items") setOrAdd(block, "align-items", props.align.cssValue())
+        if (showAll || triggerProperty == "align-content") setOrAdd(block, "align-content", props.alignContent.cssValue())
+        if (showAll || triggerProperty == "flex-direction") setOrAdd(block, "flex-direction", props.direction.cssValue())
+        if (showAll || triggerProperty == "flex-wrap") setOrAdd(block, "flex-wrap", if (props.wrap) "wrap" else "nowrap")
+        if (showAll || triggerProperty == "gap" || triggerProperty == "row-gap") setOrAdd(block, "gap", "${props.gap}px")
     }
 
-    private fun applyGrid(block: CssBlock, props: GridLayoutResolver.Props) {
-        setOrAdd(block, "grid-template-columns", tracksString(props.columns))
-        setOrAdd(block, "grid-template-rows", tracksString(props.rows))
-        setOrAdd(block, "justify-items", props.justifyItems.cssValue())
-        setOrAdd(block, "align-items", props.alignItems.cssValue())
-        setOrAdd(block, "justify-content", props.justifyContent.cssValue())
-        setOrAdd(block, "align-content", props.alignContent.cssValue())
-        setOrAdd(block, "gap", "${props.gap}px")
+    private fun applyGrid(block: CssBlock, props: GridLayoutResolver.Props, triggerProperty: String? = null) {
+        val showAll = triggerProperty == null
+        if (showAll || triggerProperty == "grid-template-columns") setOrAdd(block, "grid-template-columns", tracksString(props.columns))
+        if (showAll || triggerProperty == "grid-template-rows") setOrAdd(block, "grid-template-rows", tracksString(props.rows))
+        if (showAll || triggerProperty == "gap" || triggerProperty == "column-gap") setOrAdd(block, "gap", "${props.gap}px")
+        if (showAll || triggerProperty == "justify-items") setOrAdd(block, "justify-items", props.justifyItems.cssValue())
+        if (showAll || triggerProperty == "align-items") setOrAdd(block, "align-items", props.alignItems.cssValue())
+        if (showAll || triggerProperty == "justify-content") setOrAdd(block, "justify-content", props.justifyContent.cssValue())
+        if (showAll || triggerProperty == "align-content") setOrAdd(block, "align-content", props.alignContent.cssValue())
     }
 
     @Suppress("DEPRECATION")

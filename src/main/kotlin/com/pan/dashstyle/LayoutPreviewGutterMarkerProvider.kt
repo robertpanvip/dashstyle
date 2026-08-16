@@ -67,7 +67,7 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
                 leaf.textRange,
                 icon,
                 { LayoutPreviewTooltip.html(model, overall) },
-                openPopupHandler(ruleset, model),
+                openPopupHandler(ruleset, model, propName.takeIf { !overall }),
                 GutterIconRenderer.Alignment.LEFT
             )
             result.add(marker)
@@ -80,14 +80,15 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 
     private fun openPopupHandler(
         ruleset: CssRuleset,
-        model: LayoutModel
+        model: LayoutModel,
+        triggerProperty: String? = null
     ): GutterIconNavigationHandler<PsiElement> {
         return object : GutterIconNavigationHandler<PsiElement> {
             override fun navigate(e: java.awt.event.MouseEvent, element: PsiElement) {
                 val doc = element.containingFile?.viewProvider?.document
                 val editor = doc?.let { EditorFactory.getInstance().getEditors(it).firstOrNull() }
                 if (editor != null && e.component != null) {
-                    val popup = LayoutPreviewPopup.create(editor, ruleset, model)
+                    val popup = LayoutPreviewPopup.create(editor, ruleset, model, triggerProperty)
                     popup.showInScreenCoordinates(e.component, e.locationOnScreen)
                 }
             }
@@ -96,39 +97,30 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 }
 
 /**
- * gutter 总效果布局预览 icon：小容器 + 内部子块布局。
- * 仅用于 `display:flex/grid` 行，展示完整的 flex/grid 排列效果。
- * 尺寸 32×32 以容纳 FlexLayoutResolver 的固定子项大小（26×20）。
+ * gutter 总效果布局预览 icon：简化版容器 + 2 个子块。
+ * 仅用于 `display:flex/grid` 行，16×16 紧凑显示不占行号空间。
+ * 完整布局预览在 tooltip 中展示。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
 ) : Icon {
 
-    override fun getIconWidth(): Int = 32
-    override fun getIconHeight(): Int = 32
+    override fun getIconWidth(): Int = 16
+    override fun getIconHeight(): Int = 16
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-            val pad = 3
-            val boxW = iconWidth - pad * 2
-            val boxH = iconHeight - pad * 2
+            val pad = 2
             // 容器边框（强调色）
             g2.color = OVERALL_BORDER
-            g2.draw(Rectangle2D.Float(x + pad.toFloat(), y + pad.toFloat(), boxW - 1f, boxH - 1f))
-            // 子块
-            val boxes = model.boxes(boxW, boxH)
+            g2.draw(Rectangle2D.Float(x + pad, y + pad, 11f, 11f))
+            // 2 个简化子块，不依赖 FlexLayoutResolver 摆位
             g2.color = OVERALL_CHILD
-            for (b in boxes) {
-                val bx = x + pad + b.x
-                val by = y + pad + b.y
-                val bw = b.w - 1
-                val bh = b.h - 1
-                if (bw <= 0 || bh <= 0) continue
-                g2.fill(RoundRectangle2D.Float(bx.toFloat(), by.toFloat(), bw.toFloat(), bh.toFloat(), 1.5f, 1.5f))
-            }
+            g2.fill(RoundRectangle2D.Float(x + pad + 1, y + pad + 2, 3f, 7f, 1f, 1f))
+            g2.fill(RoundRectangle2D.Float(x + pad + 6, y + pad + 2, 3f, 7f, 1f, 1f))
         } finally {
             g2.dispose()
         }
