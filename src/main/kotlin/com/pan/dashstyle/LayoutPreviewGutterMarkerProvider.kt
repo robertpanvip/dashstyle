@@ -99,9 +99,8 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 }
 
 /**
- * gutter 总效果布局预览 icon：在 24×24 内画一个简化的 flex/grid 容器 + 小方块。
- * 不依赖 model.boxes()（FlexLayoutResolver 内部硬编码子项 26×20，对 gutter 来说太大），
- * 固定画 2 个小方块表示子项，简单且不溢出。
+ * gutter 总效果布局预览 icon：在 24×24 内展示 flex/grid 布局的实时预览。
+ * 通过 model.boxes() 获取子项实际摆位，然后缩放到容器内，确保不溢出。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
@@ -117,24 +116,37 @@ private class LayoutGutterIcon(
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
             g2.translate(x, y)
 
+            val pad = 2
+            val innerW = 20; val innerH = 20
             // 容器边框
             g2.color = OVERALL_BORDER
             g2.stroke = java.awt.BasicStroke(1.0f)
-            g2.draw(Rectangle2D.Float(2f, 2f, 19f, 19f))
+            g2.draw(Rectangle2D.Float(pad.toFloat(), pad.toFloat(), 19f, 19f))
 
-            // 两个小方块，始终在容器内居中
-            val isRow = model is LayoutModel.Flex && model.props.direction in listOf(
-                FlexLayoutResolver.Direction.ROW, FlexLayoutResolver.Direction.ROW_REVERSE
-            )
+            // 获取子项布局，缩放到内区
+            val boxes = model.boxes(innerW, innerH)
+            if (boxes.isEmpty()) return
+
+            val minX = boxes.minOf { it.x }
+            val minY = boxes.minOf { it.y }
+            val maxX = boxes.maxOf { it.x + it.w }
+            val maxY = boxes.maxOf { it.y + it.h }
+            val bbW = (maxX - minX).coerceAtLeast(1)
+            val bbH = (maxY - minY).coerceAtLeast(1)
+            // 缩放因子：让整个布局以 85% 比例放入内区
+            val scale = minOf(innerW.toFloat() / bbW, innerH.toFloat() / bbH) * 0.85f
+            val scaledW = (bbW * scale).toInt()
+            val scaledH = (bbH * scale).toInt()
+            val offX = pad + (innerW - scaledW) / 2
+            val offY = pad + (innerH - scaledH) / 2
+
             g2.color = OVERALL_CHILD
-            if (isRow) {
-                // 水平排列：两个小方块并排
-                g2.fill(RoundRectangle2D.Float(5f, 7f, 5f, 8f, 2f, 2f))
-                g2.fill(RoundRectangle2D.Float(13f, 7f, 5f, 8f, 2f, 2f))
-            } else {
-                // 垂直排列：两个小方块上下叠
-                g2.fill(RoundRectangle2D.Float(7f, 5f, 8f, 5f, 2f, 2f))
-                g2.fill(RoundRectangle2D.Float(7f, 13f, 8f, 5f, 2f, 2f))
+            for (b in boxes) {
+                val sx = offX + ((b.x - minX) * scale).toInt()
+                val sy = offY + ((b.y - minY) * scale).toInt()
+                val sw = ((b.w * scale).coerceAtLeast(2.0f)).toInt()
+                val sh = ((b.h * scale).coerceAtLeast(2.0f)).toInt()
+                g2.fill(RoundRectangle2D.Float(sx.toFloat(), sy.toFloat(), sw.toFloat(), sh.toFloat(), 2f, 2f))
             }
         } finally {
             g2.dispose()
