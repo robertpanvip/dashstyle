@@ -16,7 +16,6 @@ import com.intellij.psi.PsiFile
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.ui.JBColor
 import java.awt.Color
-import java.awt.Font
 import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.geom.RoundRectangle2D
@@ -140,6 +139,9 @@ private class LayoutHintCollector(
 
 /**
  * 鼠标点击处理器，用于 inlay 点击弹出布局调整面板。
+ *
+ * 通过 [EditorMouseEvent.inlay] 精确定位被点击的 inlay，
+ * 再按 inlay offset 精确匹配对应的 CssDeclaration，避免模糊范围错位。
  */
 object ClickHandlerRegistry {
 
@@ -151,12 +153,15 @@ object ClickHandlerRegistry {
             override fun mouseClicked(event: EditorMouseEvent) {
                 val e = event.mouseEvent
                 if (e.clickCount < 1) return
-                val offset = editor.logicalPositionToOffset(editor.xyToLogicalPosition(e.point))
+                // 只处理 inlay 上的点击，通过 inlay 的 offset 精确匹配
+                val inlay = event.inlay ?: return
+                val clickOffset = inlay.offset
+
                 val contexts = LayoutContextResolver.contexts(file)
                 for (ctx in contexts) {
-                    // 先检查子属性（justify-content / align-items / gap 等），避免 +30 范围覆盖 display 的弹出
+                    // 先检查子属性（justify-content / align-items / gap 等）
                     for ((d, m) in ctx.perProperty) {
-                        if (offsetInRange(offset, d)) {
+                        if (clickOffset == d.textRange.endOffset) {
                             val propName = d.propertyName?.trim()?.lowercase() ?: ""
                             val popup = LayoutPreviewPopup.create(editor, ctx.ruleset, m, propName)
                             popup.showInBestPositionFor(editor)
@@ -164,7 +169,8 @@ object ClickHandlerRegistry {
                             return
                         }
                     }
-                    if (offsetInRange(offset, ctx.display)) {
+                    // 再检查 display
+                    if (clickOffset == ctx.display.textRange.endOffset) {
                         val popup = LayoutPreviewPopup.create(editor, ctx.ruleset, ctx.overall)
                         popup.showInBestPositionFor(editor)
                         e.consume()
@@ -174,10 +180,6 @@ object ClickHandlerRegistry {
             }
         }
         editor.addEditorMouseListener(listener)
-    }
-
-    private fun offsetInRange(offset: Int, decl: CssDeclaration): Boolean {
-        return offset >= decl.textRange.startOffset && offset <= decl.textRange.endOffset + 30
     }
 }
 
