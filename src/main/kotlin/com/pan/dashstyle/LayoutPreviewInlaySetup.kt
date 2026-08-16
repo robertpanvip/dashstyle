@@ -154,12 +154,7 @@ object ClickHandlerRegistry {
                 val offset = editor.logicalPositionToOffset(editor.xyToLogicalPosition(e.point))
                 val contexts = LayoutContextResolver.contexts(file)
                 for (ctx in contexts) {
-                    if (offsetInRange(offset, ctx.display)) {
-                        val popup = LayoutPreviewPopup.create(editor, ctx.ruleset, ctx.overall)
-                        popup.showInBestPositionFor(editor)
-                        e.consume()
-                        return
-                    }
+                    // 先检查子属性（justify-content / align-items / gap 等），避免 +30 范围覆盖 display 的弹出
                     for ((d, m) in ctx.perProperty) {
                         if (offsetInRange(offset, d)) {
                             val propName = d.propertyName?.trim()?.lowercase() ?: ""
@@ -168,6 +163,12 @@ object ClickHandlerRegistry {
                             e.consume()
                             return
                         }
+                    }
+                    if (offsetInRange(offset, ctx.display)) {
+                        val popup = LayoutPreviewPopup.create(editor, ctx.ruleset, ctx.overall)
+                        popup.showInBestPositionFor(editor)
+                        e.consume()
+                        return
                     }
                 }
             }
@@ -188,16 +189,16 @@ private class OverallPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 86
+    override val width: Int get() = 90
     override val height: Int get() = 30
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-        val pad = 2
+        val pad = 4
         val innerW = width - pad * 2   // 82
-        val innerH = height - pad * 2  // 26
+        val innerH = height - pad * 2  // 22
 
         // 边框居中
         g2d.color = OVERALL_BORDER
@@ -244,18 +245,18 @@ private class PropertyPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 56
+    override val width: Int get() = 60
     override val height: Int get() = 20
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-        val pad = 2
+        val pad = 4
         val w = width
         val h = height
         val innerW = w - pad * 2   // 52
-        val innerH = h - pad * 2   // 16
+        val innerH = h - pad * 2   // 12
 
         // 边框居中
         g2d.color = PROP_BORDER
@@ -266,9 +267,9 @@ private class PropertyPreviewPresentation(
 
         // 图标在边框内居中（与之前一致的绘制区域大小）
         val iconW = innerW - 10   // 42
-        val iconH = innerH - 4    // 12
-        val cx = pad + (innerW - iconW) / 2  // 7
-        val cy = pad + (innerH - iconH) / 2  // 4
+        val iconH = innerH - 4    // 8
+        val cx = pad + (innerW - iconW) / 2  // 9
+        val cy = pad + (innerH - iconH) / 2  // 6
 
         when (propName) {
             "justify-content" -> drawJustifyIcon(g2d, cx, cy, iconW, iconH)
