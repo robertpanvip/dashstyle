@@ -212,9 +212,8 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         val textM2 = styleTag.javaClass.methods.firstOrNull { it.name == "getText" && it.parameterCount == 0 }
         if (textM2 != null) {
             textM2.isAccessible = true
-            (textM2.invoke(styleTag) as? CharSequence)?.toString()
-        } else null
-        ?: ""
+            (textM2.invoke(styleTag) as? CharSequence)?.toString() ?: ""
+        } else ""
     }.getOrDefault("")
 
     private fun replaceTagInnerTextViaReflection(styleTag: PsiElement, file: PsiFile, newText: String) {
