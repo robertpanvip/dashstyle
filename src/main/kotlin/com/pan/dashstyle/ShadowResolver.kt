@@ -1,6 +1,7 @@
 package com.pan.dashstyle
 
 import java.awt.Color
+import kotlin.math.roundToInt
 
 /**
  * CSS 阴影（box-shadow / text-shadow）解析与预览元数据 —— 纯逻辑层（不依赖 IDE SDK）。
@@ -144,7 +145,12 @@ object CssColorParser {
                 val a = hex[3].toString().repeat(2).toInt(16)
                 Color(r, g, b, a)
             }
-            6 -> Color(hex.toInt(16) or (0xFF shl 24))
+            6 -> {
+                val r = hex.substring(0, 2).toInt(16)
+                val g = hex.substring(2, 4).toInt(16)
+                val b = hex.substring(4, 6).toInt(16)
+                Color(r, g, b)
+            }
             8 -> {
                 val r = hex.substring(0, 2).toInt(16)
                 val g = hex.substring(2, 4).toInt(16)
@@ -161,15 +167,15 @@ object CssColorParser {
         val parts = m.groupValues[1].split(Regex(""",\s*""")).map { it.trim() }
         if (parts.size < 3) return null
         fun chan(s: String): Int {
-            if (s.endsWith('%')) return (s.dropLast(1).toDoubleOrNull()?.times(2.55))?.let { Math.round(it).toInt() }?.coerceIn(0, 255) ?: 0
+            if (s.endsWith('%')) return (s.dropLast(1).toDoubleOrNull()?.let { it * 255.0 / 100.0 })?.let { Math.round(it).toInt() }?.coerceIn(0, 255) ?: 0
             return s.toDoubleOrNull()?.toInt()?.coerceIn(0, 255) ?: 0
         }
         val r = chan(parts[0]); val g = chan(parts[1]); val b = chan(parts[2])
         var a = 255
         if (parts.size >= 4) {
             val raw = parts[3]
-            a = if (raw.endsWith('%')) (raw.dropLast(1).toDoubleOrNull()?.times(2.55))?.toInt()?.coerceIn(0, 255) ?: 255
-            else (raw.toDoubleOrNull()?.times(255))?.toInt()?.coerceIn(0, 255) ?: 255
+            a = if (raw.endsWith('%')) (raw.dropLast(1).toDoubleOrNull()?.let { it * 255.0 / 100.0 })?.let { Math.round(it).toInt() }?.coerceIn(0, 255) ?: 255
+            else (raw.toDoubleOrNull()?.times(255))?.let { Math.round(it).toInt() }?.coerceIn(0, 255) ?: 255
         }
         return Color(r, g, b, a)
     }
@@ -184,7 +190,7 @@ object CssColorParser {
         var a = 255
         if (parts.size >= 4) {
             val raw = parts[3]
-            a = (raw.removeSuffix("%").toDoubleOrNull()?.let { if (raw.endsWith('%')) it * 2.55 else it * 255 })?.toInt()?.coerceIn(0, 255) ?: 255
+            a = (raw.removeSuffix("%").toDoubleOrNull()?.let { if (raw.endsWith('%')) it * 255.0 / 100.0 else it * 255 })?.let { Math.round(it).toInt() }?.coerceIn(0, 255) ?: 255
         }
         val c = hslToRgb(h % 360, sPct / 100.0, lPct / 100.0)
         return Color(c[0], c[1], c[2], a)
@@ -205,9 +211,9 @@ object CssColorParser {
         }
         val m = l - c / 2
         return intArrayOf(
-            ((r1 + m) * 255).toInt().coerceIn(0, 255),
-            ((g1 + m) * 255).toInt().coerceIn(0, 255),
-            ((b1 + m) * 255).toInt().coerceIn(0, 255)
+            ((r1 + m) * 255).roundToInt().coerceIn(0, 255),
+            ((g1 + m) * 255).roundToInt().coerceIn(0, 255),
+            ((b1 + m) * 255).roundToInt().coerceIn(0, 255)
         )
     }
 

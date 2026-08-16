@@ -26,7 +26,8 @@ class ShadowResolverTest {
         assertEquals(4.0, l.offsetY)
         assertEquals(6.0, l.blur)
         assertEquals(8.0, l.spread)
-        assertEquals(Color(0, 0, 0, 127), l.color)
+        // rgba(0,0,0,0.5): 0.5 * 255 = 127.5 → Math.round = 128
+        assertEquals(Color(0, 0, 0, 128), l.color)
     }
 
     @Test
@@ -43,7 +44,8 @@ class ShadowResolverTest {
         assertEquals(2, layers.size)
         assertEquals(3.0, layers[0].blur)
         assertEquals(1.0, layers[1].spread)
-        assertEquals(Color(0, 0, 255, 76), layers[1].color)
+        // rgba(0,0,255,.3): 0.3 * 255 = 76.5 → Math.round = 77
+        assertEquals(Color(0, 0, 255, 77), layers[1].color)
     }
 
     @Test

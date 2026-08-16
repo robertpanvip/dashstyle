@@ -44,7 +44,8 @@ class ShadowColorParserTest {
 
     @Test
     fun `parse rgba with decimal alpha`() {
-        assertEquals(Color(10, 20, 30, 127), CssColorParser.parse("rgba(10,20,30,0.5)"))
+        // 0.5 * 255 = 127.5 → Math.round = 128
+        assertEquals(Color(10, 20, 30, 128), CssColorParser.parse("rgba(10,20,30,0.5)"))
         assertEquals(Color(10, 20, 30, 255), CssColorParser.parse("rgba(10,20,30,1)"))
         assertEquals(Color(10, 20, 30, 0), CssColorParser.parse("rgba(10,20,30,0)"))
     }

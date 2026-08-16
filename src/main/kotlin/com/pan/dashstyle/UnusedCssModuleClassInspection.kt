@@ -170,8 +170,9 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
         // 匹配 .foo-bar 或 &-suffix 展开前/后的 kebab-case 选择器中的 class 名（不含伪类/伪元素）
         private val MODULE_CLASS_RE = Regex("""(^|[^\w-])\.-?([_a-zA-Z][_a-zA-Z0-9-]*)(?=[^\w-]|${'$'})""")
-        // 匹配选择器里的嵌套 class 出现（如 .a .b 中第二个 .b）
-        private val NESTED_CLASS_RE = Regex("""\.([_a-zA-Z][_a-zA-Z0-9-]*)(?![\w-])""")
+        // 匹配选择器里的嵌套 class 出现（如 .a .b 中第二个 .b）。
+        // 必须前面有空格/组合符（>+~）且非逗号分隔，避免把普通选择器如 .unused 或 .a,.b 都当成嵌套引用。
+        private val NESTED_CLASS_RE = Regex("""(?<!,)[\s>+~]\.([_a-zA-Z][_a-zA-Z0-9-]*)(?![\w-])""")
         // 伪类/伪元素裁剪
         private val PSEUDO_PART_RE = Regex(""":+[\w-]+(?:\([^)]*\))?""")
         private val EXTEND_RE = Regex("""@extend\s*\.?([\w-]+)""")
@@ -210,8 +211,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             // 去掉伪类/伪元素部分以避免误剪
             val cleaned = normalized.replace(PSEUDO_PART_RE, "")
             return MODULE_CLASS_RE.findAll(cleaned).mapNotNull { m ->
-                val rawName = m.groupValues[1]
-                val name = if (rawName.startsWith(".")) rawName.drop(1) else rawName
+                val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
                 name.trim().takeIf { it.isNotEmpty() }
             }.distinct().toList()
         }
@@ -342,9 +342,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             // --- 内部 @extend / 选择器嵌套里的复合类引用也算 used（text-level 扫描 CSS 文本） ---
             val cssText = runCatching { cssFile.text }.getOrNull().orEmpty()
             val classesInFile = MODULE_CLASS_RE.findAll(cssText).mapNotNull { m ->
-                val raw = m.groupValues[1]
-                val firstChar = raw.firstOrNull() ?: return@mapNotNull null
-                val name = if (firstChar == '.') raw.drop(1) else raw
+                val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
                 name.trim().takeIf { it.isNotEmpty() }
             }.toSet()
             for (extend in EXTEND_RE.findAll(cssText)) {

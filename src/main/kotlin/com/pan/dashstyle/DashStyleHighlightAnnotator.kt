@@ -152,8 +152,7 @@ class DashStyleHighlightAnnotator : Annotator {
             ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
         val cleaned = normalized.replace(Regex(""":+[\w-]+(?:\([^)]*\))?"""), "")
         return CLASS_NAME_RE.findAll(cleaned).mapNotNull { m ->
-            val rawName = m.groupValues[1]
-            val name = if (rawName.startsWith(".")) rawName.drop(1) else rawName
+            val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
             name.trim().takeIf { it.isNotEmpty() }
         }.distinct().toList()
     }

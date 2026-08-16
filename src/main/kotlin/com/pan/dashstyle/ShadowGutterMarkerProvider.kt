@@ -161,8 +161,8 @@ internal object ShadowRender {
         val sg = sb.createGraphics()
         try {
             sg.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val sx = (elX + layer.offsetX * scale).toInt()
-            val sy = (elY + layer.offsetY * scale).toInt()
+            val sx = (elX + layer.offsetX * scale - layer.spread * scale).toInt()
+            val sy = (elY + layer.offsetY * scale - layer.spread * scale).toInt()
             val sw = (elW + layer.spread * 2 * scale).toInt()
             val sh = (elH + layer.spread * 2 * scale).toInt()
             val corner = (minOf(sw, sh) * 0.08).toInt().coerceAtLeast(2)
@@ -246,6 +246,7 @@ internal object ShadowRender {
             if (a == 0) continue
             val dstA = (dstI[i] ushr 24) and 0xff
             val outA = a + dstA * (255 - a) / 255
+            if (outA == 0) continue
             val srcFrac = a.toDouble() / outA
             val dstFrac = 1.0 - srcFrac
             val dr = (dstI[i] ushr 16) and 0xff

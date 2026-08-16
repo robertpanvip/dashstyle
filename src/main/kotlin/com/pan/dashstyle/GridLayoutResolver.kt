@@ -222,11 +222,9 @@ object GridLayoutResolver {
             return out
         }
         if (rightW != null) {
-            out[leftIndex + 1] = if (delta > 0) {
-                Track.Flex(rightW.coerceAtLeast(minWeight))
-            } else {
-                Track.Flex((rightW + delta).coerceAtLeast(minWeight))
-            }
+            // delta > 0（分隔线右移）→ 右侧缩小: rightW - delta
+            // delta < 0（分隔线左移）→ 右侧增大: rightW - delta（delta 为负，等效 rightW + |delta|）
+            out[leftIndex + 1] = Track.Flex((rightW - delta).coerceAtLeast(minWeight))
             return out
         }
         // 都没有 fr：px 平移
