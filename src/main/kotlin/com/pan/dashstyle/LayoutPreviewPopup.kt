@@ -82,7 +82,8 @@ object LayoutPreviewPopup {
         initial: FlexLayoutResolver.Props,
         private val triggerProperty: String? = null  // 触发属性名，为空表示从 display 行触发
     ) : PopupEditor {
-        private val state = arrayOf(initial)
+        // align-content 只在 wrap 多行时生效，预览时强制 wrap 让用户看到效果
+        private val state = arrayOf(if (triggerProperty == "align-content") initial.copy(wrap = true) else initial)
 
         private val justify = JComboBox(arrayOf("flex-start", "flex-end", "center", "space-between", "space-around", "space-evenly"))
         private val align = JComboBox(arrayOf("stretch", "flex-start", "flex-end", "center", "baseline"))
