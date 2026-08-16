@@ -610,7 +610,23 @@ object LayoutPreviewPopup {
     private fun setOrAdd(block: CssBlock, name: String, value: String) {
         val existing = block.findDeclaration(name)
         if (existing != null) {
-            existing.setValue(value)
+            // 直接替换 value 元素的文本
+            val valueNode = existing.value
+            if (valueNode != null) {
+                val oldText = valueNode.text
+                val newText = if (oldText.startsWith("\"")) "\"$value\"" else value
+                if (oldText != newText) {
+                    val range = valueNode.textRange
+                    val document = com.intellij.psi.PsiDocumentManager.getInstance(block.project).getDocument(block.containingFile)
+                    if (document != null) {
+                        document.replaceString(range.startOffset, range.endOffset, newText)
+                    } else {
+                        valueNode.replace(valueNode)
+                    }
+                }
+            } else {
+                existing.setValue(value)
+            }
         } else {
             block.addDeclaration(name, value, existing)
         }
