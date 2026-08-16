@@ -10,6 +10,7 @@ import com.intellij.openapi.util.IconLoader
 import com.intellij.patterns.PlatformPatterns
 import com.intellij.psi.css.CssAtRule
 import com.intellij.psi.css.CssBlock
+import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.ProcessingContext
 
@@ -44,11 +45,23 @@ class TailwindClassCompletionContributor : CompletionContributor() {
             // @apply 指令内
             if (!atRule.text.trimStart().startsWith("@apply", ignoreCase = true)) return
         } else {
-            // CSS 规则体（如 .test { cursor| }），必须是 CssBlock 内
+            // CSS 规则体（如 .test { ju| }），必须是 CssBlock 内
             val cssBlock = PsiTreeUtil.getParentOfType(position, CssBlock::class.java, false)
                 ?: return
             // 排除 @apply 内部的 CssBlock（上一层已处理）
             if (PsiTreeUtil.getParentOfType(cssBlock, CssAtRule::class.java, true) != null) return
+
+            // 检查是否在 CSS 属性值内部（如 display: fle|）——此时不显示 Tailwind 补全，
+            // 交给标准 CSS 补全来处理（如 flex → display: flex）。
+            val cssDecl = PsiTreeUtil.getParentOfType(position, CssDeclaration::class.java, false)
+            if (cssDecl != null) {
+                val colonIdx = cssDecl.text.indexOf(':')
+                if (colonIdx >= 0) {
+                    val declStart = cssDecl.textOffset
+                    val cursorOffset = parameters.offset
+                    if (cursorOffset > declStart + colonIdx) return
+                }
+            }
         }
 
         val prefix = result.prefixMatcher.prefix
