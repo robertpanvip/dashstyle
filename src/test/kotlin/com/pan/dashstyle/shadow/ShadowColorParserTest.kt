@@ -85,11 +85,11 @@ class ShadowColorParserTest {
 
     @Test
     fun `parse invalid or unsupported returns null`() {
-        assertNull(CssColorParser.parse("rebeccapurple")) // AWT 无此命名色
+        assertNull(CssColorParser.parse("rebeccapurple"))
         assertNull(CssColorParser.parse("not-a-color"))
         assertNull(CssColorParser.parse(""))
         assertNull(CssColorParser.parse(null))
-        assertNull(CssColorParser.parse("#ff000")) // 5 位非法 hex 长度
-        assertNull(CssColorParser.parse("rgb(1,2)")) // 缺通道
+        assertNull(CssColorParser.parse("#ff000"))
+        assertNull(CssColorParser.parse("rgb(1,2)"))
     }
 }
