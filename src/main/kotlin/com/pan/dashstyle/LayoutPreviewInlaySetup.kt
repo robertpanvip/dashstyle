@@ -182,8 +182,8 @@ private class OverallPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 90
-    override val height: Int get() = 22
+    override val width: Int get() = 104
+    override val height: Int get() = 28
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -192,11 +192,11 @@ private class OverallPreviewPresentation(
         val w = width
         val h = height
 
-        // 左边距 5px，垂直居中（边框距顶部 2px）
-        val bx = 5
-        val by = 2
-        val bw = w - bx - 3   // 82
-        val bh = h - by * 2   // 18
+        // 左边距 12px（与前面文字拉开间距），垂直居中
+        val bx = 12
+        val by = 3
+        val bw = w - bx - 3   // 89
+        val bh = h - by * 2   // 22
 
         g2d.color = OVERALL_BORDER
         g2d.draw(RoundRectangle2D.Float(bx.toFloat(), by.toFloat(), bw.toFloat(), bh.toFloat(), 3f, 3f))
@@ -242,8 +242,8 @@ private class PropertyPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 60
-    override val height: Int get() = 18
+    override val width: Int get() = 72
+    override val height: Int get() = 24
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -252,9 +252,9 @@ private class PropertyPreviewPresentation(
         val w = width
         val h = height
 
-        // 左边距 4px，垂直居中
+        // 左边距 12px（与前面文字拉开间距），垂直居中
         g2d.color = PROP_BORDER
-        g2d.draw(RoundRectangle2D.Float(4f, 1f, (w - 6).toFloat(), (h - 2).toFloat(), 3f, 3f))
+        g2d.draw(RoundRectangle2D.Float(12f, 2f, (w - 14).toFloat(), (h - 4).toFloat(), 3f, 3f))
 
         // 图标在边框内居中绘制，drawXxx 自行处理内部居中
         when (propName) {
@@ -275,7 +275,7 @@ private class PropertyPreviewPresentation(
         (model as? LayoutModel.Grid)?.props
 
     private fun drawJustifyIcon(g2d: Graphics2D, cw: Int, ch: Int) {
-        val ix = 5; val iy = 2
+        val ix = 13; val iy = 3
         val iw = cw - ix - 3; val ih = ch - iy - 2
         val boxW = 6
         val boxH = (ih * 0.6).toInt().coerceAtLeast(4)
@@ -305,7 +305,7 @@ private class PropertyPreviewPresentation(
     }
 
     private fun drawAlignIcon(g2d: Graphics2D, cw: Int, ch: Int) {
-        val ix = 5; val iy = 2
+        val ix = 13; val iy = 3
         val iw = cw - ix - 3; val ih = ch - iy - 2
         val boxW = (iw * 0.6).toInt().coerceAtLeast(4)
         val boxH = 6
@@ -333,7 +333,7 @@ private class PropertyPreviewPresentation(
     }
 
     private fun drawGapIcon(g2d: Graphics2D, cw: Int, ch: Int) {
-        val ix = 5; val iy = 2
+        val ix = 13; val iy = 3
         val iw = cw - ix - 3; val ih = ch - iy - 2
         g2d.color = PROP_CHILD
         val gap = flexProps()?.gap?.coerceIn(1, 10) ?: 4
@@ -348,7 +348,7 @@ private class PropertyPreviewPresentation(
     }
 
     private fun drawDirectionIcon(g2d: Graphics2D, cw: Int, ch: Int) {
-        val ix = 5; val iy = 2
+        val ix = 13; val iy = 3
         val iw = cw - ix - 3; val ih = ch - iy - 2
         g2d.color = PROP_CHILD
         val dir = flexProps()?.direction ?: FlexLayoutResolver.Direction.ROW
@@ -360,7 +360,7 @@ private class PropertyPreviewPresentation(
     }
 
     private fun drawWrapIcon(g2d: Graphics2D, cw: Int, ch: Int) {
-        val ix = 5; val iy = 2
+        val ix = 13; val iy = 3
         val iw = cw - ix - 3; val ih = ch - iy - 2
         g2d.color = PROP_CHILD
         val wrap = flexProps()?.wrap == true
@@ -379,7 +379,7 @@ private class PropertyPreviewPresentation(
     }
 
     private fun drawAlignContentIcon(g2d: Graphics2D, cw: Int, ch: Int) {
-        val ix = 5; val iy = 2
+        val ix = 13; val iy = 3
         val iw = cw - ix - 3; val ih = ch - iy - 2
         g2d.color = PROP_CHILD
         val ac = flexProps()?.alignContent ?: FlexLayoutResolver.AlignContent.STRETCH
@@ -431,7 +431,7 @@ private class PropertyPreviewPresentation(
     }
 
     private fun drawDefaultIcon(g2d: Graphics2D, cw: Int, ch: Int) {
-        val ix = 5; val iy = 2
+        val ix = 13; val iy = 3
         val iw = cw - ix - 3; val ih = ch - iy - 2
         g2d.color = PROP_CHILD
         val boxW = (iw * 0.35).toInt().coerceAtLeast(4)
