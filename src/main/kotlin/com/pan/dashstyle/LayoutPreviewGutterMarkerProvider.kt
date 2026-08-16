@@ -27,9 +27,9 @@ import javax.swing.Icon
 /**
  * CSS 布局增强 —— gutter 迷你预览（flex 与 grid）。
  *
- * 把原先的行尾 inlay 预览改到行号前的 gutter，形如 WebStorm 对颜色的 gutter 预览：
- *  - 在 `display:flex/grid` 行前渲染一个「总效果」色块图标（强调色）；
- *  - 在每个布局属性行前渲染一个「聚焦该属性」的迷你布局图。
+ * 在行号前的 gutter 渲染布局预览图标：
+ *  - 在 `display:flex/grid` 行前渲染一个「总效果」布局预览（强调色）；
+ *  - 在每个布局属性行前渲染一个「单轴指示」简图（普通色），仅显示该属性对应的轴方向。
  *
  * 点击图标弹出交互面板（[LayoutPreviewPopup]），可调整属性并写回 CSS。
  * 布局解析复用 [LayoutContextResolver]。
@@ -56,10 +56,16 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
             val (model, overall) = declToModel[element] ?: continue
             val leaf = PsiTreeUtil.getDeepestFirst(element) ?: continue
             val ruleset = PsiTreeUtil.getParentOfType(element, CssRuleset::class.java) ?: continue
+            val propName = element.propertyName?.trim()?.lowercase().orEmpty()
+            val icon = if (overall) {
+                LayoutGutterIcon(model)
+            } else {
+                PerPropertyGutterIcon(propName)
+            }
             val marker = LineMarkerInfo(
                 leaf,
                 leaf.textRange,
-                LayoutGutterIcon(model, overall),
+                icon,
                 { LayoutPreviewTooltip.html(model, overall) },
                 openPopupHandler(ruleset, model),
                 GutterIconRenderer.Alignment.LEFT
@@ -90,19 +96,16 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 }
 
 /**
- * gutter 布局预览 icon：小容器 + 内部子块布局，模拟 WebStorm 颜色预览的 gutter 色块。
- * 总效果用强调色，单属性用普通色。
- *
- * 尺寸取 32×32 以在 gutter 内尽可能清晰地展示 flex 排列方向 / grid 网格；
- * 子块之间留 1px 间隙，避免相邻块糊在一起，提升辨识度。
+ * gutter 总效果布局预览 icon：小容器 + 内部子块布局。
+ * 仅用于 `display:flex/grid` 行，展示完整的 flex/grid 排列效果。
+ * 尺寸 24×24 以在 gutter 内紧凑展示，不挤占行号。
  */
 private class LayoutGutterIcon(
-    private val model: LayoutModel,
-    private val overall: Boolean
+    private val model: LayoutModel
 ) : Icon {
 
-    override fun getIconWidth(): Int = 32
-    override fun getIconHeight(): Int = 32
+    override fun getIconWidth(): Int = 24
+    override fun getIconHeight(): Int = 24
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
@@ -112,14 +115,12 @@ private class LayoutGutterIcon(
             val pad = 2
             val boxW = iconWidth - pad * 2
             val boxH = iconHeight - pad * 2
-            val border = if (overall) OVERALL_BORDER else BORDER
-            val fill = if (overall) OVERALL_CHILD else CHILD
-            // 容器边框
-            g2.color = border
+            // 容器边框（强调色）
+            g2.color = OVERALL_BORDER
             g2.draw(Rectangle2D.Float(x + pad.toFloat(), y + pad.toFloat(), boxW - 1f, boxH - 1f))
-            // 子块（每块内缩 1px，块间留出间隙，更清晰）
+            // 子块
             val boxes = model.boxes(boxW, boxH)
-            g2.color = fill
+            g2.color = OVERALL_CHILD
             for (b in boxes) {
                 val bx = x + pad + b.x
                 val by = y + pad + b.y
@@ -134,10 +135,125 @@ private class LayoutGutterIcon(
     }
 
     private companion object {
-        val BORDER: JBColor = JBColor(Color(0x8a8d93), Color(0x5a5d63))
-        val CHILD: JBColor = JBColor(Color(0x4f8cff), Color(0x6aa0ff))
         val OVERALL_BORDER: JBColor = JBColor(Color(0x2d7ff9), Color(0x4f9bff))
         val OVERALL_CHILD: JBColor = JBColor(Color(0x1b5fd0), Color(0x5f9bff))
+    }
+}
+
+/**
+ * 单属性布局预览 icon：根据属性名称显示对应的轴方向简图。
+ * 不展示完整布局，仅用箭头/线条指示该属性影响哪个轴。
+ * 尺寸 16×16，紧凑显示，不占行号空间。
+ *
+ * 各属性对应图形：
+ *  - justify-content / justify-items / justify-self → 水平双箭头（主轴）
+ *  - align-items / align-self / align-content → 垂直双箭头（交叉轴）
+ *  - flex-direction → 方向箭头
+ *  - flex-wrap → 换行指示
+ *  - gap / row-gap / column-gap → 间距指示
+ *  - grid-template-columns → 水平轨道
+ *  - grid-template-rows → 垂直轨道
+ */
+private class PerPropertyGutterIcon(
+    private val propName: String
+) : Icon {
+
+    override fun getIconWidth(): Int = 16
+    override fun getIconHeight(): Int = 16
+
+    override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+            g2.color = AXIS_COLOR
+            g2.stroke = AXIS_STROKE
+
+            val cx = x + iconWidth / 2f
+            val cy = y + iconHeight / 2f
+
+            when {
+                // 水平主轴：justify-content / justify-items / justify-self
+                propName.startsWith("justify") || propName.startsWith("grid-template-columns") -> {
+                    drawHorizontalArrow(g2, x, y)
+                }
+                // 垂直交叉轴：align-items / align-self / align-content
+                propName.startsWith("align") || propName.startsWith("grid-template-rows") -> {
+                    drawVerticalArrow(g2, x, y)
+                }
+                // flex-direction：方向切换
+                propName == "flex-direction" -> {
+                    drawDirectionArrow(g2, cx, cy)
+                }
+                // flex-wrap：换行
+                propName == "flex-wrap" -> {
+                    drawWrapIndicator(g2, cx, cy)
+                }
+                // gap
+                propName == "gap" || propName.endsWith("-gap") -> {
+                    drawGapIndicator(g2, cx, cy)
+                }
+                // 默认：十字箭头
+                else -> {
+                    drawHorizontalArrow(g2, x, y)
+                    drawVerticalArrow(g2, x, y)
+                }
+            }
+        } finally {
+            g2.dispose()
+        }
+    }
+
+    private fun drawHorizontalArrow(g2: Graphics2D, x: Int, y: Int) {
+        val cy = y + iconHeight / 2f
+        // 左箭头
+        g2.drawLine(x + 2, cy.toInt(), x + iconWidth - 4, cy.toInt())
+        g2.drawLine(x + 4, cy.toInt() - 3, x + 2, cy.toInt())
+        g2.drawLine(x + 4, cy.toInt() + 3, x + 2, cy.toInt())
+        // 右箭头
+        g2.drawLine(x + iconWidth - 4, cy.toInt() - 3, x + iconWidth - 2, cy.toInt())
+        g2.drawLine(x + iconWidth - 4, cy.toInt() + 3, x + iconWidth - 2, cy.toInt())
+    }
+
+    private fun drawVerticalArrow(g2: Graphics2D, x: Int, y: Int) {
+        val cx = x + iconWidth / 2f
+        g2.drawLine(cx.toInt(), y + 2, cx.toInt(), y + iconHeight - 4)
+        g2.drawLine(cx.toInt() - 3, y + 4, cx.toInt(), y + 2)
+        g2.drawLine(cx.toInt() + 3, y + 4, cx.toInt(), y + 2)
+        // 下箭头
+        g2.drawLine(cx.toInt() - 3, y + iconHeight - 4, cx.toInt(), y + iconHeight - 2)
+        g2.drawLine(cx.toInt() + 3, y + iconHeight - 4, cx.toInt(), y + iconHeight - 2)
+    }
+
+    private fun drawDirectionArrow(g2: Graphics2D, cx: Float, cy: Float) {
+        // 画一个顺时针弧形箭头
+        g2.drawArc((cx - 4).toInt(), (cy - 4).toInt(), 8, 8, 0, 270)
+        // 箭头尖
+        g2.drawLine((cx + 4).toInt(), (cy - 4).toInt(), (cx + 4).toInt(), (cy - 1).toInt())
+        g2.drawLine((cx + 4).toInt(), (cy - 4).toInt(), (cx + 1).toInt(), (cy - 4).toInt())
+    }
+
+    private fun drawWrapIndicator(g2: Graphics2D, cx: Float, cy: Float) {
+        // 两行短线表示换行
+        g2.drawLine((cx - 5).toInt(), (cy - 3).toInt(), (cx + 1).toInt(), (cy - 3).toInt())
+        g2.drawLine((cx - 1).toInt(), (cy + 3).toInt(), (cx + 5).toInt(), (cy + 3).toInt())
+        // 换行箭头：从第一行末尾折向第二行开头
+        g2.drawLine((cx + 1).toInt(), (cy - 3).toInt(), (cx + 3).toInt(), (cy - 1).toInt())
+        g2.drawLine((cx + 3).toInt(), (cy - 1).toInt(), (cx - 1).toInt(), (cy - 1).toInt())
+        g2.drawLine((cx - 1).toInt(), (cy - 1).toInt(), (cx - 1).toInt(), (cy + 3).toInt())
+    }
+
+    private fun drawGapIndicator(g2: Graphics2D, cx: Float, cy: Float) {
+        // 两个平行小块表示间距
+        g2.fill(RoundRectangle2D.Float(cx - 6, cy - 4, 4, 8, 1f, 1f))
+        g2.fill(RoundRectangle2D.Float(cx + 2, cy - 4, 4, 8, 1f, 1f))
+        // 中间的双箭头线表示间距
+        g2.drawLine((cx - 1).toInt(), cy.toInt(), (cx + 1).toInt(), cy.toInt())
+    }
+
+    private companion object {
+        val AXIS_COLOR: JBColor = JBColor(Color(0x8a8d93), Color(0x6a6d73))
+        val AXIS_STROKE = java.awt.BasicStroke(1.2f)
     }
 }
 

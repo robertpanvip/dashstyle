@@ -514,6 +514,15 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
         when (loc.sourceLanguage) {
             StyleAttrLoc.Lang.JSX_TSX -> {
+                // 检查父元素是否已有 className 属性
+                val parent = loc.attrPsi.parent
+                val existingClassName = findClassNameAttr(parent)
+                if (existingClassName != null) {
+                    // 合并到已有 className 中，然后删除 style 属性
+                    mergeIntoExistingClassName(existingClassName, access, loc.attrPsi, project, factory)
+                    return
+                }
+                // 没有已有 className，直接替换 style 为 className
                 val newAttrText = "className={$access}"
                 val snippet = "const _ = () => <div $newAttrText/>"
                 val jsLang = Language.findInstance(JavascriptLanguage::class.java)
@@ -534,6 +543,7 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 else fallbackReplace(loc.attrPsi, newAttrText)
             }
             StyleAttrLoc.Lang.VUE -> {
+                // Vue 中 class 和 :class 可以共存，直接替换 :style 为 :class
                 val newAttrText = ":class=\"$access\""
                 val snippet = "<template><div $newAttrText/></template>"
                 val xmlLang = Language.findInstance(XMLLanguage::class.java)
@@ -543,6 +553,61 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 if (newAttr != null) loc.attrPsi.replace(newAttr)
                 else fallbackReplace(loc.attrPsi, newAttrText)
             }
+        }
+    }
+
+    /**
+     * 在父元素中查找已有的 className 属性。
+     * 搜索所有子节点中名字为 "className" 的 JSX/JSAttribute。
+     */
+    private fun findClassNameAttr(parent: PsiElement): PsiElement? {
+        return PsiTreeUtil.collectElements(parent) { el ->
+            val c = el.javaClass.name
+            (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
+                el != parent &&
+                runCatching {
+                    el.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
+                        ?.invoke(el) == "className"
+                }.getOrDefault(false)
+        }.firstOrNull()
+    }
+
+    /**
+     * 将新的 class 访问表达式合并到已有的 className 属性中，然后删除 style 属性。
+     * 处理 className="foo" → className={clsx("foo", styles.newClass)} 和
+     * className={expr} → className={clsx(expr, styles.newClass)} 两种形式。
+     */
+    private fun mergeIntoExistingClassName(
+        existingClassName: PsiElement,
+        newAccess: String,
+        styleAttr: PsiElement,
+        project: Project,
+        factory: PsiFileFactory
+    ) {
+        try {
+            val existingText = existingClassName.text
+            val eqIdx = existingText.indexOf('=')
+            if (eqIdx < 0) return
+            val valuePart = existingText.substring(eqIdx + 1).trim()
+            val newValue = "className={clsx($valuePart, $newAccess)}"
+            val snippet = "const _ = () => <div $newValue/>"
+            val jsLang = Language.findInstance(JavascriptLanguage::class.java)
+            val tmp = factory.createFileFromText("__tmp_merge__.tsx", jsLang, snippet)
+            val replacement = PsiTreeUtil.collectElements(tmp) { el ->
+                val c = el.javaClass.name
+                (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
+                    runCatching {
+                        el.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
+                            ?.invoke(el) == "className"
+                    }.getOrDefault(false)
+            }.firstOrNull()
+            if (replacement != null) {
+                existingClassName.replace(replacement)
+                // 删除 style 属性
+                styleAttr.delete()
+            }
+        } catch (t: Throwable) {
+            LOG.warn("mergeIntoExistingClassName failed", t)
         }
     }
 
