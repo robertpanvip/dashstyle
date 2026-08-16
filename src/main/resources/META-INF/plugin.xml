@@ -193,9 +193,16 @@
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
 <!-- ========================= CSS Flex 布局预览（inlay） ========================= -->
-        <!-- 使用 ProjectManagerListener 注册 EditorFactoryListener，
-             在 display:flex/grid 声明行尾添加可点击的布局预览 inlay（InlayModel API）。 -->
-        <projectManagerListener implementationClass="com.pan.dashstyle.LayoutPreviewInlaySetup"/>
+        <!-- 使用 InlayHintsProvider 框架在 display:flex/grid 声明行尾添加可点击的布局预览 inlay。 -->
+        <codeInsight.inlayProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.CssLayoutPreviewInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.CssLayoutPreviewInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.CssLayoutPreviewInlayProvider"/>
 
         <!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
         <!-- 在 box-shadow / text-shadow 声明行前渲染圆角矩形 + 真实阴影的 gutter 图标，
