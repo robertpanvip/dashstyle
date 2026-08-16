@@ -189,24 +189,23 @@ private class OverallPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 92
-    override val height: Int get() = 30
+    override val width: Int get() = 86
+    override val height: Int get() = 26
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-        val pad = 6
-        val innerW = width - pad * 2   // 80
-        val innerH = height - pad * 2  // 18
+        val w = width
+        val h = height
 
-        // 边框居中（不减去 1，使边框宽度 = innerW，实现左右居中）
+        // 边框：直接以 (0,0) 为原点，留 1px stroke 偏移
         g2d.color = OVERALL_BORDER
-        g2d.draw(RoundRectangle2D.Float(
-            pad.toFloat(), pad.toFloat(),
-            innerW.toFloat(), innerH.toFloat(), 3f, 3f
-        ))
+        g2d.draw(RoundRectangle2D.Float(1f, 1f, (w - 2).toFloat(), (h - 2).toFloat(), 3f, 3f))
 
+        // 子元素布局：直接用 model.boxes 计算在边框内区域的位置
+        val innerW = w - 4
+        val innerH = h - 4
         val boxes = model.boxes(innerW, innerH)
         if (boxes.isEmpty()) return
 
@@ -219,13 +218,13 @@ private class OverallPreviewPresentation(
         val scale = minOf(innerW.toFloat() / bbW, innerH.toFloat() / bbH) * 0.85f
         val scaledW = (bbW * scale).toInt()
         val scaledH = (bbH * scale).toInt()
-        val offX = pad + (innerW - scaledW) / 2
-        val offY = pad + (innerH - scaledH) / 2
+        val ox = 2 + (innerW - scaledW) / 2
+        val oy = 2 + (innerH - scaledH) / 2
 
         g2d.color = OVERALL_CHILD
         for (b in boxes) {
-            val sx = offX + ((b.x - minX) * scale).toInt()
-            val sy = offY + ((b.y - minY) * scale).toInt()
+            val sx = ox + ((b.x - minX) * scale).toInt()
+            val sy = oy + ((b.y - minY) * scale).toInt()
             val sw = ((b.w * scale).coerceAtLeast(2.0f)).toInt()
             val sh = ((b.h * scale).coerceAtLeast(2.0f)).toInt()
             g2d.fill(RoundRectangle2D.Float(
@@ -245,40 +244,29 @@ private class PropertyPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 64
-    override val height: Int get() = 24
+    override val width: Int get() = 56
+    override val height: Int get() = 20
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-        val pad = 6
         val w = width
         val h = height
-        val innerW = w - pad * 2   // 52
-        val innerH = h - pad * 2   // 12
 
-        // 边框居中（不减去 1，使边框宽度 = innerW，实现左右居中）
+        // 边框直接以 (0,0) 为原点绘制
         g2d.color = PROP_BORDER
-        g2d.draw(RoundRectangle2D.Float(
-            pad.toFloat(), pad.toFloat(),
-            innerW.toFloat(), innerH.toFloat(), 3f, 3f
-        ))
+        g2d.draw(RoundRectangle2D.Float(1f, 1f, (w - 2).toFloat(), (h - 2).toFloat(), 3f, 3f))
 
-        // 图标在边框内居中
-        val iconW = innerW - 10   // 42
-        val iconH = innerH - 4    // 8
-        val cx = pad + (innerW - iconW) / 2  // 11
-        val cy = pad + (innerH - iconH) / 2  // 8
-
+        // 图标在边框内居中绘制，drawXxx 自行处理内部居中
         when (propName) {
-            "justify-content" -> drawJustifyIcon(g2d, cx, cy, iconW, iconH)
-            "align-items" -> drawAlignIcon(g2d, cx, cy, iconW, iconH)
-            "gap", "row-gap", "column-gap" -> drawGapIcon(g2d, cx, cy, iconW, iconH)
-            "flex-direction" -> drawDirectionIcon(g2d, cx, cy, iconW, iconH)
-            "flex-wrap" -> drawWrapIcon(g2d, cx, cy, iconW, iconH)
-            "align-content" -> drawAlignContentIcon(g2d, cx, cy, iconW, iconH)
-            else -> drawDefaultIcon(g2d, cx, cy, iconW, iconH)
+            "justify-content" -> drawJustifyIcon(g2d, w, h)
+            "align-items" -> drawAlignIcon(g2d, w, h)
+            "gap", "row-gap", "column-gap" -> drawGapIcon(g2d, w, h)
+            "flex-direction" -> drawDirectionIcon(g2d, w, h)
+            "flex-wrap" -> drawWrapIcon(g2d, w, h)
+            "align-content" -> drawAlignContentIcon(g2d, w, h)
+            else -> drawDefaultIcon(g2d, w, h)
         }
     }
 
@@ -288,170 +276,185 @@ private class PropertyPreviewPresentation(
     private fun gridProps(): GridLayoutResolver.Props? =
         (model as? LayoutModel.Grid)?.props
 
-    private fun drawJustifyIcon(g2d: Graphics2D, x: Int, y: Int, w: Int, h: Int) {
+    private fun drawJustifyIcon(g2d: Graphics2D, cw: Int, ch: Int) {
+        val inset = 2
+        val iw = cw - inset * 2
+        val ih = ch - inset * 2
         val boxW = 6
-        val boxH = (h * 0.6).toInt().coerceAtLeast(4)
-        val boxY = y + (h - boxH) / 2
+        val boxH = (ih * 0.6).toInt().coerceAtLeast(4)
+        val boxY = inset + (ih - boxH) / 2
         val positions = flexProps()?.let { fp ->
             when (fp.justify) {
                 FlexLayoutResolver.Justify.FLEX_START -> listOf(0)
-                FlexLayoutResolver.Justify.CENTER -> listOf((w - boxW) / 2)
-                FlexLayoutResolver.Justify.FLEX_END -> listOf(w - boxW)
-                FlexLayoutResolver.Justify.SPACE_BETWEEN -> listOf(0, w - boxW)
-                FlexLayoutResolver.Justify.SPACE_AROUND -> listOf(0, w - boxW)
-                FlexLayoutResolver.Justify.SPACE_EVENLY -> listOf(0, w - boxW)
+                FlexLayoutResolver.Justify.CENTER -> listOf((iw - boxW) / 2)
+                FlexLayoutResolver.Justify.FLEX_END -> listOf(iw - boxW)
+                FlexLayoutResolver.Justify.SPACE_BETWEEN -> listOf(0, iw - boxW)
+                FlexLayoutResolver.Justify.SPACE_AROUND -> listOf(0, iw - boxW)
+                FlexLayoutResolver.Justify.SPACE_EVENLY -> listOf(0, iw - boxW)
             }
         } ?: gridProps()?.let { gp ->
             when (gp.justifyContent) {
                 GridLayoutResolver.GridAlign.START -> listOf(0)
-                GridLayoutResolver.GridAlign.CENTER -> listOf((w - boxW) / 2)
-                GridLayoutResolver.GridAlign.END -> listOf(w - boxW)
-                GridLayoutResolver.GridAlign.STRETCH -> listOf(0, w - boxW)
+                GridLayoutResolver.GridAlign.CENTER -> listOf((iw - boxW) / 2)
+                GridLayoutResolver.GridAlign.END -> listOf(iw - boxW)
+                GridLayoutResolver.GridAlign.STRETCH -> listOf(0, iw - boxW)
             }
         } ?: return
         g2d.color = PROP_CHILD
         for (px in positions) {
             g2d.fill(RoundRectangle2D.Float(
-                (x + px).toFloat(), boxY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                (inset + px).toFloat(), boxY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
         }
     }
 
-    private fun drawAlignIcon(g2d: Graphics2D, x: Int, y: Int, w: Int, h: Int) {
-        val boxW = (w * 0.6).toInt().coerceAtLeast(4)
+    private fun drawAlignIcon(g2d: Graphics2D, cw: Int, ch: Int) {
+        val inset = 2
+        val iw = cw - inset * 2
+        val ih = ch - inset * 2
+        val boxW = (iw * 0.6).toInt().coerceAtLeast(4)
         val boxH = 6
-        val boxX = x + (w - boxW) / 2
+        val boxX = inset + (iw - boxW) / 2
         val pair = (flexProps()?.let { fp ->
             when (fp.align) {
-                FlexLayoutResolver.Align.FLEX_START -> 0 to (h * 0.3).toInt().coerceAtLeast(2)
-                FlexLayoutResolver.Align.CENTER -> (h - boxH) / 2 to boxH
-                FlexLayoutResolver.Align.FLEX_END -> h - boxH to boxH
-                FlexLayoutResolver.Align.STRETCH -> 0 to h
-                FlexLayoutResolver.Align.BASELINE -> 0 to (h * 0.3).toInt().coerceAtLeast(2)
+                FlexLayoutResolver.Align.FLEX_START -> 0 to (ih * 0.3).toInt().coerceAtLeast(2)
+                FlexLayoutResolver.Align.CENTER -> (ih - boxH) / 2 to boxH
+                FlexLayoutResolver.Align.FLEX_END -> ih - boxH to boxH
+                FlexLayoutResolver.Align.STRETCH -> 0 to ih
+                FlexLayoutResolver.Align.BASELINE -> 0 to (ih * 0.3).toInt().coerceAtLeast(2)
             }
         } ?: gridProps()?.let { gp ->
             when (gp.alignItems) {
-                GridLayoutResolver.GridAlign.START -> 0 to (h * 0.3).toInt().coerceAtLeast(2)
-                GridLayoutResolver.GridAlign.CENTER -> (h - boxH) / 2 to boxH
-                GridLayoutResolver.GridAlign.END -> h - boxH to boxH
-                GridLayoutResolver.GridAlign.STRETCH -> 0 to h
+                GridLayoutResolver.GridAlign.START -> 0 to (ih * 0.3).toInt().coerceAtLeast(2)
+                GridLayoutResolver.GridAlign.CENTER -> (ih - boxH) / 2 to boxH
+                GridLayoutResolver.GridAlign.END -> ih - boxH to boxH
+                GridLayoutResolver.GridAlign.STRETCH -> 0 to ih
             }
         }) ?: return
         val (py, bh) = pair as Pair<Int, Int>
         g2d.color = PROP_CHILD
         g2d.fill(RoundRectangle2D.Float(
-            boxX.toFloat(), (y + py).toFloat(), boxW.toFloat(), bh.toFloat(), 1.5f, 1.5f))
+            boxX.toFloat(), (inset + py).toFloat(), boxW.toFloat(), bh.toFloat(), 1.5f, 1.5f))
     }
 
-    private fun drawGapIcon(g2d: Graphics2D, x: Int, y: Int, w: Int, h: Int) {
+    private fun drawGapIcon(g2d: Graphics2D, cw: Int, ch: Int) {
+        val inset = 2
+        val iw = cw - inset * 2
+        val ih = ch - inset * 2
         g2d.color = PROP_CHILD
         val gap = flexProps()?.gap?.coerceIn(1, 10) ?: 4
-        val segW = ((w - gap * 2) / 3).coerceAtLeast(2)
-        val segH = (h * 0.6).toInt().coerceAtLeast(4)
-        val segY = y + (h - segH) / 2
-        g2d.fill(RoundRectangle2D.Float(x.toFloat(), segY.toFloat(), segW.toFloat(), segH.toFloat(), 1.5f, 1.5f))
+        val segW = ((iw - gap * 2) / 3).coerceAtLeast(2)
+        val segH = (ih * 0.6).toInt().coerceAtLeast(4)
+        val segY = inset + (ih - segH) / 2
+        g2d.fill(RoundRectangle2D.Float(inset.toFloat(), segY.toFloat(), segW.toFloat(), segH.toFloat(), 1.5f, 1.5f))
         g2d.fill(RoundRectangle2D.Float(
-            (x + segW + gap).toFloat(), segY.toFloat(), segW.toFloat(), segH.toFloat(), 1.5f, 1.5f))
+            (inset + segW + gap).toFloat(), segY.toFloat(), segW.toFloat(), segH.toFloat(), 1.5f, 1.5f))
         g2d.fill(RoundRectangle2D.Float(
-            (x + (segW + gap) * 2).toFloat(), segY.toFloat(), segW.toFloat(), segH.toFloat(), 1.5f, 1.5f))
+            (inset + (segW + gap) * 2).toFloat(), segY.toFloat(), segW.toFloat(), segH.toFloat(), 1.5f, 1.5f))
     }
 
-    private fun drawDirectionIcon(g2d: Graphics2D, x: Int, y: Int, w: Int, h: Int) {
+    private fun drawDirectionIcon(g2d: Graphics2D, cw: Int, ch: Int) {
+        val inset = 2
+        val iw = cw - inset * 2
+        val ih = ch - inset * 2
         g2d.color = PROP_CHILD
         val dir = flexProps()?.direction ?: FlexLayoutResolver.Direction.ROW
-        val boxW = (w * 0.35).toInt().coerceAtLeast(4)
-        val boxH = (h * 0.35).toInt().coerceAtLeast(4)
+        val boxW = (iw * 0.35).toInt().coerceAtLeast(4)
+        val boxH = (ih * 0.35).toInt().coerceAtLeast(4)
         if (dir == FlexLayoutResolver.Direction.ROW || dir == FlexLayoutResolver.Direction.ROW_REVERSE) {
-            // 水平排列
-            val y1 = y
-            val y2 = h - boxH
-            g2d.fill(RoundRectangle2D.Float(x.toFloat(), y1.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+            g2d.fill(RoundRectangle2D.Float(inset.toFloat(), inset.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             g2d.fill(RoundRectangle2D.Float(
-                (x + w - boxW).toFloat(), y2.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                (inset + iw - boxW).toFloat(), (inset + ih - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
         } else {
-            // 垂直排列
-            val x1 = x
-            val x2 = w - boxW
-            g2d.fill(RoundRectangle2D.Float(x1.toFloat(), y.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+            g2d.fill(RoundRectangle2D.Float(inset.toFloat(), inset.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             g2d.fill(RoundRectangle2D.Float(
-                x2.toFloat(), (y + h - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                (inset + iw - boxW).toFloat(), (inset + ih - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
         }
     }
 
-    private fun drawWrapIcon(g2d: Graphics2D, x: Int, y: Int, w: Int, h: Int) {
+    private fun drawWrapIcon(g2d: Graphics2D, cw: Int, ch: Int) {
+        val inset = 2
+        val iw = cw - inset * 2
+        val ih = ch - inset * 2
         g2d.color = PROP_CHILD
         val wrap = flexProps()?.wrap == true
-        val boxW = (w * 0.35).toInt().coerceAtLeast(4)
-        val boxH = (h * 0.35).toInt().coerceAtLeast(4)
+        val boxW = (iw * 0.35).toInt().coerceAtLeast(4)
+        val boxH = (ih * 0.35).toInt().coerceAtLeast(4)
         if (wrap) {
-            // 多行
-            g2d.fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+            g2d.fill(RoundRectangle2D.Float(inset.toFloat(), inset.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             g2d.fill(RoundRectangle2D.Float(
-                (x + w - boxW).toFloat(), (y + h - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                (inset + iw - boxW).toFloat(), (inset + ih - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
         } else {
-            // 单行
-            g2d.fill(RoundRectangle2D.Float(x.toFloat(), (y + (h - boxH) / 2).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+            val midY = inset + (ih - boxH) / 2
+            g2d.fill(RoundRectangle2D.Float(inset.toFloat(), midY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             g2d.fill(RoundRectangle2D.Float(
-                (x + w - boxW).toFloat(), (y + (h - boxH) / 2).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                (inset + iw - boxW).toFloat(), midY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
         }
     }
 
-    private fun drawAlignContentIcon(g2d: Graphics2D, x: Int, y: Int, w: Int, h: Int) {
+    private fun drawAlignContentIcon(g2d: Graphics2D, cw: Int, ch: Int) {
+        val inset = 2
+        val iw = cw - inset * 2
+        val ih = ch - inset * 2
         g2d.color = PROP_CHILD
         val ac = flexProps()?.alignContent ?: FlexLayoutResolver.AlignContent.STRETCH
-        val boxW = (w * 0.35).toInt().coerceAtLeast(4)
-        val boxH = (h * 0.35).toInt().coerceAtLeast(4)
+        val boxW = (iw * 0.35).toInt().coerceAtLeast(4)
+        val boxH = (ih * 0.35).toInt().coerceAtLeast(4)
         val gap = 2
         when (ac) {
             FlexLayoutResolver.AlignContent.FLEX_START -> {
-                g2d.fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                g2d.fill(RoundRectangle2D.Float(inset.toFloat(), inset.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
                 g2d.fill(RoundRectangle2D.Float(
-                    (x + w - boxW).toFloat(), y.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                    (inset + iw - boxW).toFloat(), inset.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             }
             FlexLayoutResolver.AlignContent.CENTER -> {
-                val cy = y + (h - boxH * 2 - gap) / 2
-                g2d.fill(RoundRectangle2D.Float(x.toFloat(), cy.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                val cy = inset + (ih - boxH * 2 - gap) / 2
+                g2d.fill(RoundRectangle2D.Float(inset.toFloat(), cy.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
                 g2d.fill(RoundRectangle2D.Float(
-                    (x + w - boxW).toFloat(), (cy + boxH + gap).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                    (inset + iw - boxW).toFloat(), (cy + boxH + gap).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             }
             FlexLayoutResolver.AlignContent.FLEX_END -> {
                 g2d.fill(RoundRectangle2D.Float(
-                    x.toFloat(), (y + h - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                    inset.toFloat(), (inset + ih - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
                 g2d.fill(RoundRectangle2D.Float(
-                    (x + w - boxW).toFloat(), (y + h - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                    (inset + iw - boxW).toFloat(), (inset + ih - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             }
             FlexLayoutResolver.AlignContent.STRETCH -> {
-                val sh = (h - gap) / 2
-                g2d.fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), boxW.toFloat(), sh.toFloat(), 1.5f, 1.5f))
+                val sh = (ih - gap) / 2
+                g2d.fill(RoundRectangle2D.Float(inset.toFloat(), inset.toFloat(), boxW.toFloat(), sh.toFloat(), 1.5f, 1.5f))
                 g2d.fill(RoundRectangle2D.Float(
-                    (x + w - boxW).toFloat(), (y + sh + gap).toFloat(), boxW.toFloat(), sh.toFloat(), 1.5f, 1.5f))
+                    (inset + iw - boxW).toFloat(), (inset + sh + gap).toFloat(), boxW.toFloat(), sh.toFloat(), 1.5f, 1.5f))
             }
             FlexLayoutResolver.AlignContent.SPACE_BETWEEN -> {
-                g2d.fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                g2d.fill(RoundRectangle2D.Float(inset.toFloat(), inset.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
                 g2d.fill(RoundRectangle2D.Float(
-                    (x + w - boxW).toFloat(), (y + h - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                    (inset + iw - boxW).toFloat(), (inset + ih - boxH).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             }
             FlexLayoutResolver.AlignContent.SPACE_AROUND -> {
-                val cy = y + (h - boxH * 2 - gap) / 2
-                g2d.fill(RoundRectangle2D.Float(x.toFloat(), cy.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                val cy = inset + (ih - boxH * 2 - gap) / 2
+                g2d.fill(RoundRectangle2D.Float(inset.toFloat(), cy.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
                 g2d.fill(RoundRectangle2D.Float(
-                    (x + w - boxW).toFloat(), (cy + boxH + gap).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                    (inset + iw - boxW).toFloat(), (cy + boxH + gap).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             }
             FlexLayoutResolver.AlignContent.SPACE_EVENLY -> {
-                val cy = y + (h - boxH * 2 - gap) / 2
-                g2d.fill(RoundRectangle2D.Float(x.toFloat(), cy.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                val cy = inset + (ih - boxH * 2 - gap) / 2
+                g2d.fill(RoundRectangle2D.Float(inset.toFloat(), cy.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
                 g2d.fill(RoundRectangle2D.Float(
-                    (x + w - boxW).toFloat(), (cy + boxH + gap).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+                    (inset + iw - boxW).toFloat(), (cy + boxH + gap).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
             }
         }
     }
 
-    private fun drawDefaultIcon(g2d: Graphics2D, x: Int, y: Int, w: Int, h: Int) {
+    private fun drawDefaultIcon(g2d: Graphics2D, cw: Int, ch: Int) {
+        val inset = 2
+        val iw = cw - inset * 2
+        val ih = ch - inset * 2
         g2d.color = PROP_CHILD
-        val boxW = (w * 0.35).toInt().coerceAtLeast(4)
-        val boxH = (h * 0.35).toInt().coerceAtLeast(4)
-        g2d.fill(RoundRectangle2D.Float(x.toFloat(), (y + (h - boxH) / 2).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+        val boxW = (iw * 0.35).toInt().coerceAtLeast(4)
+        val boxH = (ih * 0.35).toInt().coerceAtLeast(4)
+        val midY = inset + (ih - boxH) / 2
+        g2d.fill(RoundRectangle2D.Float(inset.toFloat(), midY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
         g2d.fill(RoundRectangle2D.Float(
-            (x + w - boxW).toFloat(), (y + (h - boxH) / 2).toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
+            (inset + iw - boxW).toFloat(), midY.toFloat(), boxW.toFloat(), boxH.toFloat(), 1.5f, 1.5f))
     }
 
     override fun toString(): String = "PropertyPreview($propName)"
