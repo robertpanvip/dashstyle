@@ -179,13 +179,27 @@
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
-        <!-- 全局 HighlightVisitor：StaticGlobalHighlightVisitor 按 ReflectorSnifferTest 嗅探到的真实签名
-             （com.intellij.codeInsight.daemon.impl.HighlightVisitor，visit 只有 1 个 PsiElement 参数）
-             静态实现，专门负责 Vue/Svelte 等带内嵌 <style module> 场景——这些文件的内嵌 CssRuleset 不在
-             CSS/SCSS/LESS 语言 ID 下，annotator 扩展点的语言过滤会跳过。
-             纯 CSS/SCSS/LESS 文件已经有上面的 3 个 annotator 画灰/画波浪；StaticGlobalHighlightVisitor.suitableForFile
-             会直接返回 false，避免双画叠加。-->
-        <highlightVisitor implementation="com.pan.dashstyle.StaticGlobalHighlightVisitor" order="first"/>
+        <!-- ========================= 全局 HighlightVisitor 临时禁用（2026-08-14 修复 TS 高亮消失） =========================
+             <highlightVisitor implementation="com.pan.dashstyle.StaticGlobalHighlightVisitor" order="first"/>
+
+             为什么先禁用：HighlightVisitor (com.intellij.codeInsight.daemon.impl.*) 是「无 language 过滤」的全局扩展。
+             之前为了兜底 Vue/Svelte <style module> 内嵌，注册了 <highlightVisitor order="first"/>，并在 suitableForFile()
+             里允许了 .tsx/.jsx/.html。但 WS-2025.3 下：
+               * 一旦某个 language 的 HighlightVisitor 链上有任何 visitor 在 analyze() / visit() 里抛异常
+                 （哪怕 try/catch 了，ThreadLocal 清理不及时、或 holder/action.run 内部出错），GeneralHighlightingPass
+                 会直接放弃本次 pass，该文件所有 PSI 的词法/语法高亮都会整片消失——用户反馈「普通 TS 高亮全没了」
+                 就是这种典型症状。
+               * 实际上我们已经有 2 条更强的覆盖链：
+                   (a) <annotator language=CSS/SCSS/LESS> -> 直接给 CSS/SCSS/LESS 画灰/画波浪
+                   (b) <localInspection language=CSS/SCSS/LESS> + <localInspection language=ANY>
+                       -> language=ANY 的 inspection 会在所有文件（含 Vue/Svelte 内嵌 CssRuleset）遍历时
+                          用 ProblemsHolder.registerProblem(LIKE_UNUSED_SYMBOL / WARNING)，一样能触发 IDE 的
+                          GeneralHighlightingPass 把置灰和波浪线画出来。
+               * 所以 StaticGlobalHighlightVisitor 这个 order=first 的全局 visitor 是「多余且危险」的。
+                 先注释掉，TS/TSX/JS 的默认高亮光立刻恢复；以后真需要再按文件后缀精确匹配+更强 Throwable 兜底再启用。
+             -->
+        <!-- highlightVisitor 已注释（见上方说明），如需重新启用请同时把 StaticGlobalHighlightVisitor.suitableForFile()
+             严格限制在 [.vue/.svelte/.astro]，并确认 analyze() 不抛任何 Throwable。 -->
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
         <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，
@@ -254,6 +268,26 @@
               Convert a CSS / SCSS / LESS file or Vue <code>&lt;style lang="..."&gt;</code> block between SCSS, LESS, and native CSS Nesting
               (shared subset of features: variables, nesting, @extend, mixins, interpolation).
               Unsupported constructs are preserved with an explicit comment warning.
+            ]]></description>
+            <bindToCode>true</bindToCode>
+        </intentionAction>
+
+        <intentionAction>
+            <className>com.pan.dashstyle.ExtractDuplicateDeclarationsAsMixinIntention</className>
+            <language>CSS</language>
+            <language>SCSS</language>
+            <language>LESS</language>
+            <language>XML</language>
+            <category>DashStyle</category>
+            <description><![CDATA[
+              Scans the current CSS/SCSS/LESS file (or the selected portion) for
+              rulesets sharing exactly the same declaration block body and
+              factors them out into a single shared Less-style mixin (e.g.
+              <code>.shared-padding { padding: 10px; }</code>), replacing each
+              original ruleset's body with a mixin call (e.g.
+              <code>.shared-padding;</code>). Nested blocks, strings and
+              function calls like <code>linear-gradient(...)</code> /
+              <code>url("...")</code> are preserved verbatim during comparison.
             ]]></description>
             <bindToCode>true</bindToCode>
         </intentionAction>
