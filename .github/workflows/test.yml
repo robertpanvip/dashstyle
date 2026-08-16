@@ -238,11 +238,27 @@ jobs:
         with:
           gradle-version: 8.14
 
-      - name: Run DashStyleIntegrationTest
+      # 集成测试要全新下载 WebStorm SDK + 大量第三方依赖，GitHub Actions 共享
+      # runner 的出口 IP 经常被 Maven Central 限流（HTTP 429 Too Many Requests）。
+      # 这里给 gradle 套一个重试循环：最多试 5 次、每次递增等待，429/网络抖动
+      # 时自动退避重试，避免整个 job 因一次瞬时 429 就失败。
+      - name: Run DashStyleIntegrationTest (with retry on 429)
         run: |
-          gradle --no-daemon \
-            test \
-            --tests "com.pan.dashstyle.DashStyleIntegrationTest"
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "==================== Attempt $attempt/5 ===================="
+            if gradle --no-daemon \
+                 test \
+                 --tests "com.pan.dashstyle.DashStyleIntegrationTest"; then
+              echo "✅ Integration test passed on attempt $attempt"
+              exit 0
+            fi
+            status=$?
+            echo "⚠️  Attempt $attempt failed (exit=$status). Waiting before retry..."
+            sleep $((attempt * 60))
+          done
+          echo "❌ Integration test failed after 5 attempts"
+          exit 1
 
       - name: Upload integration test reports
         if: always()
