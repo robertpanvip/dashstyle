@@ -115,27 +115,28 @@ private class LayoutGutterIcon(
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+            // viewBox: 平移原点至 (x, y)，之后所有坐标都相对于 (0,0)
+            g2.translate(x, y)
+
             val pad = 2
-            val innerW = getIconWidth() - pad * 2
-            val innerH = getIconHeight() - pad * 2
-            // 容器边框（强调色）
+            val innerW = getIconWidth() - pad * 2  // 20
+            val innerH = getIconHeight() - pad * 2  // 20
+            // 容器边框
             g2.color = OVERALL_BORDER
             g2.stroke = java.awt.BasicStroke(1.0f)
-            g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(),
+            g2.draw(Rectangle2D.Float(pad.toFloat(), pad.toFloat(),
                 (innerW - 1).toFloat(), (innerH - 1).toFloat()))
-            // 子块：根据实际布局模型摆位，但限制最大尺寸让子块看起来是小方块而非填满容器
+            // 子块：限制最大尺寸，让子块看起来是小方块而非填满容器
             g2.color = OVERALL_CHILD
             val maxChildW = (innerW * 0.45).toInt().coerceAtLeast(4)
             val maxChildH = (innerH * 0.7).toInt().coerceAtLeast(4)
             for (b in model.boxes(innerW, innerH)) {
                 var bw = b.w.coerceAtMost(maxChildW).coerceAtLeast(2)
                 var bh = b.h.coerceAtMost(maxChildH).coerceAtLeast(2)
-                // 在原始位置内居中
                 val cx = b.x + (b.w - bw) / 2
                 val cy = b.y + (b.h - bh) / 2
                 g2.fill(RoundRectangle2D.Float(
-                    (x + pad + cx).toFloat(),
-                    (y + pad + cy).toFloat(),
+                    (pad + cx).toFloat(), (pad + cy).toFloat(),
                     bw.toFloat(), bh.toFloat(), 2f, 2f))
             }
         } finally {
@@ -175,20 +176,22 @@ private class PerPropertyGutterIcon(
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+            // viewBox: 平移原点至 (x, y)
+            g2.translate(x, y)
             g2.color = AXIS_COLOR
             g2.stroke = AXIS_STROKE
 
-            val cx = x + iconWidth / 2f
-            val cy = y + iconHeight / 2f
+            val cx = iconWidth / 2f
+            val cy = iconHeight / 2f
 
             when {
                 // 水平主轴：justify-content / justify-items / justify-self
                 propName.startsWith("justify") || propName.startsWith("grid-template-columns") -> {
-                    drawHorizontalArrow(g2, x, y)
+                    drawHorizontalArrow(g2, 0, 0)
                 }
                 // 垂直交叉轴：align-items / align-self / align-content
                 propName.startsWith("align") || propName.startsWith("grid-template-rows") -> {
-                    drawVerticalArrow(g2, x, y)
+                    drawVerticalArrow(g2, 0, 0)
                 }
                 // flex-direction：方向切换
                 propName == "flex-direction" -> {
@@ -204,8 +207,8 @@ private class PerPropertyGutterIcon(
                 }
                 // 默认：十字箭头
                 else -> {
-                    drawHorizontalArrow(g2, x, y)
-                    drawVerticalArrow(g2, x, y)
+                    drawHorizontalArrow(g2, 0, 0)
+                    drawVerticalArrow(g2, 0, 0)
                 }
             }
         } finally {
