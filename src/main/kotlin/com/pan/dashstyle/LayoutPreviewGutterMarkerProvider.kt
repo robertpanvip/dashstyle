@@ -51,8 +51,10 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
             for ((d, model) in ctx.perProperty) declToModel[d] = model to false
         }
 
+        val seen = HashSet<CssDeclaration>()
         for (element in elements) {
             if (element !is CssDeclaration) continue
+            if (!seen.add(element)) continue // 同一声明只生成一个图标
             val (model, overall) = declToModel[element] ?: continue
             val leaf = PsiTreeUtil.getDeepestFirst(element) ?: continue
             val ruleset = PsiTreeUtil.getParentOfType(element, CssRuleset::class.java) ?: continue
@@ -98,27 +100,27 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 
 /**
  * gutter 总效果布局预览 icon：根据实际布局模型渲染子块位置。
- * 仅用于 `display:flex/grid` 行，24×24 紧凑显示。
+ * 仅用于 `display:flex/grid` 行，18×18 紧凑显示。
  * 完整布局预览在 tooltip 中展示。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
 ) : Icon {
 
-    override fun getIconWidth(): Int = 24
-    override fun getIconHeight(): Int = 24
+    override fun getIconWidth(): Int = 18
+    override fun getIconHeight(): Int = 18
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-            val pad = 3
+            val pad = 2
             val innerW = getIconWidth() - pad * 2
             val innerH = getIconHeight() - pad * 2
             // 容器边框（强调色）
             g2.color = OVERALL_BORDER
-            g2.stroke = java.awt.BasicStroke(1.0f)
+            g2.stroke = java.awt.BasicStroke(0.8f)
             g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(),
                 (innerW - 1).toFloat(), (innerH - 1).toFloat()))
             // 子块：根据实际布局模型摆位
@@ -130,7 +132,7 @@ private class LayoutGutterIcon(
                 g2.fill(RoundRectangle2D.Float(
                     (x + pad + b.x).toFloat(),
                     (y + pad + b.y).toFloat(),
-                    bw.toFloat(), bh.toFloat(), 2f, 2f))
+                    bw.toFloat(), bh.toFloat(), 1f, 1f))
             }
         } finally {
             g2.dispose()
@@ -146,7 +148,7 @@ private class LayoutGutterIcon(
 /**
  * 单属性布局预览 icon：根据属性名称显示对应的轴方向简图。
  * 不展示完整布局，仅用箭头/线条指示该属性影响哪个轴。
- * 尺寸 24×24，紧凑显示。
+ * 尺寸 18×18，紧凑显示。
  *
  * 各属性对应图形：
  *  - justify-content / justify-items / justify-self → 水平双箭头（主轴）
@@ -161,8 +163,8 @@ private class PerPropertyGutterIcon(
     private val propName: String
 ) : Icon {
 
-    override fun getIconWidth(): Int = 24
-    override fun getIconHeight(): Int = 24
+    override fun getIconWidth(): Int = 18
+    override fun getIconHeight(): Int = 18
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
