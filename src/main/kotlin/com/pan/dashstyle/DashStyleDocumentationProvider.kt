@@ -84,6 +84,12 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
     }
 
     override fun generateDoc(element: PsiElement?, originalElement: PsiElement?): String? {
+        return runCatching gen@{
+            doGenerateDoc(element, originalElement)
+        }.getOrNull()
+    }
+
+    private fun doGenerateDoc(element: PsiElement?, originalElement: PsiElement?): String? {
         if (element == null) return null
 
         // Case 1: 直接悬浮在 CssRuleset 上（用户从导航跳进去后又悬浮）
