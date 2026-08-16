@@ -57,6 +57,14 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     }
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
+        // 意图可能在后台线程被调用（例如对文件副本做意图预览/分析时，
+        // 当前线程可能是 DefaultDispatcher-worker-N）。PSI 访问、对话框、
+        // 写操作都要求 EDT，因此统一切到 EDT 再执行。
+        val app = ApplicationManager.getApplication()
+        if (!app.isDispatchThread) {
+            app.invokeAndWait { invoke(project, editor, file) }
+            return
+        }
         val offset = editor.caretModel.offset
         val loc = listOf(offset, (offset - 1).coerceAtLeast(0), (offset + 1).coerceAtMost((file.textLength - 1).coerceAtLeast(0)))
             .asSequence().mapNotNull { file.findElementAt(it) }
@@ -74,11 +82,21 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         val cssDeclarations = try {
             JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(styleObjText)
         } catch (t: Throwable) {
-            LOG.warn("convertJsonToCss failed", t)
-            Messages.showErrorDialog(project,
-                "Failed to convert style object to CSS: ${t.message}",
-                "Extract to CSS Module")
-            return
+            // 兜底：extractObjectLiteral 有时剥壳不干净（例如光标在 value 内部时
+            // attrPsi.text 只是局部片段）。而 convertJsonToCss 的 normalizeStyleExpression
+            // 本身支持 `name={{...}}` / `name={...}` / `{...}` 全形式，因此直接用
+            // 完整属性文本再试一次，尽量避免误报 "Not a recognized style object"。
+            val retry = runCatching {
+                JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(loc.attrPsi.text)
+            }.getOrNull()
+            if (!retry.isNullOrBlank()) retry
+            else {
+                LOG.warn("convertJsonToCss failed", t)
+                Messages.showErrorDialog(project,
+                    "Failed to convert style object to CSS: ${t.message}",
+                    "Extract to CSS Module")
+                return
+            }
         }
         if (cssDeclarations.isBlank()) return
 
