@@ -53,6 +53,7 @@ object FlexLayoutResolver {
         "flex-start" -> Align.FLEX_START
         "flex-end" -> Align.FLEX_END
         "center" -> Align.CENTER
+        "stretch" -> Align.STRETCH
         "baseline" -> Align.BASELINE
         else -> fallback
     }
@@ -61,6 +62,7 @@ object FlexLayoutResolver {
         "flex-start" -> AlignContent.FLEX_START
         "flex-end" -> AlignContent.FLEX_END
         "center" -> AlignContent.CENTER
+        "stretch" -> AlignContent.STRETCH
         "space-between" -> AlignContent.SPACE_BETWEEN
         "space-around" -> AlignContent.SPACE_AROUND
         "space-evenly" -> AlignContent.SPACE_EVENLY

@@ -36,6 +36,7 @@ object GridLayoutResolver {
         "start" -> GridAlign.START
         "center" -> GridAlign.CENTER
         "end" -> GridAlign.END
+        "stretch" -> GridAlign.STRETCH
         else -> fallback
     }
 
