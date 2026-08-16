@@ -132,7 +132,7 @@ private class LayoutHintCollector(
 
     private fun previewModelFor(model: LayoutModel): LayoutModel {
         return when (model) {
-            is LayoutModel.Flex -> LayoutModel.Flex(model.props.copy(childCount = 2))
+            is LayoutModel.Flex -> LayoutModel.Flex(model.props.copy(childCount = 3))
             else -> model
         }
     }
@@ -189,22 +189,22 @@ private class OverallPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 90
+    override val width: Int get() = 92
     override val height: Int get() = 30
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-        val pad = 4
-        val innerW = width - pad * 2   // 82
-        val innerH = height - pad * 2  // 22
+        val pad = 6
+        val innerW = width - pad * 2   // 80
+        val innerH = height - pad * 2  // 18
 
-        // 边框居中
+        // 边框居中（不减去 1，使边框宽度 = innerW，实现左右居中）
         g2d.color = OVERALL_BORDER
         g2d.draw(RoundRectangle2D.Float(
             pad.toFloat(), pad.toFloat(),
-            (innerW - 1).toFloat(), (innerH - 1).toFloat(), 3f, 3f
+            innerW.toFloat(), innerH.toFloat(), 3f, 3f
         ))
 
         val boxes = model.boxes(innerW, innerH)
@@ -245,31 +245,31 @@ private class PropertyPreviewPresentation(
     private val model: LayoutModel
 ) : BasePresentation() {
 
-    override val width: Int get() = 60
-    override val height: Int get() = 20
+    override val width: Int get() = 64
+    override val height: Int get() = 24
 
     override fun paint(g2d: Graphics2D, textAttributes: TextAttributes) {
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-        val pad = 4
+        val pad = 6
         val w = width
         val h = height
         val innerW = w - pad * 2   // 52
         val innerH = h - pad * 2   // 12
 
-        // 边框居中
+        // 边框居中（不减去 1，使边框宽度 = innerW，实现左右居中）
         g2d.color = PROP_BORDER
         g2d.draw(RoundRectangle2D.Float(
             pad.toFloat(), pad.toFloat(),
-            (innerW - 1).toFloat(), (innerH - 1).toFloat(), 3f, 3f
+            innerW.toFloat(), innerH.toFloat(), 3f, 3f
         ))
 
-        // 图标在边框内居中（与之前一致的绘制区域大小）
+        // 图标在边框内居中
         val iconW = innerW - 10   // 42
         val iconH = innerH - 4    // 8
-        val cx = pad + (innerW - iconW) / 2  // 9
-        val cy = pad + (innerH - iconH) / 2  // 6
+        val cx = pad + (innerW - iconW) / 2  // 11
+        val cy = pad + (innerH - iconH) / 2  // 8
 
         when (propName) {
             "justify-content" -> drawJustifyIcon(g2d, cx, cy, iconW, iconH)
