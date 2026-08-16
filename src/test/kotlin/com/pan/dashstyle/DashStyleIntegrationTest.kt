@@ -477,10 +477,10 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         ApplicationManager.getApplication().runReadAction {
             provider.collectSlowLineMarkers(elements, markers)
         }
-        // display 行 → 总效果图标；justify-content / align-items / gap → 3 个属性图标 = 4 个
+        // 只显示 display 行的总效果图标，不显示每属性的独立图标
         Assert.assertEquals(
-            "应生成 4 个布局 gutter 图标（display+3 属性）；实际 markers.size=${markers.size}",
-            4, markers.size
+            "应生成 1 个布局 gutter 图标（仅 display 行）；实际 markers.size=${markers.size}",
+            1, markers.size
         )
         Assert.assertTrue("每个图标都应带 icon", markers.all { it.icon != null })
     }
@@ -508,10 +508,10 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         ApplicationManager.getApplication().runReadAction {
             provider.collectSlowLineMarkers(elements, markers)
         }
-        // display 行 → 总效果图标；grid-template-columns / gap → 2 个属性图标 = 3 个
+        // 只显示 display 行的总效果图标，不显示每属性的独立图标
         Assert.assertEquals(
-            "应生成 3 个 grid gutter 图标（display+2 属性）；实际 markers.size=${markers.size}",
-            3, markers.size
+            "应生成 1 个 grid gutter 图标（仅 display 行）；实际 markers.size=${markers.size}",
+            1, markers.size
         )
     }
 }

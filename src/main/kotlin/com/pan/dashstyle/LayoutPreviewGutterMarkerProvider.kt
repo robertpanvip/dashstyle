@@ -44,30 +44,18 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
         val contexts = LayoutContextResolver.contexts(file)
         if (contexts.isEmpty()) return
 
-        // 声明 → (模型, 是否总效果图标)
-        val declToModel = HashMap<CssDeclaration, Pair<LayoutModel, Boolean>>()
-        for (ctx in contexts) {
-            declToModel[ctx.display] = ctx.overall to true
-            for ((d, model) in ctx.perProperty) declToModel[d] = model to false
-        }
-
+        // 只显示 display:flex/grid 行的总效果图标，不显示每个属性的独立图标
         for (element in elements) {
             if (element !is CssDeclaration) continue
-            val (model, overall) = declToModel[element] ?: continue
+            val ctx = contexts.firstOrNull { it.display == element } ?: continue
             val leaf = PsiTreeUtil.getDeepestFirst(element) ?: continue
             val ruleset = PsiTreeUtil.getParentOfType(element, CssRuleset::class.java) ?: continue
-            val propName = element.propertyName?.trim()?.lowercase().orEmpty()
-            val icon = if (overall) {
-                LayoutGutterIcon(model)
-            } else {
-                PerPropertyGutterIcon(propName)
-            }
             val marker = LineMarkerInfo(
                 leaf,
                 leaf.textRange,
-                icon,
-                { LayoutPreviewTooltip.html(model, overall) },
-                openPopupHandler(ruleset, model, propName.takeIf { !overall }),
+                LayoutGutterIcon(ctx.overall),
+                { LayoutPreviewTooltip.html(ctx.overall, true) },
+                openPopupHandler(ruleset, ctx.overall),
                 GutterIconRenderer.Alignment.LEFT
             )
             result.add(marker)
@@ -80,15 +68,14 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 
     private fun openPopupHandler(
         ruleset: CssRuleset,
-        model: LayoutModel,
-        triggerProperty: String? = null
+        model: LayoutModel
     ): GutterIconNavigationHandler<PsiElement> {
         return object : GutterIconNavigationHandler<PsiElement> {
             override fun navigate(e: java.awt.event.MouseEvent, element: PsiElement) {
                 val doc = element.containingFile?.viewProvider?.document
                 val editor = doc?.let { EditorFactory.getInstance().getEditors(it).firstOrNull() }
                 if (editor != null && e.component != null) {
-                    val popup = LayoutPreviewPopup.create(editor, ruleset, model, triggerProperty)
+                    val popup = LayoutPreviewPopup.create(editor, ruleset, model)
                     popup.showInScreenCoordinates(e.component, e.locationOnScreen)
                 }
             }
@@ -98,32 +85,31 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 
 /**
  * gutter 总效果布局预览 icon：根据实际布局模型渲染子块位置。
- * 仅用于 `display:flex/grid` 行，16×16 紧凑显示不占行号空间。
+ * 仅用于 `display:flex/grid` 行，24×24 紧凑显示。
  * 完整布局预览在 tooltip 中展示。
  */
 private class LayoutGutterIcon(
     private val model: LayoutModel
 ) : Icon {
 
-    override fun getIconWidth(): Int = 16
-    override fun getIconHeight(): Int = 16
+    override fun getIconWidth(): Int = 24
+    override fun getIconHeight(): Int = 24
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-            val pad = 2
+            val pad = 3
             val innerW = getIconWidth() - pad * 2
             val innerH = getIconHeight() - pad * 2
             // 容器边框（强调色）
             g2.color = OVERALL_BORDER
-            g2.stroke = java.awt.BasicStroke(0.8f)
+            g2.stroke = java.awt.BasicStroke(1.0f)
             g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(),
                 (innerW - 1).toFloat(), (innerH - 1).toFloat()))
             // 子块：根据实际布局模型摆位
             g2.color = OVERALL_CHILD
-            g2.stroke = java.awt.BasicStroke(0.5f)
             for (b in model.boxes(innerW, innerH)) {
                 val bw = b.w.coerceAtLeast(2)
                 val bh = b.h.coerceAtLeast(2)
@@ -131,7 +117,7 @@ private class LayoutGutterIcon(
                 g2.fill(RoundRectangle2D.Float(
                     (x + pad + b.x).toFloat(),
                     (y + pad + b.y).toFloat(),
-                    bw.toFloat(), bh.toFloat(), 1f, 1f))
+                    bw.toFloat(), bh.toFloat(), 2f, 2f))
             }
         } finally {
             g2.dispose()
@@ -147,7 +133,7 @@ private class LayoutGutterIcon(
 /**
  * 单属性布局预览 icon：根据属性名称显示对应的轴方向简图。
  * 不展示完整布局，仅用箭头/线条指示该属性影响哪个轴。
- * 尺寸 16×16，紧凑显示，不占行号空间。
+ * 尺寸 24×24，紧凑显示。
  *
  * 各属性对应图形：
  *  - justify-content / justify-items / justify-self → 水平双箭头（主轴）
@@ -162,8 +148,8 @@ private class PerPropertyGutterIcon(
     private val propName: String
 ) : Icon {
 
-    override fun getIconWidth(): Int = 16
-    override fun getIconHeight(): Int = 16
+    override fun getIconWidth(): Int = 24
+    override fun getIconHeight(): Int = 24
 
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
         val g2 = g.create() as Graphics2D
