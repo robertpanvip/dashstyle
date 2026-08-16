@@ -269,7 +269,7 @@
              只保留 #7 的「复制 TSX/Vue 标签时把关联 CSS 规则一起打包到目标 CSS Module」的处理器。-->
         <copyPastePreProcessor
                 implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
-        <copyPastePreProcessor
+        <copyPastePostProcessor
                 implementation="com.pan.dashstyle.CssBundleCopyPastePostProcessor"/>
 
         <!-- ========================= 快速修复 / 意向动作 ========================= -->
