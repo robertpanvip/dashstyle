@@ -95,31 +95,33 @@ private class LayoutHintCollector(
     private val editor: Editor
 ) : InlayHintsCollector {
 
-    private var collected = false
+    private val contexts by lazy {
+        ClickHandlerRegistry.register(editor, file)
+        LayoutContextResolver.contexts(file)
+    }
 
     override fun collect(element: PsiElement, editor: Editor, sink: InlayHintsSink): Boolean {
-        if (collected) return false
-        collected = true
+        if (element !is CssDeclaration) return true
 
-        ClickHandlerRegistry.register(editor, file)
-
-        val addedOffsets = HashSet<Int>()
-        val contexts = LayoutContextResolver.contexts(file)
         for (ctx in contexts) {
-            val off = ctx.display.textRange.endOffset
-            if (addedOffsets.add(off)) {
+            // display:flex/grid 行 → 整体预览
+            if (element === ctx.display) {
                 val model = previewModelFor(ctx.overall)
-                sink.addInlineElement(off, false, OverallPreviewPresentation(model), false)
+                sink.addInlineElement(element.textRange.endOffset, false,
+                    OverallPreviewPresentation(model), false)
+                return true
             }
+            // 子属性行 → 属性图标
             for ((d, m) in ctx.perProperty) {
-                val propOff = d.textRange.endOffset
-                if (addedOffsets.add(propOff)) {
+                if (element === d) {
                     val propName = d.propertyName?.trim()?.lowercase() ?: ""
-                    sink.addInlineElement(propOff, false, PropertyPreviewPresentation(propName, m), false)
+                    sink.addInlineElement(d.textRange.endOffset, false,
+                        PropertyPreviewPresentation(propName, m), false)
+                    return true
                 }
             }
         }
-        return false
+        return true
     }
 
     private fun previewModelFor(model: LayoutModel): LayoutModel =
