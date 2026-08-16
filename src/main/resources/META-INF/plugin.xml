@@ -192,21 +192,16 @@
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
-<!-- ========================= CSS Flex 布局预览（#8） ========================= -->
-        <!-- 输入时自动更新：把 flex/grid 布局预览渲染到行号前的 gutter（WebStorm 颜色预览式）。
-             在 display:flex/grid 行前渲染总效果图标，在每条布局属性行前渲染聚焦该属性的迷你布局图。
-             点击图标弹出交互面板。gutter 由高亮通道驱动，随编辑实时刷新。
-             语言维度注册与 localInspection 同理（CSS/SCSS/LESS/ANY），
-             Kotlin 侧用 LayoutContextResolver 实际过滤，避免无关文件被反复触发。 -->
-        <codeInsight.lineMarkerProvider
+<!-- ========================= CSS Flex 布局预览（inlay） ========================= -->
+        <codeInsight.inlayProvider
                 language="CSS"
-                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
-        <codeInsight.lineMarkerProvider
+                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
+        <codeInsight.inlayProvider
                 language="SCSS"
-                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
-        <codeInsight.lineMarkerProvider
+                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
+        <codeInsight.inlayProvider
                 language="LESS"
-                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+                implementationClass="com.pan.dashstyle.LayoutPreviewInlayProvider"/>
 
         <!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
         <!-- 在 box-shadow / text-shadow 声明行前渲染圆角矩形 + 真实阴影的 gutter 图标，
