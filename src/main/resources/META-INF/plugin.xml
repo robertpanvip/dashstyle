@@ -195,13 +195,7 @@
 <!-- ========================= CSS Flex 布局预览（inlay） ========================= -->
         <!-- 使用 InlayHintsProvider 框架在 display:flex/grid 声明行尾添加可点击的布局预览 inlay。 -->
         <codeInsight.inlayProvider
-                language="CSS"
-                implementationClass="com.pan.dashstyle.CssLayoutPreviewInlayProvider"/>
-        <codeInsight.inlayProvider
-                language="SCSS"
-                implementationClass="com.pan.dashstyle.CssLayoutPreviewInlayProvider"/>
-        <codeInsight.inlayProvider
-                language="LESS"
+                language="ANY"
                 implementationClass="com.pan.dashstyle.CssLayoutPreviewInlayProvider"/>
 
         <!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
