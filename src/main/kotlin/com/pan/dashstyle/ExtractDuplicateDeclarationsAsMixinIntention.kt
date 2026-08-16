@@ -213,7 +213,8 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         if (textM2 != null) {
             textM2.isAccessible = true
             (textM2.invoke(styleTag) as? CharSequence)?.toString()
-        } ?: ""
+        } else null
+        ?: ""
     }.getOrDefault("")
 
     private fun replaceTagInnerTextViaReflection(styleTag: PsiElement, file: PsiFile, newText: String) {
