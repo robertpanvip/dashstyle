@@ -85,12 +85,17 @@ class CssUnitInlayProvider : InlayHintsProvider<CssUnitInlayProvider.Settings> {
                 if (element !== file || !isStylesheetLike(file)) return false
                 if (!settings.showConversions) return false
                 for (d in PsiTreeUtil.findChildrenOfType(file, CssDeclaration::class.java)) {
+                    // 跳过布局预览已覆盖的属性（gap/row-gap/column-gap），避免一行显示两个 inlay
+                    val pn = d.propertyName?.trim()?.lowercase()
+                    if (pn in LAYOUT_GAP_PROPS) continue
                     val text = d.value?.text?.trim() ?: continue
                     val hint = hintFor(text) ?: continue
                     sink.addInlineElement(d.textRange.endOffset, false, UnitHintPresentation(hint), false)
                 }
                 return false
             }
+
+            private val LAYOUT_GAP_PROPS = setOf("gap", "row-gap", "column-gap")
         }
     }
 
