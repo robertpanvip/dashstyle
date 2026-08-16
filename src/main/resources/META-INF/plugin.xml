@@ -354,12 +354,13 @@
             <bindToCode>true</bindToCode>
         </intentionAction>
 
-        <!-- ========================= 颜色提取 Action（Code 菜单 + Help → Find Action） ========================= -->
+        <!-- ========================= 颜色提取 Action（编辑器右键菜单 + Find Action） ========================= -->
         <action id="DashStyle.ExtractColors"
                 class="com.pan.dashstyle.ExtractColorsAction"
                 text="DashStyle: Extract Colors as CSS Variables"
                 description="Scan CSS/SCSS/LESS files or selection, extract unique colors into CSS variables, preview &amp; edit names, copy :root block to clipboard and replace references in place.">
             <add-to-group group-id="CodeMenu" anchor="before" relative-to-action="GenerateCode"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="HelpFindAction"/>
         </action>
     </extensions>
