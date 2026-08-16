@@ -118,6 +118,7 @@ object LayoutPreviewPopup {
                 childCount = state[0].childCount,
                 alignSelfs = state[0].alignSelfs
             )
+            preview.revalidate()
             preview.repaint()
             apply()
         }
@@ -313,12 +314,13 @@ object LayoutPreviewPopup {
                 columns = List(nCols) { GridLayoutResolver.Track.Flex(1) },
                 rows = List(nRows) { GridLayoutResolver.Track.Flex(1) },
                 gap = gap.value.coerceIn(0, 40),
-                justifyItems = GridLayoutResolver.parseAlign(justifyItems.selectedItem as? String, state[0].justifyItems),
-                alignItems = GridLayoutResolver.parseAlign(alignItems.selectedItem as? String, state[0].alignItems),
-                justifyContent = GridLayoutResolver.parseAlign(justifyContent.selectedItem as? String, state[0].justifyContent),
-                alignContent = GridLayoutResolver.parseAlign(alignContent.selectedItem as? String, state[0].alignContent),
+                justifyItems = GridLayoutResolver.parseAlign(justifyItems.selectedItem?.toString(), state[0].justifyItems),
+                alignItems = GridLayoutResolver.parseAlign(alignItems.selectedItem?.toString(), state[0].alignItems),
+                justifyContent = GridLayoutResolver.parseAlign(justifyContent.selectedItem?.toString(), state[0].justifyContent),
+                alignContent = GridLayoutResolver.parseAlign(alignContent.selectedItem?.toString(), state[0].alignContent),
                 childCount = state[0].childCount
             )
+            preview.revalidate()
             preview.repaint()
             apply()
         }
