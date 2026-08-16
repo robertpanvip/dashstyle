@@ -4,12 +4,11 @@ import com.intellij.codeInspection.*
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.psi.*
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.css.StylesheetFile
-import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.xml.XmlFile
@@ -144,235 +143,6 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         }
     }
 
-    private fun getOrComputeFileSnapshot(cssFile: PsiFile): Snapshot {
-        return CachedValuesManager.getManager(cssFile.project).getCachedValue(
-            cssFile,
-            CachedValueProvider {
-                val snap = computeFileSnapshot(cssFile)
-                CachedValueProvider.Result.create(
-                    snap,
-                    cssFile,
-                    com.intellij.psi.util.PsiModificationTracker.MODIFICATION_COUNT
-                )
-            }
-        )
-    }
-
-    private fun computeFileSnapshot(cssFile: PsiFile): Snapshot {
-        val cssVf = cssFile.virtualFile ?: return Snapshot(emptySet(), true, emptyMap())
-        if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return Snapshot(emptySet(), true, emptyMap())
-
-        val references = findReferencingSourceFiles(cssFile)
-        if (references.isEmpty()) return Snapshot(emptySet(), false, emptyMap())  // 非 CSS Module 容器 → 不置灰，也不报错
-
-        val used = mutableSetOf<String>()
-        var hasDynamic = false
-        val cssVfPath = cssVf.path
-        val cssBaseName = cssVf.nameWithoutExtension.substringBeforeLast(".module")
-
-        for ((srcPsi, bindingNameHint) in references) {
-            val srcText = runCatching { srcPsi.text }.getOrNull().orEmpty()
-            if (srcText.isEmpty()) continue
-
-            // --- 快速 hasDynamic 检测：
-            //     文本里出现 bindingName[xxx] 中括号引用，且 [ 之后第一个非空字符不是 ' 或 "，则视为动态索引
-            val candidateBindings = setOf(bindingNameHint.ifBlank { "styles" }, "styles", "css", "classes", "styled", "style", "moduleStyles")
-            dynLoop@ for (b in candidateBindings) {
-                val re = Regex("""\b${Regex.escape(b)}\s*\[\s*([^\s\]])""")
-                val m = re.find(srcText) ?: continue
-                val firstChar = m.groupValues[1].firstOrNull() ?: continue
-                if (firstChar != '\'' && firstChar != '"' && firstChar != '`') {
-                    hasDynamic = true
-                    break@dynLoop
-                }
-            }
-            if (hasDynamic) break
-
-            // --- 文本级 usedClassNames 扫描：同时覆盖 member access 和字符串索引 ---
-            // 注意：used 里同时存 camelCase(fooBar) + kebab(foo-bar)，匹配双风格。
-            for (b in candidateBindings) {
-                // styles.fooBar
-                val memberRe = Regex("""\b${Regex.escape(b)}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)""")
-                for (mm in memberRe.findAll(srcText)) {
-                    val name = mm.groupValues[1]
-                    used += name
-                    used += Util.camelToKebab(name)
-                }
-                // styles["foo-bar"] / styles['foo-bar'] / styles[`fooBar`]
-                val idxRe = Regex("""\b${Regex.escape(b)}\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
-                for (mm in idxRe.findAll(srcText)) {
-                    val name = mm.groupValues[2]
-                    used += name
-                    used += Util.camelToKebab(name)
-                    used += Util.kebabToCamel(name)
-                }
-            }
-
-            // --- Vue 场景 :class="$style.xxx" 或 :class="xxx in $style" ---
-            if (srcPsi is XmlFile || (srcPsi.virtualFile?.extension?.lowercase() == "vue")) {
-                val vueRe = Regex("""\${'$'}style\.([A-Za-z_][A-Za-z0-9_-]*)""")
-                for (mm in vueRe.findAll(srcText)) {
-                    val n = mm.groupValues[1]
-                    used += n
-                    used += Util.camelToKebab(n)
-                    used += Util.kebabToCamel(n)
-                }
-                val vueIdx = Regex("""\${'$'}style\[(['"`])([^'"`]+)\1\]""")
-                for (mm in vueIdx.findAll(srcText)) {
-                    val n = mm.groupValues[2]
-                    used += n
-                    used += Util.camelToKebab(n)
-                    used += Util.kebabToCamel(n)
-                }
-            }
-
-            // --- className="xxx" 或 :class="['a','b']" 如果是字符串字面量直接引用 kebab class 也当 used ---
-            for (mm in STRING_CLASSNAME_RE.findAll(srcText)) {
-                // groupValues: 0=整串, 1=双引号内容, 2=单引号内容, 3=反引号内容 -> 取首个非空
-                val captured = mm.groupValues.drop(1).firstOrNull { it.isNotBlank() }.orEmpty()
-                val tokens = captured.split(Regex("""\s+""")).filter { it.isNotBlank() }
-                for (t in tokens) {
-                    used += t
-                    used += Util.kebabToCamel(t)
-                }
-            }
-        }
-
-        if (hasDynamic) return Snapshot(used, true, emptyMap())
-
-        // --- 内部 @extend / 选择器嵌套里的复合类引用也算 used（text-level 扫描 CSS 文本） ---
-        val cssText = runCatching { cssFile.text }.getOrNull().orEmpty()
-        val classesInFile = MODULE_CLASS_RE.findAll(cssText).mapNotNull { m ->
-            val raw = m.groupValues[1]
-            val firstChar = raw.firstOrNull() ?: return@mapNotNull null
-            val name = if (firstChar == '.') raw.drop(1) else raw
-            name.trim().takeIf { it.isNotEmpty() }
-        }.toSet()
-        for (extend in EXTEND_RE.findAll(cssText)) {
-            val raw = extend.groupValues[1].trim().trimStart('.').trim()
-            if (raw in classesInFile) used += raw
-        }
-        for (apply in APPLY_RE.findAll(cssText)) {
-            apply.groupValues[1].split(Regex("""\s+""")).map { it.trim().trimStart('.') }.forEach {
-                if (it in classesInFile) used += it
-            }
-        }
-
-        // --- 选择器复合场景：.a .b {} 里出现的 nested class b 若在 classesInFile 中也保守算 used（嵌套内部复用） ---
-        for (rs in runCatching { com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(cssFile, CssRuleset::class.java) }.getOrDefault(emptyList())) {
-            val selText = runCatching { rs.selectorList?.text }.getOrNull().orEmpty()
-            for (nested in NESTED_CLASS_RE.findAll(selText).map { it.groupValues[1] }) {
-                if (nested in classesInFile) used += nested
-            }
-        }
-
-        return Snapshot(used, false, emptyMap())
-    }
-
-    // ================================================================
-    // Ruleset 级 class 名提取（按 PSI selectorList 正则，不依赖语言）
-    // ================================================================
-    private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
-        val raw = runCatching { rs.selectorList?.text }.getOrNull().orEmpty().trim()
-        if (raw.isEmpty()) return emptyList()
-        // Less &-suffix：把 expandAmpersand 应用一次；外层已经 expandSelector，保险起见这里再做一次 text 级 normalize
-        val normalized = runCatching { Util.expandSelector(rs) }.getOrNull()
-            ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
-        // 去掉伪类/伪元素部分以避免误剪
-        val cleaned = normalized.replace(PSEUDO_PART_RE, "")
-        return MODULE_CLASS_RE.findAll(cleaned).mapNotNull { m ->
-            val rawName = m.groupValues[1]
-            val name = if (rawName.startsWith(".")) rawName.drop(1) else rawName
-            name.trim().takeIf { it.isNotEmpty() }
-        }.distinct().toList()
-    }
-
-    // ================================================================
-    // 反向查找 sourceFiles：JS/Vue 通过 ES6 import 引用这个 CSS Module 的
-    // ================================================================
-    private fun findReferencingSourceFiles(cssFile: PsiFile): List<Pair<PsiFile, String>> {
-        val project = cssFile.project
-        val cssVf = cssFile.virtualFile ?: return emptyList()
-        val cssPath = cssVf.path
-        val cssName = cssVf.name
-        val out = mutableListOf<Pair<PsiFile, String>>()
-        val seen = mutableSetOf<String>()
-
-        ApplicationManager.getApplication().runReadAction {
-            val scope = GlobalSearchScope.projectScope(project)
-            val fileNames = hashSetOf<String>()
-            runCatching {
-                val idx = ProjectFileIndex.getInstance(project)
-                idx.iterateContent { vf ->
-                    val n = vf.name
-                    if (vf.isValid && !vf.isDirectory && (
-                        n.endsWith(".js") || n.endsWith(".jsx") ||
-                            n.endsWith(".ts") || n.endsWith(".tsx") ||
-                            n.endsWith(".vue"))
-                    ) {
-                        fileNames += n
-                    }
-                    true
-                }
-            }
-            val candidatePsiFiles = mutableListOf<PsiFile>()
-            for (n in fileNames) {
-                val vFiles = runCatching { FilenameIndex.getVirtualFilesByName(n, scope) }.getOrNull() ?: continue
-                for (vf in vFiles) {
-                    if (!vf.isValid || vf.isDirectory) continue
-                    val psi = PsiManager.getInstance(project).findFile(vf) ?: continue
-                    candidatePsiFiles += psi
-                }
-            }
-
-            for (psiFile in candidatePsiFiles) {
-                val imports = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(psiFile, ES6ImportDeclaration::class.java)
-                if (imports.isEmpty()) continue
-                val fileVf = psiFile.virtualFile?.parent ?: continue
-                for (imp in imports) {
-                    val from = (imp.importModuleText ?: continue).trim('"', '\'')
-                    if (!MODULE_EXTS.any { from.endsWith(it, ignoreCase = true) }) continue
-                    val resolvedVf = fileVf.findFileByRel2(from.trimStart('/'))
-                        ?: fileVf.findChild(from.substringAfterLast('/'))
-                        ?: continue
-                    val samePath = try {
-                        val normA = resolvedVf.path.replace('\\', '/').trimEnd('/')
-                        val normB = cssPath.replace('\\', '/').trimEnd('/')
-                        normA == normB
-                    } catch (_: Throwable) { false }
-                    if (!samePath && resolvedVf.name != cssName) continue
-
-                    val named = imp.namedImports
-                    val defaultBinding = imp.importedBindings.firstOrNull { b ->
-                        named == null || !com.intellij.psi.util.PsiTreeUtil.isAncestor(named, b, false)
-                    } ?: imp.importedBindings.firstOrNull() ?: continue
-                    val key = psiFile.virtualFile?.path.orEmpty() + "#" + (defaultBinding.name ?: "styles")
-                    if (seen.add(key)) out += psiFile to (defaultBinding.name ?: "styles")
-                }
-            }
-
-            // --- Vue SFC：如果 cssFile 是 vue 内嵌 <style module>，此时直接取 vueFile 为引用源 ---
-            val parentFile = cssFile.parent
-            if (parentFile != null) {
-                val containingVue = runCatching {
-                    com.intellij.psi.util.PsiTreeUtil.getContextOfType(parentFile, XmlTag::class.java)
-                        ?.let { xmlTag ->
-                            val xmlFile = com.intellij.psi.util.PsiTreeUtil.getContextOfType(xmlTag, XmlFile::class.java)
-                            if (xmlFile != null && xmlFile.name.endsWith(".vue") &&
-                                xmlTag.name.equals("style", ignoreCase = true) && xmlTag.getAttribute("module") != null)
-                                xmlFile to (xmlTag.getAttributeValue("module")?.takeIf { it.isNotBlank() }?.let { "\${'$'}$it" } ?: "\${'$'}style")
-                            else null
-                        }
-                }.getOrNull()
-                if (containingVue != null) {
-                    seen += containingVue.first.virtualFile?.path.orEmpty()
-                    out += containingVue
-                }
-            }
-        }
-        return out
-    }
-
     // ================================================================
     // QuickFix
     // ================================================================
@@ -400,8 +170,9 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
         // 匹配 .foo-bar 或 &-suffix 展开前/后的 kebab-case 选择器中的 class 名（不含伪类/伪元素）
         private val MODULE_CLASS_RE = Regex("""(^|[^\w-])\.-?([_a-zA-Z][_a-zA-Z0-9-]*)(?=[^\w-]|${'$'})""")
-        // 匹配选择器里的嵌套 class 出现（如 .a .b 中第二个 .b）
-        private val NESTED_CLASS_RE = Regex("""\.([_a-zA-Z][_a-zA-Z0-9-]*)(?![\w-])""")
+        // 匹配选择器里的嵌套 class 出现（如 .a .b 中第二个 .b）。
+        // 必须前面有空格/组合符（>+~）且非逗号分隔，避免把普通选择器如 .unused 或 .a,.b 都当成嵌套引用。
+        private val NESTED_CLASS_RE = Regex("""(?<!,)[\s>+~]\.([_a-zA-Z][_a-zA-Z0-9-]*)(?![\w-])""")
         // 伪类/伪元素裁剪
         private val PSEUDO_PART_RE = Regex(""":+[\w-]+(?:\([^)]*\))?""")
         private val EXTEND_RE = Regex("""@extend\s*\.?([\w-]+)""")
@@ -409,23 +180,258 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         // className="a b-c" / :class="'a b-c'" / :class="`a b-c`"
         // 注：正则用 3 组 capture group（第 2/3/4 组分别对应 双引号 / 单引号 / 反引号）；
         //     下游读取 tokens 时从 groupValues.drop(1).first { it.isNotBlank() } 取值。
-        private val STRING_CLASSNAME_RE = Regex.fromLiteral("PLACEHOLDER_DO_NOT_USE").let {
-            val raw = "(?:className|class)\\s*=\\s*(?:\\(\\s*)?(?:\"([^\"]*)\"|'([^']*)'|`([^`]*)`)"
-            Regex(raw, RegexOption.IGNORE_CASE)
+        private val STRING_CLASSNAME_RE = Regex(
+            "(?:className|class)\\s*=\\s*(?:\\(\\s*)?(?:\"([^\"]*)\"|'([^']*)'|`([^`]*)`)",
+            RegexOption.IGNORE_CASE
+        )
+
+        // ================================================================
+        // 性能优化：computeFileSnapshot 里会遍历多个候选绑定名（styles/css/classes/...），
+        // 不能在 per-source-file 内层循环里反复构造 Regex。这里把固定绑定名的模式预编译成一次，
+        // 动态 bindingNameHint 仅在确实不在固定集合里时才补一个。
+        // ================================================================
+        private val FIXED_BINDINGS = setOf("styles", "css", "classes", "styled", "style", "moduleStyles")
+        private class BindingPatterns(val binding: String) {
+            val dynRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[\s*([^\s\]])""")
+            val memberRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)""")
+            val idxRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
+        }
+        private val FIXED_BINDING_PATTERNS: List<BindingPatterns> = FIXED_BINDINGS.map { BindingPatterns(it) }
+        // Vue $style.member / $style["key"]（不依赖绑定名，可直接预编译）
+        private val VUE_MEMBER_RE = Regex("""\${'$'}style\.([A-Za-z_][A-Za-z0-9_-]*)""")
+        private val VUE_IDX_RE = Regex("""\${'$'}style\[(['"`])([^'"`]+)\1\]""")
+
+        /** Ruleset 级 class 名提取（按 PSI selectorList 正则，不依赖语言）。静态化供 companion 与实例两处复用。 */
+        private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
+            val raw = runCatching { rs.selectorList?.text }.getOrNull().orEmpty().trim()
+            if (raw.isEmpty()) return emptyList()
+            // Less &-suffix：把 expandAmpersand 应用一次；外层已经 expandSelector，保险起见这里再做一次 text 级 normalize
+            val normalized = runCatching { Util.expandSelector(rs) }.getOrNull()
+                ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
+            // 去掉伪类/伪元素部分以避免误剪
+            val cleaned = normalized.replace(PSEUDO_PART_RE, "")
+            return MODULE_CLASS_RE.findAll(cleaned).mapNotNull { m ->
+                val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
+                name.trim().takeIf { it.isNotEmpty() }
+            }.distinct().toList()
         }
 
-        private fun com.intellij.openapi.vfs.VirtualFile.findFileByRelativePath_(rel: String): com.intellij.openapi.vfs.VirtualFile? {
-            var cur: com.intellij.openapi.vfs.VirtualFile? = this
-            for (seg in rel.replace('\\', '/').split('/')) {
-                if (seg.isEmpty() || seg == ".") continue
-                if (seg == "..") { cur = cur?.parent; continue }
-                cur = cur?.findChild(seg) ?: return null
+        // ================================================================
+        // File-level snapshot 计算（按 cssFile 挂 CachedValue）
+        // 关键：computeFileSnapshot / findReferencingSourceFiles 必须放在 companion object（静态），
+        // 否则 CachedValueProvider 的 lambda 会捕获 `this`（inspection 实例）。当 Annotator 复用的实例
+        // 与 Inspection 实例不同、equals 又不相等时，平台会抛
+        //   "Incorrect CachedValue use: same CachedValue with different captured context"。
+        // 抽成静态方法后 provider 只捕获 companion 单例 + cssFile，任何实例调用享同一缓键。
+        // ================================================================
+        fun getOrComputeFileSnapshot(cssFile: PsiFile): Snapshot {
+            return CachedValuesManager.getManager(cssFile.project).getCachedValue(
+                cssFile,
+                CachedValueProvider { computeSnapshotWithDeps(cssFile) }
+            )
+        }
+
+        /**
+         * 计算 snapshot 并返回**精细化失效依赖**，避免全局 MODIFICATION_COUNT：
+         *   - cssFile 元素：CSS 文件本身改动时失效
+         *   - 每个引用源文件元素：只有真正 import 了它的 JS/TS/Vue 改动时才失效
+         *   - OUT_OF_CODE_BLOCK_MODIFICATION_COUNT：新增/删除 import（在文件顶层，属于 code-block 外结构变化）
+         *     时失效 —— 函数体内打字不会触发，因此不再"在任意文件敲键盘就重算所有 module snapshot"。
+         */
+        private fun computeSnapshotWithDeps(cssFile: PsiFile): CachedValueProvider.Result<Snapshot> {
+            val cssVf = cssFile.virtualFile
+            if (cssVf == null || !MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) })
+                return CachedValueProvider.Result.create(Snapshot(emptySet(), true, emptyMap()), cssFile)
+
+            val references = findReferencingSourceFiles(cssFile)
+            if (references.isEmpty())
+                return CachedValueProvider.Result.create(Snapshot(emptySet(), false, emptyMap()), cssFile)
+
+            val snap = computeFileSnapshot(cssFile, references)
+            val deps = mutableListOf<Any>()
+            deps += cssFile
+            for ((srcPsi, _) in references) deps += srcPsi
+            // 覆盖"新增 import / 新增引用文件"这类结构变化：跟踪 JS/TS/Vue 的 AST 变更，
+            // 比全局 MODIFICATION_COUNT 细得多（其它语言文件改动不会触发重算）。
+            deps += com.intellij.psi.util.PsiModificationTracker.getInstance(cssFile.project)
+                .forLanguages { lang ->
+                    val id = lang.id.lowercase()
+                    id == "javascript" || id == "html" || id == "vue" ||
+                        id.contains("typescript") || id.contains("jsx")
+                }
+            return CachedValueProvider.Result.create(snap, deps)
+        }
+
+        fun computeFileSnapshot(
+            cssFile: PsiFile,
+            references: List<Pair<PsiFile, String>>
+        ): Snapshot {
+            val cssVf = cssFile.virtualFile ?: return Snapshot(emptySet(), true, emptyMap())
+            val used = mutableSetOf<String>()
+            var hasDynamic = false
+
+            // 候选绑定名模式：固定集合预编译 + 动态 hint 兜底（避免 per-source-file 内层循环重复构造 Regex）
+            val patterns = ArrayList<BindingPatterns>(FIXED_BINDING_PATTERNS.size + 1)
+            patterns += FIXED_BINDING_PATTERNS
+            val hint = references.firstOrNull()?.second?.ifBlank { "styles" } ?: "styles"
+            if (hint !in FIXED_BINDINGS) patterns += BindingPatterns(hint)
+
+            for ((srcPsi, _) in references) {
+                val srcText = runCatching { srcPsi.text }.getOrNull().orEmpty()
+                if (srcText.isEmpty()) continue
+
+                // --- 快速 hasDynamic 检测：
+                //     文本里出现 bindingName[xxx] 中括号引用，且 [ 之后第一个非空字符不是 ' 或 "，则视为动态索引
+                dynLoop@ for (bp in patterns) {
+                    val m = bp.dynRe.find(srcText) ?: continue
+                    val firstChar = m.groupValues[1].firstOrNull() ?: continue
+                    if (firstChar != '\'' && firstChar != '"' && firstChar != '`') {
+                        hasDynamic = true
+                        break@dynLoop
+                    }
+                }
+                if (hasDynamic) break
+
+                // --- 文本级 usedClassNames 扫描：同时覆盖 member access 和字符串索引 ---
+                // 注意：used 里同时存 camelCase(fooBar) + kebab(foo-bar)，匹配双风格。
+                for (bp in patterns) {
+                    // styles.fooBar
+                    for (mm in bp.memberRe.findAll(srcText)) {
+                        val name = mm.groupValues[1]
+                        used += name
+                        used += Util.camelToKebab(name)
+                    }
+                    // styles["foo-bar"] / styles['foo-bar'] / styles[`fooBar`]
+                    for (mm in bp.idxRe.findAll(srcText)) {
+                        val name = mm.groupValues[2]
+                        used += name
+                        used += Util.camelToKebab(name)
+                        used += Util.kebabToCamel(name)
+                    }
+                }
+
+                // --- Vue 场景 :class="$style.xxx" 或 :class="xxx in $style" ---
+                if (srcPsi is XmlFile || (srcPsi.virtualFile?.extension?.lowercase() == "vue")) {
+                    for (mm in VUE_MEMBER_RE.findAll(srcText)) {
+                        val n = mm.groupValues[1]
+                        used += n
+                        used += Util.camelToKebab(n)
+                        used += Util.kebabToCamel(n)
+                    }
+                    for (mm in VUE_IDX_RE.findAll(srcText)) {
+                        val n = mm.groupValues[2]
+                        used += n
+                        used += Util.camelToKebab(n)
+                        used += Util.kebabToCamel(n)
+                    }
+                }
+
+                // --- className="xxx" 或 :class="['a','b']" 如果是字符串字面量直接引用 kebab class 也当 used ---
+                for (mm in STRING_CLASSNAME_RE.findAll(srcText)) {
+                    val captured = mm.groupValues.drop(1).firstOrNull { it.isNotBlank() }.orEmpty()
+                    val tokens = captured.split(Regex("""\s+""")).filter { it.isNotBlank() }
+                    for (t in tokens) {
+                        used += t
+                        used += Util.kebabToCamel(t)
+                    }
+                }
             }
-            return cur
+
+            if (hasDynamic) return Snapshot(used, true, emptyMap())
+
+            // --- 内部 @extend / 选择器嵌套里的复合类引用也算 used（text-level 扫描 CSS 文本） ---
+            val cssText = runCatching { cssFile.text }.getOrNull().orEmpty()
+            val classesInFile = MODULE_CLASS_RE.findAll(cssText).mapNotNull { m ->
+                val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
+                name.trim().takeIf { it.isNotEmpty() }
+            }.toSet()
+            for (extend in EXTEND_RE.findAll(cssText)) {
+                val raw = extend.groupValues[1].trim().trimStart('.').trim()
+                if (raw in classesInFile) used += raw
+            }
+            for (apply in APPLY_RE.findAll(cssText)) {
+                apply.groupValues[1].split(Regex("""\s+""")).map { it.trim().trimStart('.') }.forEach {
+                    if (it in classesInFile) used += it
+                }
+            }
+
+            // --- 选择器复合场景 + 填充 per-ruleset class 名缓存：
+            //     .a .b {} 里出现的 nested class b 若在 classesInFile 中也保守算 used；
+            //     同时把每个 ruleset 的 class 名按 identityHashCode 存进 Snapshot，
+            //     避免 buildVisitor / inspectRuleset 每次 pass 都重新 extractClassNamesFromRuleset。
+            val classesByRuleset = HashMap<String, List<String>>()
+            for (rs in runCatching { com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(cssFile, CssRuleset::class.java) }.getOrDefault(emptyList())) {
+                val selText = runCatching { rs.selectorList?.text }.getOrNull().orEmpty()
+                for (nested in NESTED_CLASS_RE.findAll(selText).map { it.groupValues[1] }) {
+                    if (nested in classesInFile) used += nested
+                }
+                val clsNames = extractClassNamesFromRuleset(rs)
+                if (clsNames.isNotEmpty()) classesByRuleset[System.identityHashCode(rs).toString()] = clsNames
+            }
+
+            return Snapshot(used, false, classesByRuleset)
         }
 
-        private fun com.intellij.openapi.vfs.VirtualFile.findFileByRel2(rel: String): com.intellij.openapi.vfs.VirtualFile? {
-            return findFileByRelativePath_(rel)
+        // ================================================================
+        // 反向查找 sourceFiles：JS/Vue 通过 ES6 import 引用这个 CSS Module 的
+        // ================================================================
+        private fun findReferencingSourceFiles(cssFile: PsiFile): List<Pair<PsiFile, String>> {
+            val project = cssFile.project
+            val out = mutableListOf<Pair<PsiFile, String>>()
+            val seen = mutableSetOf<String>()
+
+            ApplicationManager.getApplication().runReadAction {
+                // 索引驱动反向定位：只查"真正引用了这个 CSS 文件"的 import 节点，
+                // 不再全项目 iterateContent。引用索引记录了每个模块引用 resolve 到的目标文件，
+                // 因此 ReferencesSearch 直接命中所有使用方，代价 O(引用数) 而非 O(项目文件数)。
+                val scope = GlobalSearchScope.projectScope(project)
+                val refs = runCatching {
+                    ReferencesSearch.search(cssFile, scope).findAll()
+                }.getOrNull() ?: emptyList()
+
+                for (ref in refs) {
+                    val srcPsi = ref.element.containingFile ?: continue
+                    val srcVf = srcPsi.virtualFile ?: continue
+                    if (srcVf.extension?.lowercase() !in SOURCE_EXTS) continue
+                    val imp = com.intellij.psi.util.PsiTreeUtil.getParentOfType(
+                        ref.element, ES6ImportDeclaration::class.java
+                    )
+                    val binding = imp?.let(::extractDefaultBinding) ?: "styles"
+                    val key = srcVf.path.orEmpty() + "#" + binding
+                    if (seen.add(key)) out += srcPsi to binding
+                }
+
+                // --- Vue SFC：如果 cssFile 是 vue 内嵌 <style module>，此时直接取 vueFile 为引用源 ---
+                val parentFile = cssFile.parent
+                if (parentFile != null) {
+                    val containingVue = runCatching {
+                        com.intellij.psi.util.PsiTreeUtil.getContextOfType(parentFile, XmlTag::class.java)
+                            ?.let { xmlTag ->
+                                val xmlFile = com.intellij.psi.util.PsiTreeUtil.getContextOfType(xmlTag, XmlFile::class.java)
+                                if (xmlFile != null && xmlFile.name.endsWith(".vue") &&
+                                    xmlTag.name.equals("style", ignoreCase = true) && xmlTag.getAttribute("module") != null)
+                                    xmlFile to (xmlTag.getAttributeValue("module")?.takeIf { it.isNotBlank() }?.let { "\${'$'}$it" } ?: "\${'$'}style")
+                                else null
+                            }
+                    }.getOrNull()
+                    if (containingVue != null) {
+                        seen += containingVue.first.virtualFile?.path.orEmpty()
+                        out += containingVue
+                    }
+                }
+            }
+            return out
+        }
+
+        /** 引用源可出现的文件类型（ReferencesSearch 命中后按此过滤） */
+        private val SOURCE_EXTS = setOf("js", "jsx", "ts", "tsx", "vue")
+
+        /** 从 ES6 import 里取默认 binding 名（default import 而非 named import），取不到给 "styles" */
+        private fun extractDefaultBinding(imp: ES6ImportDeclaration): String {
+            val named = imp.namedImports
+            return imp.importedBindings.firstOrNull { b ->
+                named == null || !com.intellij.psi.util.PsiTreeUtil.isAncestor(named, b, false)
+            }?.name ?: imp.importedBindings.firstOrNull()?.name ?: "styles"
         }
     }
 }

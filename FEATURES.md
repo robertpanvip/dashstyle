@@ -17,6 +17,9 @@
 | 7 | **TSX/Vue 复制 → CSS 规则随动** | 复制 TSX/Vue 标签时，把关联 class 的 CSS 规则打包；粘贴时目标有 styles import 就追加，没就新建同名 `.module.css` 并自动 import |
 | 8 | **SCSS / LESS / 原生 CSS Nesting 互转**（Intention Action） | 常用子集：变量、嵌套、`@extend`、mixin、插值；不支持的 construct 保留并加提示注释 |
 | 9 | **项目公共颜色 → CSS Variable 抽取**（AnAction） | 扫选区 / 文件 / 目录 / 全项目 → 归一化等值分组 → 语义变量名（primary/success/danger/neutral…）→ 弹窗编辑 + 色块预览 → 确认后 `:root { --color-xxx }` 进剪贴板并就地替换为 `var(--x)` |
+| 10 | **Flex/Grid 布局可视化预览**（gutter LineMarker + 交互弹窗） | `display:flex/grid` 行前渲染迷你布局图（WebStorm 颜色预览式），悬浮看放大预览、点击弹出可调交互面板（拖拽子项 align-self、拖拽 grid 轨道） |
+| 11 | **CSS 尺寸/单位换算助手**（Inlay） | 长度值行尾显示 `px ≈ rem ≈ vw` 换算、`clamp()` 在视口下的实际取值、`calc()` 简化值 |
+| 12 | **Tailwind 类补全 + CSS 预览**（`@apply` 内自动补全） | 内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明，按 Enter 直接补全 |
 
 ---
 
@@ -75,11 +78,12 @@
 | Inspection | 触发 | 修复 |
 |---|---|---|
 | [UnusedCssModuleClassInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/UnusedCssModuleClassInspection.kt) | CSS Module 文件中存在定义但 TSX/Vue 里 `styles.xxx` / `styles["xxx"]` 未引用时类名**置灰**；扫描到动态 `styles[expr]` 自动关闭该文件的检查避免误报 | QuickFix：删除未用 ruleset |
-| [DuplicateCssDeclarationsInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/DuplicateCssDeclarationsInspection.kt) | 同一 CSS 文件里 ≥2 个 ruleset 声明块完全相同 → **黄色 + 波浪线**（仿 TS 重复代码检查视觉） | QuickFix：抽取为 `%__common-xxx` 占位类，所有重复点替换成 `@extend %__common-xxx`（Sass 语义） |
+| [DuplicateCssDeclarationsInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/DuplicateCssDeclarationsInspection.kt) | 同一 CSS 文件里 ≥2 个 ruleset 声明块完全相同 → **黄色 + 波浪线**（仿 TS 重复代码检查视觉） | QuickFix：抽取为公共类 `.common-name`，重复点删除原声明并按语言替换为合并引用——**LESS** 用 mixin 调用 `.common-name();`（LESS 的 ruleset 本身就是 mixin），**SCSS/Sass** 用 `@extend .common-name;`，纯 **CSS** 无 extend/mixin 只删声明不动选择器 |
 
 ### 2.6 导入自动化
+> 说明：复制 `styles.xxx` → 粘贴时自动带 import，IntelliJ 平台自带的「Add import on paste」已能胜任，
+> DashStyle 自实现的 `CssModuleImportCopyPasteProcessor` 已于 v1.2.1 移除注册，避免两条逻辑冲突。
 - **[AddCssModuleImportIntention](file:///workspace/src/main/kotlin/com/pan/dashstyle/AddCssModuleImportIntention.kt)**：`styles` 未声明 → Alt+Enter 自动扫描同目录 `BaseName.module.(css|scss|less)`，匹配则注入 `import styles from './BaseName.module.css'`；Vue 环境自动进 `<script setup>` 顶部
-- **[CssModuleImportCopyPasteProcessor](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssModuleImportCopyPasteProcessor.kt)**：复制 `styles.xxx` / `styles["xxx"]` 时，把**来源 import 的 from 路径**作为元数据挂到剪贴板；粘贴时若目标文件里同 binding 未导入就自动加 import（已存在则不重复）
 
 ### 2.7 TSX/Vue 标签复制 → CSS 规则复制
 位置：[CssBundleCopyPastePostProcessor.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssBundleCopyPastePostProcessor.kt)
@@ -141,6 +145,36 @@
 
 #### 性能优化（见 §三）
 
+### 2.10 Flex/Grid 布局可视化预览（新增 2026-08）
+位置：[LayoutPreviewGutterMarkerProvider.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutPreviewGutterMarkerProvider.kt) / [LayoutPreviewPopup.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutPreviewPopup.kt)
+
+- **gutter 迷你布局图**：`display:flex|grid` 行前渲染 32×32 布局图（WebStorm 颜色预览式），每条布局属性行前渲染「聚焦该属性」的图标；布局解析复用 [LayoutContextResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutContextResolver.kt)，按文件 `CachedValue` 缓存
+- **悬浮放大预览**：悬停 gutter 图标，把同一布局渲染成 ~200×130 的 PNG 作为 HTML tooltip，达到与行内预览相当的清晰度
+- **点击交互弹窗**：弹出可调面板，实时画布随控件重绘
+  - flex：justify-content / align-items / align-content / flex-direction / flex-wrap / gap，子项**拖动自适应 align-self**
+  - grid：grid-template-columns/rows（**拖动轨道分隔线调 fr/px**）、gap、对齐
+- **写回**：「应用到样式」把当前值写回 CSS ruleset（已存在改值，缺失则新增）
+- **纯逻辑层**：[FlexLayoutResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/FlexLayoutResolver.kt)（含逐子项 alignSelf）/ [GridLayoutResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/GridLayoutResolver.kt)（含轨道 resize），经 [LayoutModel.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutModel.kt) 密封类统一抽象，可独立单测
+
+### 2.11 CSS 尺寸/单位换算助手（新增 2026-08）
+位置：[CssUnitInlayProvider.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssUnitInlayProvider.kt) / [CssUnitAssistant.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/CssUnitAssistant.kt)
+
+- **px ↔ rem ↔ vw 互转**：长度值行尾显示 `12px ≈ 0.75rem ≈ 0.83vw`（可配置根字号与视口宽）
+- **clamp() 解析**：`clamp(16px, 2vw, 24px)` → 在给定视口下实际取值，标注夹到 min/max
+- **calc() 简化**：支持 `+ - * /` 与括号、px/rem/vw 混算，返回合并后的 px
+- 纯逻辑层不依赖 IDE SDK，非法输入静默返回 null，绝不抛异常
+
+### 2.12 Tailwind 类补全 + CSS 预览（新增 2026-08）
+位置：[TailwindClassCompletionContributor.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassCompletionContributor.kt) / [TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)
+
+- **触发位置**：CSS 的 `@apply` 指令内（`abc { @apply <光标>; }`），CSS/SCSS/LESS 三种语言均生效
+- **触发 & 快捷键**：输入类名时自动弹出补全列表；也可手动按 **Ctrl/Cmd + Space** 强制触发；**Enter** 确认并插入候选，**Tab** 也可接受
+- **候选**：内置 200+ 常用 Tailwind 类（布局 / flex / grid / 间距 / 尺寸 / 排版 / 文本颜色 / 背景 / 边框 / 阴影 / 过渡 / 变换 / 交互等），按输入前缀匹配，空前缀返回全部
+- **预览框**：每个候选右侧灰字显示该类展开后的 CSS 声明（如 `flex → display: flex`），尾部再标分组名（`(flex)`）
+- **数据源**：内置清单开箱即用，无需项目 `tailwind.config.js` / `node_modules`；如需扩展可在此类中追加 `TailwindClass(name, css, group)`
+- **纯逻辑层**：[TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)`search(prefix)` / `find(name)`，可独立单测
+- **缺失类自动生成 Tailwind 原子化 CSS**（新增）：`styles.xxx` 引用的类在 CSS Module 里缺失、而 `xxx` 恰好是内置 Tailwind 类时，**Alt+Enter → Create missing class in CSS Module** 会直接往对应 `.module.css`（或 Vue `<style>`）写入该类的展开声明，而非空块。例：`styles.justifyCenter` 缺失 → 生成 `.justify-center { justify-content: center }`；`styles.flex` 缺失 → 生成 `.flex { display: flex }`
+
 ---
 
 ## 三、性能优化清单
@@ -167,6 +201,7 @@
 | [UtilTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/UtilTest.kt) | `kebabToCamel / camelToKebab` round-trip；**`normalizeColor` HEX3/6/8/rgb/rgba%/hsl/命名/非法**（16 用例）；**`suggestColorVarName` 语义/冲突/index**（8 用例）；**`scanColorsInText` 混合/重叠/边界/空/range**（5 用例） |
 | [LessAmpersandExpansionTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/LessAmpersandExpansionTest.kt) | `&` 基础替换、`&-suffix`、`&__element`、多父多子笛卡尔积、逗号分隔、伪类拼接类 |
 | [JsonToCssConverterTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/JsonToCssConverterTest.kt) | JSON 检测 / camel→kebab / 数字 px / 多属性 / **JS 字面量（无引号 key + 尾随逗号） / transform scale 无 px / unitless（opacity,z-index,flex）/ 负数与 0** |
+| [TailwindClassResolverTest.kt](file:///workspace/src/test/kotlin/com/pan/dashstyle/TailwindClassResolverTest.kt) | 内置清单非空且有序、每个类带 CSS/分组、前缀/大小写/未知搜索、`find` 精确匹配、关键类 CSS 声明抽查 |
 
 ### 4.2 独立验证器（src/test/java）—— 零依赖、零环境
 > `javac ...Verifier.java && java ...Verifier` 即可跑，方便未配置 Gradle/IntelliJ 环境也能回归。
@@ -207,8 +242,12 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
   - `PsiReferenceContributor`（字符串 + member access 双引用提供者）
   - `documentationProvider`（悬浮展示完整 CSS 规则）
   - `localInspection`（未使用 class / 重复声明）
-  - `copyPastePreProcessor`（JSON→CSS / import 随动 / TSX+CSS 打包粘贴）
-  - `intentionAction` ×5（Inline 抽取 / 缺失 class 创建 / styles import 自动补 / 预处理互转 / 其它）
+  - `annotator` ×3 + `highlightVisitor`（CSS Module class 置灰 / 重复声明波浪线；Vue/Svelte 内嵌 `<style module>` 场景）
+  - `lineMarkerProvider`（flex/grid 布局 gutter 预览）
+  - `inlayProvider`（尺寸/单位换算助手）
+  - `completion.contributor` ×3（Tailwind 类补全，CSS/SCSS/LESS）
+  - `copyPastePreProcessor`（JSON→CSS / TSX+CSS 打包粘贴）
+  - `intentionAction` ×4（Inline 抽取 / 缺失 class 创建 / styles import 自动补 / 预处理互转）
 - `<actions>`
   - `DashStyle.ExtractColors`：CodeMenu(Generate 之前) + HelpFindAction — **项目颜色 → CSS Variable 抽取**
 
@@ -225,7 +264,9 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 | 复制 `<UserCard />` 到新文件但想连带它的 CSS | 正常 `Cmd/Ctrl+C` + `Cmd/Ctrl+V` 即可，DashStyle 自动打包 |
 | `.scss` 想转 `.less` 或原生 CSS Nesting | 光标在 `<style lang="...">` 或文件内任意处 → **Alt+Enter → DashStyle: Transpile preprocessor**，下拉选目标格式 |
 | 想把项目里颜色统一抽成变量并替换 | 打开 Code 菜单 → **DashStyle: Extract Colors as CSS Variables** → 编辑变量名 → OK → 剪贴板拿 `:root { }` 并就地替换 |
+| 在 CSS 里写 Tailwind 工具类 | 光标放进 `@apply ` 后 → 输入前缀（如 `ju`）或按 **Ctrl/Cmd+Space** → 下拉右侧灰字预览 CSS → **Enter** 补全 |
+| `styles.flex` 之类缺失、且是 Tailwind 类 | 光标放 `flex` 上 **Alt+Enter → Create missing class in CSS Module** → 自动生成 `.flex { display: flex }` 等展开 CSS |
 
 ---
 
-*文档版本与 DashStyle v1.2.0 对应。*
+*文档版本与 DashStyle v1.2.1 对应。*

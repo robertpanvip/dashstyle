@@ -73,7 +73,7 @@ class DashStyleHighlightAnnotator : Annotator {
         // 最终夹紧：不超过 containingFile 的长度（理论上不会越界，但为安全起见）
         val fileLen = runCatching { cssFile.textLength }.getOrNull() ?: Int.MAX_VALUE
         val start = slRange.startOffset.coerceAtLeast(0)
-        val end = slRange.endOffset.coerceAtMost(start + 1).coerceAtMost(fileLen)
+        val end = slRange.endOffset.coerceAtMost(fileLen)
         if (end <= start) return
 
         runCatching {
@@ -152,8 +152,7 @@ class DashStyleHighlightAnnotator : Annotator {
             ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
         val cleaned = normalized.replace(Regex(""":+[\w-]+(?:\([^)]*\))?"""), "")
         return CLASS_NAME_RE.findAll(cleaned).mapNotNull { m ->
-            val rawName = m.groupValues[1]
-            val name = if (rawName.startsWith(".")) rawName.drop(1) else rawName
+            val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
             name.trim().takeIf { it.isNotEmpty() }
         }.distinct().toList()
     }
@@ -236,8 +235,7 @@ class DashStyleHighlightAnnotator : Annotator {
                     val result = bySig.filterValues { it.size >= 2 }
                     com.intellij.psi.util.CachedValueProvider.Result.create(
                         result,
-                        contextFile,
-                        com.intellij.psi.util.PsiModificationTracker.MODIFICATION_COUNT
+                        contextFile  // 只依赖该文件本身：其它文件改动不会让本文件的重复分组失效
                     )
                 }
             )

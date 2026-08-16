@@ -61,7 +61,11 @@ class StaticGlobalHighlightVisitor : HighlightVisitor, PossiblyDumbAware {
         // 绝不可以包含 .tsx / .jsx / .html —— 否则 WS-2025.3 的 GeneralHighlightingPass 只要在
         // 该文件的 HighlightVisitor 链里被任何异常打断就会「整片高亮消失」。
         val name = file.name?.lowercase().orEmpty()
+// 只对"可能内嵌 <style>"的宿主文件返回 true，避免在每个 JSX/TSX 大文件上按元素走 visit()。
+        // Vue / Svelte / Astro / Html 内嵌 CSS 的 annotator 语言过滤可能命中不了，HighlightVisitor 才需要兜底；
+        // 纯 .css/.scss/.less（有 annotator）以及 .tsx/.jsx（样式来自 .module.*，无内嵌 <style>）不在此列。
         return name.endsWith(".vue") || name.endsWith(".svelte") || name.endsWith(".astro") ||
+                name.endsWith(".html") || name.endsWith(".htm") ||
                 name.endsWith(".vue.ts") // 一些插件会生成虚拟文件名（只接受 vue 派生）
     }
 

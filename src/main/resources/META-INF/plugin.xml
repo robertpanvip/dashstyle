@@ -69,6 +69,19 @@
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
+        <!-- ========================= Tailwind 类补全（@apply 内，右侧 CSS 预览） ========================= -->
+        <!-- 在 CSS 的 @apply 指令内对 Tailwind 类做补全，候选右侧灰字显示该类展开后的 CSS 声明，
+             按 Enter 直接补全。类清单来自 TailwindClassResolver（纯逻辑，内置常用类）。 -->
+        <completion.contributor
+                language="CSS"
+                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+        <completion.contributor
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+        <completion.contributor
+                language="LESS"
+                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+
         <!-- ========================= 引用 & 跳转 ========================= -->
         <psi.referenceContributor
                 implementation="com.pan.dashstyle.StyleStringKeyReferenceContributor"/>
@@ -178,6 +191,55 @@
         <annotator language="CSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
+
+<!-- ========================= CSS Flex 布局预览（#8） ========================= -->
+        <!-- 输入时自动更新：把 flex/grid 布局预览渲染到行号前的 gutter（WebStorm 颜色预览式）。
+             在 display:flex/grid 行前渲染总效果图标，在每条布局属性行前渲染聚焦该属性的迷你布局图。
+             点击图标弹出交互面板。gutter 由高亮通道驱动，随编辑实时刷新。
+             语言维度注册与 localInspection 同理（CSS/SCSS/LESS/ANY），
+             Kotlin 侧用 LayoutContextResolver 实际过滤，避免无关文件被反复触发。 -->
+        <codeInsight.lineMarkerProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="ANY"
+                implementationClass="com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"/>
+
+        <!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
+        <!-- 在 box-shadow / text-shadow 声明行前渲染圆角矩形 + 真实阴影的 gutter 图标，
+             悬浮时把同一阴影放大渲染成 PNG 作为 tooltip。解析复用 ShadowResolver（纯逻辑）。 -->
+        <codeInsight.lineMarkerProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+        <codeInsight.lineMarkerProvider
+                language="ANY"
+                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
+
+        <!-- ========================= CSS 尺寸/单位换算助手 ========================= -->
+        <codeInsight.inlayProvider
+                language="CSS"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="SCSS"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="LESS"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
+        <codeInsight.inlayProvider
+                language="ANY"
+                implementationClass="com.pan.dashstyle.CssUnitInlayProvider"/>
 
         <!-- ========================= 全局 HighlightVisitor 临时禁用（2026-08-14 修复 TS 高亮消失） =========================
              <highlightVisitor implementation="com.pan.dashstyle.StaticGlobalHighlightVisitor" order="first"/>

@@ -170,3 +170,85 @@ jobs:
           rm -rf /tmp/ver && mkdir -p /tmp/ver
           javac -d /tmp/ver src/test/java/com/pan/dashstyle/ColorToolingVerifier.java
           java -cp /tmp/ver com.pan.dashstyle.ColorToolingVerifier
+
+  # ------------------------------------------------------------------
+  # Job 3: IDE 沙箱集成测试（PSI/UI）
+  #   DashStyleIntegrationTest 基于 BasePlatformTestCase，在 headless 沙箱里加载
+  #   WebStorm-2025.3 平台 + DashStyle 插件，7 条强断言用例覆盖：
+  #     未使用 class 置灰 / 重复声明弱警告 / 抽取公共类 QuickFix /
+  #     style 字符串引用跳转 / inline style 提取 Intention / 类可加载。
+  #   依赖 Job 1 先编译通过（needs: plugin-build），避免在编译错时白白下载 SDK。
+  #   注意：需要 JDK 17 + 首次会下载 WebStorm SDK（体积大、耗时较长）。
+  # ------------------------------------------------------------------
+  integration-tests:
+    name: IDE sandbox integration tests
+    needs: plugin-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v5
+        id: setup_jdk
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # 与 plugin-build 相同的修补：把本地开发机硬编码的 java.home / 代理参数
+      # 替换成 CI runner 实际可用的 temurin-17 路径并去掉代理，否则插件解析依赖会失败。
+      - name: Patch gradle.properties (java.home + strip CI-broken proxy)
+        run: |
+          set -euo pipefail
+          TARGET="${JAVA_HOME:-${{ steps.setup_jdk.outputs.path }}}"
+          echo "JAVA_HOME=$JAVA_HOME  => patching org.gradle.java.home => $TARGET"
+          if [[ ! -x "$TARGET/bin/java" ]]; then
+            echo "❌ target JDK does not have bin/java: $TARGET"
+            ls -la "$TARGET" 2>&1 | head -20
+            exit 3
+          fi
+          ESCAPED="$(echo "$TARGET" | sed -E 's/[#&/\\]/\\&/g')"
+
+          # 1. 替换 org.gradle.java.home
+          sed -i.bak -E \
+            "s|^org.gradle.java.home=.*|org.gradle.java.home=${ESCAPED}|" \
+            gradle.properties
+
+          # 2. 把 org.gradle.jvmargs 里所有代理参数删除
+          python3 - <<'PY'
+          import re
+          p='gradle.properties'
+          with open(p,'r',encoding='utf-8') as f: s=f.read()
+          def strip_proxy(m):
+              line=m.group(0)
+              line=re.sub(r'\s*-Dhttp\.nonProxyHosts=[^\\\s]+','',line)
+              line=re.sub(r'\s*-Dhttps?\.proxy(Host|Port)=[^\\\s]+','',line)
+              return line
+          pattern=re.compile(r'^org\.gradle\.jvmargs=.*(?:\\\n.*)*$', re.MULTILINE)
+          with open(p,'w',encoding='utf-8') as f: f.write(pattern.sub(strip_proxy, s))
+          PY
+
+          echo "✅ Patched gradle.properties. Relevant lines:"
+          grep -nE "java\.home|jvmargs|proxy" gradle.properties || true
+
+      - name: Setup Gradle 8.14
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14
+
+      - name: Run DashStyleIntegrationTest
+        run: |
+          gradle --no-daemon \
+            test \
+            --tests "com.pan.dashstyle.DashStyleIntegrationTest"
+
+      - name: Upload integration test reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: integration-test-reports
+          path: |
+            build/reports/
+            build/test-results/

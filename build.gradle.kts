@@ -47,6 +47,19 @@ dependencies {
     testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
 }
 
+// 关键：测试运行期必须用 WebStorm-2025.3 自带的 Kotlin 2.2 stdlib，而不是插件端的 2.1.0。
+// 若把插件 2.1.0 的 kotlin-stdlib 放到 test runtime 最前面，IDE/平台代码（按 2.2 编译）
+// 调用 SequencesKt.sequenceOf(Object) 等 2.2 新增/变更签名时就会 NoSuchMethodError，
+// 整条集成测试被 TestLogger 当成失败（fixed 的 kotlin.stdlib.default.dependency=true 会把它带上）。
+// test 编译 classpath 仍保留 stdlib（Kotlin 测试代码需要），只在 runtime 排除，改由 IDE 提供。
+configurations {
+    testRuntimeClasspath {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-common")
+    }
+}
+
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
