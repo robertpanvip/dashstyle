@@ -5,6 +5,7 @@ import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
+import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.psi.util.PsiTreeUtil
 
 /**
@@ -27,7 +28,11 @@ object LayoutContextResolver {
 
     fun contexts(file: PsiFile): List<LayoutContext> {
         return CachedValuesManager.getCachedValue(file) {
-            CachedValueProvider.Result.create(compute(file), file)
+            CachedValueProvider.Result.create(
+                compute(file),
+                file,
+                PsiModificationTracker.MODIFICATION_COUNT
+            )
         }
     }
 

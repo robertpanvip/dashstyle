@@ -97,7 +97,7 @@ class LayoutPreviewGutterMarkerProvider : LineMarkerProvider {
 }
 
 /**
- * gutter 总效果布局预览 icon：简化版容器 + 2 个子块。
+ * gutter 总效果布局预览 icon：根据实际布局模型渲染子块位置。
  * 仅用于 `display:flex/grid` 行，16×16 紧凑显示不占行号空间。
  * 完整布局预览在 tooltip 中展示。
  */
@@ -114,13 +114,25 @@ private class LayoutGutterIcon(
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
             val pad = 2
+            val innerW = getIconWidth() - pad * 2
+            val innerH = getIconHeight() - pad * 2
             // 容器边框（强调色）
             g2.color = OVERALL_BORDER
-            g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(), 11f, 11f))
-            // 2 个简化子块，不依赖 FlexLayoutResolver 摆位
+            g2.stroke = java.awt.BasicStroke(0.8f)
+            g2.draw(Rectangle2D.Float((x + pad).toFloat(), (y + pad).toFloat(),
+                (innerW - 1).toFloat(), (innerH - 1).toFloat()))
+            // 子块：根据实际布局模型摆位
             g2.color = OVERALL_CHILD
-            g2.fill(RoundRectangle2D.Float((x + pad + 1).toFloat(), (y + pad + 2).toFloat(), 3f, 7f, 1f, 1f))
-            g2.fill(RoundRectangle2D.Float((x + pad + 6).toFloat(), (y + pad + 2).toFloat(), 3f, 7f, 1f, 1f))
+            g2.stroke = java.awt.BasicStroke(0.5f)
+            for (b in model.boxes(innerW, innerH)) {
+                val bw = b.w.coerceAtLeast(2)
+                val bh = b.h.coerceAtLeast(2)
+                if (bw <= 0 || bh <= 0) continue
+                g2.fill(RoundRectangle2D.Float(
+                    (x + pad + b.x).toFloat(),
+                    (y + pad + b.y).toFloat(),
+                    bw.toFloat(), bh.toFloat(), 1f, 1f))
+            }
         } finally {
             g2.dispose()
         }
