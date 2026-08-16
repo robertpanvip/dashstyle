@@ -245,8 +245,8 @@ private class PerPropertyGutterIcon(
 
     private fun drawGapIndicator(g2: Graphics2D, cx: Float, cy: Float) {
         // 两个平行小块表示间距
-        g2.fill(RoundRectangle2D.Float(cx - 6, cy - 4, 4, 8, 1f, 1f))
-        g2.fill(RoundRectangle2D.Float(cx + 2, cy - 4, 4, 8, 1f, 1f))
+        g2.fill(RoundRectangle2D.Float(cx - 6f, cy - 4f, 4f, 8f, 1f, 1f))
+        g2.fill(RoundRectangle2D.Float(cx + 2f, cy - 4f, 4f, 8f, 1f, 1f))
         // 中间的双箭头线表示间距
         g2.drawLine((cx - 1).toInt(), cy.toInt(), (cx + 1).toInt(), cy.toInt())
     }
