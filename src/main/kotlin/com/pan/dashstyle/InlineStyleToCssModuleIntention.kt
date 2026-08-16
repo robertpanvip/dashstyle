@@ -19,11 +19,8 @@ import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlTag
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.JSObjectLiteralExpression
-import com.intellij.lang.javascript.psi.ecmal4.JSAttribute
 import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
 import com.intellij.lang.css.CSSLanguage
-import com.intellij.lang.javascript.JavascriptLanguage
-import com.intellij.lang.xml.XMLLanguage
 import com.intellij.lang.Language
 import com.intellij.openapi.diagnostic.Logger
 
@@ -510,48 +507,26 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     ) {
         val access = target.classNameAccessExpr(className)
         val project = loc.attrPsi.project
-        val factory = PsiFileFactory.getInstance(project)
+        val file = loc.attrPsi.containingFile ?: return
+        val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
 
         when (loc.sourceLanguage) {
             StyleAttrLoc.Lang.JSX_TSX -> {
-                // 检查父元素是否已有 className 属性
                 val parent = loc.attrPsi.parent
                 val existingClassName = findClassNameAttr(parent)
                 if (existingClassName != null) {
                     // 合并到已有 className 中，然后删除 style 属性
-                    mergeIntoExistingClassName(existingClassName, access, loc.attrPsi, project, factory)
+                    mergeIntoExistingClassName(existingClassName, access, loc.attrPsi, document)
                     return
                 }
                 // 没有已有 className，直接替换 style 为 className
-                val newAttrText = "className={$access}"
-                val snippet = "const _ = () => <div $newAttrText/>"
-                val jsLang = Language.findInstance(JavascriptLanguage::class.java)
-                val tmp = factory.createFileFromText("__tmp__.tsx", jsLang, snippet)
-                // 新版 WebStorm JSX 属性可能不是 JSAttribute，搜索所有"名字 == className"属性 Psi。
-                val newAttr = run {
-                    val fromJsAttribute = PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
-                    fromJsAttribute ?: PsiTreeUtil.collectElements(tmp) {
-                        val c = it.javaClass.name
-                        (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
-                        runCatching {
-                            it.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
-                                ?.invoke(it) == "className"
-                        }.getOrDefault(false)
-                    }.firstOrNull()
-                }
-                if (newAttr != null) loc.attrPsi.replace(newAttr)
-                else fallbackReplace(loc.attrPsi, newAttrText)
+                val range = loc.attrPsi.textRange
+                document.replaceString(range.startOffset, range.endOffset, "className={$access}")
             }
             StyleAttrLoc.Lang.VUE -> {
                 // Vue 中 class 和 :class 可以共存，直接替换 :style 为 :class
-                val newAttrText = ":class=\"$access\""
-                val snippet = "<template><div $newAttrText/></template>"
-                val xmlLang = Language.findInstance(XMLLanguage::class.java)
-                val tmp = factory.createFileFromText("__tmp__.vue", xmlLang, snippet)
-                val tag = PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)
-                val newAttr = tag?.attributes?.firstOrNull()
-                if (newAttr != null) loc.attrPsi.replace(newAttr)
-                else fallbackReplace(loc.attrPsi, newAttrText)
+                val range = loc.attrPsi.textRange
+                document.replaceString(range.startOffset, range.endOffset, ":class=\"$access\"")
             }
         }
     }
@@ -581,75 +556,38 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         existingClassName: PsiElement,
         newAccess: String,
         styleAttr: PsiElement,
-        project: Project,
-        factory: PsiFileFactory
+        document: com.intellij.openapi.editor.Document
     ) {
         try {
             val existingText = existingClassName.text
             val eqIdx = existingText.indexOf('=')
             if (eqIdx < 0) return
             val valuePart = existingText.substring(eqIdx + 1).trim()
-            val newValue = "className={clsx($valuePart, $newAccess)}"
-            val snippet = "const _ = () => <div $newValue/>"
-            val jsLang = Language.findInstance(JavascriptLanguage::class.java)
-            val tmp = factory.createFileFromText("__tmp_merge__.tsx", jsLang, snippet)
-            val replacement = PsiTreeUtil.collectElements(tmp) { el ->
-                val c = el.javaClass.name
-                (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
-                    runCatching {
-                        el.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
-                            ?.invoke(el) == "className"
-                    }.getOrDefault(false)
-            }.firstOrNull()
-            if (replacement != null) {
-                existingClassName.replace(replacement)
-                // 删除 style 属性
-                styleAttr.delete()
+            val newClassNameText = "className={clsx($valuePart, $newAccess)}"
+            val existingRange = existingClassName.textRange
+            val styleRange = styleAttr.textRange
+
+            // 先替换 className，再删除 style（顺序：先替换 className 不会改变 style 的 offset）
+            document.replaceString(existingRange.startOffset, existingRange.endOffset, newClassNameText)
+            // style 的 offset 在 className 替换后可能变化（如果 className 在 style 之前）
+            val styleShift = newClassNameText.length - existingRange.length
+            val adjustedStyleStart = if (styleRange.startOffset > existingRange.startOffset) {
+                styleRange.startOffset + styleShift
+            } else {
+                styleRange.startOffset
             }
+            val adjustedStyleEnd = if (styleRange.endOffset > existingRange.startOffset) {
+                styleRange.endOffset + styleShift
+            } else {
+                styleRange.endOffset
+            }
+            // 删除 style 属性（包括前置空格/逗号）
+            val beforeStyle = document.getText(com.intellij.openapi.util.TextRange(0, document.textLength))
+                .substring(0, adjustedStyleStart)
+            val trailingSpace = if (beforeStyle.endsWith(" ") || beforeStyle.endsWith("\t")) 1 else 0
+            document.deleteString(adjustedStyleStart - trailingSpace, adjustedStyleEnd)
         } catch (t: Throwable) {
             LOG.warn("mergeIntoExistingClassName failed", t)
-        }
-    }
-
-    /** PSI 替换失败时的最后兜底：按照 attr 在 parent 中的文本区间替换 */
-    private fun fallbackReplace(attrPsi: PsiElement, newAttr: String) {
-        try {
-            val parent = attrPsi.parent ?: return
-            val range = attrPsi.textRangeInParent
-            if (range.length <= 0) return
-            val parentNewText = parent.text.replaceRange(
-                IntRange(range.startOffset, range.endOffset - 1), newAttr
-            )
-            // 用新文本临时生成 psi，替换 parent
-            val factory = PsiFileFactory.getInstance(attrPsi.project)
-            val lang = parent.containingFile?.language ?: PlainTextLanguage.INSTANCE
-            val isVue = parent.containingFile?.virtualFile?.extension?.lowercase() == "vue"
-            val tmp = factory.createFileFromText(
-                "__fallback__.txt", lang,
-                if (isVue) "<div $parentNewText/>" else "const _ = () => <div $parentNewText/>"
-            )
-            val attrJavaClass = attrPsi.javaClass.name
-            val targetReplacement = when {
-                attrPsi is JSAttribute || attrJavaClass.let {
-                    it.contains("JSAttribute", ignoreCase = true) || it.contains("JSXAttribute", ignoreCase = true)
-                } -> {
-                    PsiTreeUtil.findChildOfType(tmp, JSAttribute::class.java)
-                        ?: PsiTreeUtil.collectElements(tmp) {
-                            val c = it.javaClass.name
-                            (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
-                                runCatching {
-                                    it.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
-                                        ?.invoke(it)
-                                }.getOrNull() == "className"
-                        }.firstOrNull()
-                }
-                attrPsi is XmlAttribute ->
-                    PsiTreeUtil.findChildOfType(tmp, XmlTag::class.java)?.attributes?.firstOrNull()
-                else -> null
-            }
-            if (targetReplacement != null) attrPsi.replace(targetReplacement)
-        } catch (t: Throwable) {
-            LOG.warn("fallbackReplace failed", t)
         }
     }
 }
