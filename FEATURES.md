@@ -173,6 +173,7 @@
 - **预览框**：每个候选右侧灰字显示该类展开后的 CSS 声明（如 `flex → display: flex`），尾部再标分组名（`(flex)`）
 - **数据源**：内置清单开箱即用，无需项目 `tailwind.config.js` / `node_modules`；如需扩展可在此类中追加 `TailwindClass(name, css, group)`
 - **纯逻辑层**：[TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)`search(prefix)` / `find(name)`，可独立单测
+- **缺失类自动生成 Tailwind 原子化 CSS**（新增）：`styles.xxx` 引用的类在 CSS Module 里缺失、而 `xxx` 恰好是内置 Tailwind 类时，**Alt+Enter → Create missing class in CSS Module** 会直接往对应 `.module.css`（或 Vue `<style>`）写入该类的展开声明，而非空块。例：`styles.justifyCenter` 缺失 → 生成 `.justify-center { justify-content: center }`；`styles.flex` 缺失 → 生成 `.flex { display: flex }`
 
 ---
 
@@ -264,6 +265,7 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 | `.scss` 想转 `.less` 或原生 CSS Nesting | 光标在 `<style lang="...">` 或文件内任意处 → **Alt+Enter → DashStyle: Transpile preprocessor**，下拉选目标格式 |
 | 想把项目里颜色统一抽成变量并替换 | 打开 Code 菜单 → **DashStyle: Extract Colors as CSS Variables** → 编辑变量名 → OK → 剪贴板拿 `:root { }` 并就地替换 |
 | 在 CSS 里写 Tailwind 工具类 | 光标放进 `@apply ` 后 → 输入前缀（如 `ju`）或按 **Ctrl/Cmd+Space** → 下拉右侧灰字预览 CSS → **Enter** 补全 |
+| `styles.flex` 之类缺失、且是 Tailwind 类 | 光标放 `flex` 上 **Alt+Enter → Create missing class in CSS Module** → 自动生成 `.flex { display: flex }` 等展开 CSS |
 
 ---
 
