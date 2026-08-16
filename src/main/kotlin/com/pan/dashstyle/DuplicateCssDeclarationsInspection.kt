@@ -172,47 +172,54 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val preprocessorName = determinePreprocessor(duplicates.first().containingFile)
 
             WriteCommandAction.writeCommandAction(project).withName("Extract common CSS class").run<Nothing> {
-                // 1) 追加公共 class
                 val declarationsText = commonDeclarations.joinToString("\n") { d ->
                     val prop = d.propertyName ?: ""
                     val value = d.value?.text ?: ""
                     "  $prop: $value;"
                 }
                 val ruleText = "\n.$className {\n$declarationsText\n}\n"
-                appendTextToRoot(project, insertionTarget, ruleText)
 
-                // 2) 在每个重复 ruleset 中，删除重复声明，然后按预处理语法插入合并引用：
-                //    - LESS         →  .commonName();  （LESS 里 ruleset 本身就是 mixin，可直接 "." 调用；** Less 不支持 @extend **）
-                //    - SCSS / SASS  →  @extend .commonName;
-                //    - CSS          →  只删重复声明，保守不做选择器改动（原生 CSS 没有 extend/mixin）。
-                // 注意：preprocessorName 只按虚拟文件后缀判定，不再依赖 ScssFile/LessFile 具体 PSI 类型，
-                //      因此这里 LESS 分支放到第一个并做 endsWith(".less") 双保险，避免任何情况下 LESS 被误判成 SCSS。
+                val file = duplicates.firstOrNull()?.containingFile ?: return@run
+                val doc = PsiDocumentManager.getInstance(project).getDocument(file) ?: return@run
+
+                // 收集所有文本修改，从后往前应用，避免偏移错乱。
+                // 原先用 PSI addBefore + createCssLine 插入引用：在 less/scss 里 mixin 调用
+                // （.shared-name(); / @extend）不是合法 CSS 声明，CSS PSI 解析不了，createCssLine
+                // 会回退返回整个 `.__tmp__ { ... }` ruleset，导致把临时 ruleset 原样插进 block，
+                // 产生 `.x .__tmp__ { ... } {; }` 的垃圾输出。这里改为纯文本重写，彻底规避。
+                data class Edit(val start: Int, val end: Int, val text: String)
+                val edits = mutableListOf<Edit>()
+
+                val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
                 for (rs in duplicates) {
-                    val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
-                    val existingAll = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
-                    for (d in existingAll) {
-                        if (normalizeRuleSig(d) in sigsToRemove) runCatching { d.delete() }
-                    }
-
+                    val block = rs.block ?: continue
+                    val keep = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java)
+                        .filter { normalizeRuleSig(it) !in sigsToRemove }
+                        .map { it.text }
                     val thisFileExt = (rs.containingFile?.virtualFile?.name ?: "").lowercase()
-                    val insertAnchor = rs.block?.firstChild
-                    if (insertAnchor != null) {
-                        when {
-                            thisFileExt.endsWith(".less") -> {
-                                val include = ".$className();"
-                                runCatching { rs.block?.addBefore(createCssLine(project, insertionTarget, include), insertAnchor) }
-                            }
-                            preprocessorName == "less" -> {
-                                val include = ".$className();"
-                                runCatching { rs.block?.addBefore(createCssLine(project, insertionTarget, include), insertAnchor) }
-                            }
-                            preprocessorName == "scss" || preprocessorName == "sass" -> {
-                                val extend = "@extend .$className;"
-                                runCatching { rs.block?.addBefore(createCssLine(project, insertionTarget, extend), insertAnchor) }
-                            }
-                        }
+                    val ref = when {
+                        thisFileExt.endsWith(".less") || preprocessorName == "less" -> ".$className();"
+                        preprocessorName == "scss" || preprocessorName == "sass" -> "@extend .$className;"
+                        else -> null
                     }
+                    val newBlock = buildString {
+                        append("{\n")
+                        if (ref != null) { append("  ").append(ref).append("\n") }
+                        for (t in keep) { append("  ").append(t).append("\n") }
+                        append("}")
+                    }
+                    val r = block.textRange
+                    edits.add(Edit(r.startOffset, r.endOffset, newBlock))
                 }
+
+                // 在目标根末尾追加公共 class
+                val rootRange = insertionTarget.textRange
+                edits.add(Edit(rootRange.endOffset, rootRange.endOffset, ruleText))
+
+                for (e in edits.sortedByDescending { it.start }) {
+                    doc.replaceString(e.start, e.end, e.text)
+                }
+                PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(doc)
             }
         }
 
