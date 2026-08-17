@@ -624,25 +624,16 @@ object LayoutPreviewPopup {
 
     @Suppress("DEPRECATION")
     private fun setOrAdd(block: CssBlock, name: String, value: String) {
+        // 统一走 PSI 写 API（setValue / addDeclaration）。
+        // 不能用 document.replaceString 混用：document 改动未同步进 PSI 时，再走 PSI 写
+        // 会抛 "Attempt to modify PSI for non-committed Document!"。
         val existing = block.findDeclaration(name)
         if (existing != null) {
-            // 优先用 document.replaceString 替换 value 文本
-            val valueNode = existing.value
-            val project = block.project
-            val doc = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(block.containingFile)
-            if (valueNode != null && doc != null) {
-                val range = valueNode.textRange
-                val oldText = valueNode.text
-                val newText = if (oldText.startsWith("\"")) "\"$value\"" else value
-                if (oldText != newText) {
-                    doc.replaceString(range.startOffset, range.endOffset, newText)
-                }
-            } else {
-                // 回退到 setValue API
-                existing.setValue(value)
-            }
+            // 值本身带引号则保持引号语义，否则直接写裸值
+            val rawText = existing.value?.text ?: ""
+            existing.setValue(if (rawText.startsWith("\"")) "\"$value\"" else value)
         } else {
-            block.addDeclaration(name, value, existing)
+            block.addDeclaration(name, value, null)
         }
     }
 
