@@ -188,8 +188,10 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         private val GLOBAL_PAREN_OPEN_RE = Regex(""":global\s*\(""", RegexOption.IGNORE_CASE)
         // :global { ... } 块形式：完整匹配 `:global`（作为独立单词）前面的非单词锚点
         private val GLOBAL_BLOCK_OPEN_RE = Regex("""(?:^|[^\w-]):global(?![a-zA-Z0-9_(-])""", RegexOption.IGNORE_CASE)
-        // 在任意范围内提取 class 名（kebab）——供 globalClassNames 使用
-        private val INLINE_CLASS_RE = Regex("""\b\.-?([_a-zA-Z][_a-zA-Z0-9-]*)""")
+        // 在任意范围内提取 class 名（kebab）——供 globalClassNames 使用。
+        // 注意不能用 `\b\.`：CSS 里类名前面通常是空白/{/(/逗号这类非单词字符，`\b` 无边界，会漏匹配。
+        // 用与 MODULE_CLASS_RE 一致的前缀锚点 `(?:^|[^\w-])`。
+        private val INLINE_CLASS_RE = Regex("""(?:^|[^\w-])\.-?([_a-zA-Z][_a-zA-Z0-9-]*)""")
         // className="a b-c" / :class="'a b-c'" / :class="`a b-c`"
         // 注：正则用 3 组 capture group（第 2/3/4 组分别对应 双引号 / 单引号 / 反引号）；
         //     下游读取 tokens 时从 groupValues.drop(1).first { it.isNotBlank() } 取值。
