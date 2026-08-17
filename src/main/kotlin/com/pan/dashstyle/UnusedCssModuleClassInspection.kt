@@ -45,12 +45,14 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return
 
                 // 按 cssFile 级缓存所有计算（只算一次）
-                val (used, hasDynamic, classesByRulesetText) = getOrComputeFileSnapshot(cssFile)
-                if (hasDynamic) return
+                val snap = getOrComputeFileSnapshot(cssFile)
+                if (snap.hasDynamic) return
+                val used = snap.used
 
                 // 当前 ruleset 涉及的 class 名（按 normalized selector 提取）
-                val classesInThisRuleset = classesByRulesetText.getOrDefault(System.identityHashCode(ruleset).toString(), emptyList())
+                val classesInThisRuleset = snap.classesByRulesetText.getOrDefault(System.identityHashCode(ruleset).toString(), emptyList())
                     .ifEmpty { extractClassNamesFromRuleset(ruleset) }
+                    .filter { it !in snap.globalClassNames }
 
                 for (kebab in classesInThisRuleset) {
                     if (kebab in used) continue
@@ -75,7 +77,11 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         val used: Set<String>,
         val hasDynamic: Boolean,
         /** key: 暂时不用；我们在 ruleset 级直接重新提取即可 */
-        val classesByRulesetText: Map<String, List<String>>
+        val classesByRulesetText: Map<String, List<String>>,
+        /** 定义在 `:global(...)` / `:global { ... }` 作用域内的类名（不在模块导出范围，永不置灰"未使用"）。
+         *  与基于 selector 的 stripGlobalBlocks 互补：当 `:global {` 块未被解析成 CssRuleset 祖先时
+         *  （可能性取决于 PSI，文本级扫描最稳妥），仍能靠这个集合兜底。 */
+        val globalClassNames: Set<String>
     )
 
     /** 公开入口（给 DashStyleHighlightAnnotator 复用 Snapshot，避免反射）*/
@@ -100,6 +106,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         val classesInThisRuleset = snap.classesByRulesetText
             .getOrDefault(System.identityHashCode(rs).toString(), emptyList())
             .ifEmpty { extractClassNamesFromRuleset(rs) }
+            .filter { it !in snap.globalClassNames }
         if (classesInThisRuleset.isEmpty()) return
 
         val selector = runCatching { rs.selectorList }.getOrNull() ?: return
@@ -177,6 +184,12 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         private val PSEUDO_PART_RE = Regex(""":+[\w-]+(?:\([^)]*\))?""")
         private val EXTEND_RE = Regex("""@extend\s*\.?([\w-]+)""")
         private val APPLY_RE = Regex("""@apply\s+([^;{}\n]+)""")
+        // :global(...) 括号形式：找 `:global(` 起始位置（后面用 indexOf(')') 找闭合）
+        private val GLOBAL_PAREN_OPEN_RE = Regex(""":global\s*\(""", RegexOption.IGNORE_CASE)
+        // :global { ... } 块形式：完整匹配 `:global`（作为独立单词）前面的非单词锚点
+        private val GLOBAL_BLOCK_OPEN_RE = Regex("""(?:^|[^\w-]):global(?![a-zA-Z0-9_(-])""", RegexOption.IGNORE_CASE)
+        // 在任意范围内提取 class 名（kebab）——供 globalClassNames 使用
+        private val INLINE_CLASS_RE = Regex("""\b\.-?([_a-zA-Z][_a-zA-Z0-9-]*)""")
         // className="a b-c" / :class="'a b-c'" / :class="`a b-c`"
         // 注：正则用 3 组 capture group（第 2/3/4 组分别对应 双引号 / 单引号 / 反引号）；
         //     下游读取 tokens 时从 groupValues.drop(1).first { it.isNotBlank() } 取值。
@@ -218,6 +231,53 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             }.distinct().toList()
         }
 
+        /**
+         * 文本级扫描，找出所有定义在 `:global(...)` / `:global { ... }` 作用域内的 class 名（kebab）。
+         * 这些类不参与模块导出，因此绝不能置灰"未使用"。
+         * 采用文本扫描而不是仅依赖 selector 展开，是因为并不保证 `:global {` 会被解析成 CssRuleset 祖先
+         * （取决于 PSI/语言解析），文本级扫描对是否成块解析都成立。
+         */
+        private fun computeGlobalClassNames(cssText: String): Set<String> {
+            val names = LinkedHashSet<String>()
+            val n = cssText.length
+            // 1) :global(...) 括号形式——从 `:global(` 到其后第一个 `)`
+            for (m in GLOBAL_PAREN_OPEN_RE.findAll(cssText)) {
+                val closeIdx = cssText.indexOf(')', m.range.last + 1)
+                if (closeIdx < 0) continue
+                collectInlineClasses(cssText.substring(m.range.last + 1, closeIdx), names)
+            }
+            // 2) :global { ... } 块形式——从 `:global` 后的 `{` 到花括号配平的 `}`
+            var from = 0
+            while (true) {
+                val open = GLOBAL_BLOCK_OPEN_RE.find(cssText, from) ?: break
+                val braceIdx = cssText.indexOf('{', open.range.last)
+                if (braceIdx < 0) { from = open.range.last + 1; continue }
+                var depth = 0
+                var closeIdx = -1
+                var j = braceIdx
+                while (j < n) {
+                    val c = cssText[j]
+                    if (c == '{') depth++
+                    else if (c == '}') { depth--; if (depth == 0) { closeIdx = j; break } }
+                    j++
+                }
+                if (closeIdx < 0) break
+                collectInlineClasses(cssText.substring(braceIdx + 1, closeIdx), names)
+                from = closeIdx + 1
+            }
+            return names
+        }
+
+        private fun collectInlineClasses(text: String, into: MutableSet<String>) {
+            for (m in INLINE_CLASS_RE.findAll(text)) {
+                val name = m.groupValues[1]
+                if (name.isNotEmpty()) {
+                    into += name
+                    // 存 kebab；上游比较用的是 kebab，无需额外转换
+                }
+            }
+        }
+
         // ================================================================
         // File-level snapshot 计算（按 cssFile 挂 CachedValue）
         // 关键：computeFileSnapshot / findReferencingSourceFiles 必须放在 companion object（静态），
@@ -243,11 +303,11 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         private fun computeSnapshotWithDeps(cssFile: PsiFile): CachedValueProvider.Result<Snapshot> {
             val cssVf = cssFile.virtualFile
             if (cssVf == null || !MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) })
-                return CachedValueProvider.Result.create(Snapshot(emptySet(), true, emptyMap()), cssFile)
+                return CachedValueProvider.Result.create(Snapshot(emptySet(), true, emptyMap(), emptySet()), cssFile)
 
             val references = findReferencingSourceFiles(cssFile)
             if (references.isEmpty())
-                return CachedValueProvider.Result.create(Snapshot(emptySet(), false, emptyMap()), cssFile)
+                return CachedValueProvider.Result.create(Snapshot(emptySet(), false, emptyMap(), emptySet()), cssFile)
 
             val snap = computeFileSnapshot(cssFile, references)
             val deps = mutableListOf<Any>()
@@ -268,7 +328,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             cssFile: PsiFile,
             references: List<Pair<PsiFile, String>>
         ): Snapshot {
-            val cssVf = cssFile.virtualFile ?: return Snapshot(emptySet(), true, emptyMap())
+            val cssVf = cssFile.virtualFile ?: return Snapshot(emptySet(), true, emptyMap(), emptySet())
             val used = mutableSetOf<String>()
             var hasDynamic = false
 
@@ -339,7 +399,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 }
             }
 
-            if (hasDynamic) return Snapshot(used, true, emptyMap())
+            if (hasDynamic) return Snapshot(used, true, emptyMap(), emptySet())
 
             // --- 内部 @extend / 选择器嵌套里的复合类引用也算 used（text-level 扫描 CSS 文本） ---
             val cssText = runCatching { cssFile.text }.getOrNull().orEmpty()
@@ -371,7 +431,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 if (clsNames.isNotEmpty()) classesByRuleset[System.identityHashCode(rs).toString()] = clsNames
             }
 
-            return Snapshot(used, false, classesByRuleset)
+            return Snapshot(used, false, classesByRuleset, computeGlobalClassNames(cssText))
         }
 
         // ================================================================

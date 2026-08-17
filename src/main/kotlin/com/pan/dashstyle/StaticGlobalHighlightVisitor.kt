@@ -156,9 +156,11 @@ class StaticGlobalHighlightVisitor : HighlightVisitor, PossiblyDumbAware {
             if (snap.hasDynamic) return
 
             val expanded = runCatching { Util.expandSelector(rs) }.getOrNull().orEmpty()
+            val globals = snap.globalClassNames
+            val stripped = Util.stripGlobalBlocks(expanded)
             val classes = DashStyleHighlightAnnotator.CLASS_NAME_RE
-                .findAll(expanded).mapNotNull { it.groupValues[2].trim().takeIf { s -> s.isNotEmpty() } }
-                .distinct().toList()
+                .findAll(stripped).mapNotNull { it.groupValues[2].trim().takeIf { s -> s.isNotEmpty() } }
+                .distinct().filter { it !in globals }.toList()
             if (classes.isEmpty()) return
             if (classes.any { cls -> cls in snap.used }) return // 任一组合被用 → 不灰
 

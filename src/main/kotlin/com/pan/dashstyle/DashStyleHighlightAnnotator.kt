@@ -50,13 +50,15 @@ class DashStyleHighlightAnnotator : Annotator {
         val snap = runCatching { unusedInspection.snapshotFor(cssFile) }.getOrNull() ?: return
         if (snap.hasDynamic) return
 
-        // Step 1: expandSelector 展开所有选择器组合
+        // Step 1: expandSelector 展开所有选择器组合，并剥离 :global(...) / :global {} 内的类（不导出、不参与置灰）
         val expandedSelector = runCatching { Util.expandSelector(rs) }.getOrNull().orEmpty()
         if (expandedSelector.isBlank()) return
-        val expandedClasses = CLASS_NAME_RE.findAll(expandedSelector).mapNotNull { m ->
+        val globals = snap.globalClassNames
+        val stripped = Util.stripGlobalBlocks(expandedSelector)
+        val expandedClasses = CLASS_NAME_RE.findAll(stripped).mapNotNull { m ->
             val raw = m.groupValues[2]
             raw.trim().takeIf { it.isNotEmpty() }
-        }.distinct().toList()
+        }.distinct().filter { it !in globals }.toList()
         if (expandedClasses.isEmpty()) return
 
         // Step 2: 只有当展开后得到的所有类名 全部都不在 used 集合里，才认为整个 ruleset 未被使用。

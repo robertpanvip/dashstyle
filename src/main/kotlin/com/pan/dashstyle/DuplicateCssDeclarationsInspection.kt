@@ -200,23 +200,27 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
                 for (rs in duplicates) {
                     val block = rs.block ?: continue
-                    val keep = directDeclarationsStatic(block)
-                        .filter { normalizeRuleSig(it) !in sigsToRemove }
-                        .map { it.text }
                     val thisFileExt = (rs.containingFile?.virtualFile?.name ?: "").lowercase()
                     val ref = when {
                         thisFileExt.endsWith(".less") || preprocessorName == "less" -> ".$className();"
                         preprocessorName == "scss" || preprocessorName == "sass" -> "@extend .$className;"
                         else -> null
                     }
-                    val newBlock = buildString {
-                        append("{\n")
-                        if (ref != null) { append("  ").append(ref).append("\n") }
-                        for (t in keep) { append("  ").append(t).append("\n") }
-                        append("}")
+                    // 逐个处理**直接声明**：匹配到的共享声明替换为引用/删除，其它直接声明不动。
+                    // 关键：只改动声明的 textRange，绝不动 nested ruleset（嵌套块必须原样保留，
+                    // 否则 `.publish-container` 里的 `.space-between-flex` 等子块会被整块重建弄丢）。
+                    val decls = directDeclarationsStatic(block)
+                    var insertedRef = false
+                    for (d in decls) {
+                        if (normalizeRuleSig(d) !in sigsToRemove) continue
+                        val r = d.textRange
+                        if (ref != null && !insertedRef) {
+                            edits.add(Edit(r.startOffset, r.endOffset, ref))
+                            insertedRef = true
+                        } else {
+                            edits.add(Edit(r.startOffset, r.endOffset, ""))
+                        }
                     }
-                    val r = block.textRange
-                    edits.add(Edit(r.startOffset, r.endOffset, newBlock))
                 }
 
                 // 在目标根末尾追加公共 class

@@ -26,6 +26,10 @@ class Util {
         private val RE_COMMA_SPLIT = Regex(""",\s*""")
         /** CSS Modules 的 `:global(...)` 包裹块：其内部的类不导出，不进 class 提取/补全/置灰。 */
         private val RE_GLOBAL_BLOCK = Regex(""":[a-zA-Z_-]*global\s*\([^)]*\)""", RegexOption.IGNORE_CASE)
+        /** CSS Modules 的无括号 `:global` 作用域段：`:global .a`、`.container :global .a` 里整个段都是全局的。
+         *  从 `:global`（含其前导空白）一直切到下一个逗号整体移除，不要求出现在选择器开头；
+         *  之后跟 `(` 的 `:global(...)` 交给 RE_GLOBAL_BLOCK。 */
+        private val RE_GLOBAL_SCOPE_SEG = Regex("""\s*:global(?![a-zA-Z0-9_(-])[^,]*""", RegexOption.IGNORE_CASE)
 
         private val EXPAND_SELECTOR_KEY: Key<CachedValue<String>> =
             Key.create("dashstyle.expanded.selector.v2")
@@ -176,11 +180,17 @@ class Util {
         }
 
         /**
-         * 移除选择器文本中的 `:global(...)` / `:global (.foo)` 等包裹块（空字符串保留为空）。
-         * CSS Modules 里 :global 内的类不被导出，不能用 styles.xxx 访问，也不该进补全/置灰判断。
+         * 移除选择器文本中的 `:global(...)` / `:global { .a {} }`（无括号作用域前缀块）等，
+         * 空字符串保留为空。CSS Modules 里 global 内的类不导出，不能用 styles.xxx 访问，
+         * 也不该进补全/置灰判断。
          */
-        fun stripGlobalBlocks(selectorText: String): String =
-            RE_GLOBAL_BLOCK.replace(selectorText, " ")
+        fun stripGlobalBlocks(selectorText: String): String {
+            if (!selectorText.contains(":global", ignoreCase = true) &&
+                !selectorText.contains(":local", ignoreCase = true)) return selectorText
+            var s = RE_GLOBAL_BLOCK.replace(selectorText, " ")
+            s = RE_GLOBAL_SCOPE_SEG.replace(s, "")
+            return s
+        }
 
         /**
          * Less / SCSS / 原生 CSS 嵌套 & 扩展：
