@@ -3,7 +3,6 @@ package com.pan.dashstyle
 import com.intellij.codeInspection.*
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.HighlightSeverity
-import com.intellij.lang.css.CSSLanguage
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
@@ -14,7 +13,6 @@ import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlTag
-import com.intellij.openapi.fileTypes.PlainTextLanguage
 
 /**
  * #2. 单文件重复 CSS declarations 检测（变黄 + 波浪线）。
@@ -210,7 +208,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 data class Edit(val start: Int, val end: Int, val text: String)
                 val edits = mutableListOf<Edit>()
 
-                val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
+                val sigsToRemove = commonDeclarations.map { removalSig(it) }.toSet()
                 for (rs in duplicates) {
                     val block = rs.block ?: continue
                     val ref = when (preprocessorOf(rs)) {
@@ -224,7 +222,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                     val decls = directDeclarationsStatic(block)
                     var insertedRef = false
                     for (d in decls) {
-                        if (normalizeRuleSig(d) !in sigsToRemove) continue
+                        if (removalSig(d) !in sigsToRemove) continue
                         val r = d.textRange
                         if (ref != null && !insertedRef) {
                             edits.add(Edit(r.startOffset, r.endOffset, ref))
@@ -246,9 +244,20 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             }
         }
 
-        private fun normalizeRuleSig(d: CssDeclaration): String {
+        /** 与分组检测（normalizeSignature/normalizeValue）保持一致的**单条声明**归一化签名。
+         *  分组时对整组用 normalizeValue 扩展了 #rgb→#rrggbb、去尾逗号、折叠空白；
+         *  删除/替换匹配必须用同一套归一化，否则 `#fff` 与 `#ffffff` 会「被分组」却在执行时匹配不上。 */
+        private fun removalSig(d: CssDeclaration): String {
             val p = d.propertyName?.trim()?.lowercase().orEmpty()
-            val v = d.value?.text?.trim()?.replace(Regex("""\s+"""), " ")?.lowercase().orEmpty()
+            val raw = d.value?.text?.trim().orEmpty()
+            val v = raw.lowercase()
+                .let { s -> Regex("""#([0-9a-f]{3})(?![0-9a-f])""").replace(s) { m ->
+                    val c = m.groupValues[1]
+                    "#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}"
+                } }
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+                .removeSuffix(",")
             return "$p:$v"
         }
 
@@ -342,29 +351,6 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             // 独立 CSS 文件：parent 是 PsiFile，返回 PsiFile 在文件末尾插入。
             val parent = root.parent
             return if (parent is XmlTag) root else (parent ?: root)
-        }
-
-        private fun appendTextToRoot(project: Project, root: PsiElement, ruleText: String) {
-            val factory = PsiFileFactory.getInstance(project)
-            val tmp = try {
-                factory.createFileFromText("__dashstyle_tmp__.css", CSSLanguage.INSTANCE, ruleText)
-            } catch (_: Throwable) {
-                factory.createFileFromText("__dashstyle_tmp__.css", PlainTextLanguage.INSTANCE, ruleText)
-            }
-            val last = root.lastChild
-            if (last != null) root.addAfter(tmp.firstChild, last) else root.add(tmp.firstChild)
-        }
-
-        private fun createCssLine(project: Project, anchor: PsiElement, text: String): PsiElement {
-            val factory = PsiFileFactory.getInstance(project)
-            val tmp = factory.createFileFromText(
-                "__dashstyle_line__.css",
-                CSSLanguage.INSTANCE,
-                ".__tmp__ { $text }"
-            )
-            val rs = PsiTreeUtil.findChildrenOfType(tmp, CssRuleset::class.java).first()
-            return PsiTreeUtil.findChildrenOfType(rs.block, PsiElement::class.java)
-                .firstOrNull { it.text.contains(text) } ?: tmp.firstChild
         }
     }
 
