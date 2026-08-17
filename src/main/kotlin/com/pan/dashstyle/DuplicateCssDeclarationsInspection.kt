@@ -404,10 +404,20 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val result = ArrayList<CssDeclaration>()
             var child: PsiElement? = block.firstChild
             while (child != null) {
-                if (child is CssDeclaration) result.add(child)
+                if (child is CssDeclaration && !referencesCustomProperty(child)) result.add(child)
                 child = child.nextSibling
             }
             return result
+        }
+
+        /** 声明值里是否引用了 CSS 自定义属性（var(...)），如 `border: 1px solid var(--x)`。
+         *  这类声明的取值依赖变量所在的定义作用域：一旦被提取到文件顶层/块外的公共 class，
+         *  变量解析会脱离原作用域而失效（典型：Vue scoped 下 `--x` 定义在父块内，却被抽到
+         *  块外的 `.shared {}`）。因此它们绝不能参与「提取重复声明」。 */
+        private val VAL_REFERS_CUSTOM_PROP = Regex("""\bvar\s*\(""", RegexOption.IGNORE_CASE)
+        private fun referencesCustomProperty(d: CssDeclaration): Boolean {
+            val v = d.value?.text ?: return false
+            return VAL_REFERS_CUSTOM_PROP.containsMatchIn(v)
         }
 
         // file-level cache：用 CachedValue 按文件缓存分组结果（依赖只认该文件本身，
