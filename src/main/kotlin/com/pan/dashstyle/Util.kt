@@ -24,6 +24,8 @@ class Util {
         private val RE_CLASS_SELECTOR = Regex("""\.([a-zA-Z_][a-zA-Z0-9_-]*)""")
         private val RE_SASS_PLACEHOLDER = Regex("""%[a-zA-Z_][\w-]*""")
         private val RE_COMMA_SPLIT = Regex(""",\s*""")
+        /** CSS Modules 的 `:global(...)` 包裹块：其内部的类不导出，不进 class 提取/补全/置灰。 */
+        private val RE_GLOBAL_BLOCK = Regex(""":[a-zA-Z_-]*global\s*\([^)]*\)""", RegexOption.IGNORE_CASE)
 
         private val EXPAND_SELECTOR_KEY: Key<CachedValue<String>> =
             Key.create("dashstyle.expanded.selector.v2")
@@ -168,10 +170,17 @@ class Util {
          */
         fun extractClassNames(expandedSelector: String): List<String> {
             if (expandedSelector.isEmpty()) return emptyList()
-            var s = expandedSelector
+            var s = stripGlobalBlocks(expandedSelector)
             if ("__P_" in s) s = s.replace(Regex("""__P_([A-Za-z0-9_-]+?)__"""), "%$1")
             return RE_CLASS_SELECTOR.findAll(s).map { it.groupValues[1] }.toList()
         }
+
+        /**
+         * 移除选择器文本中的 `:global(...)` / `:global (.foo)` 等包裹块（空字符串保留为空）。
+         * CSS Modules 里 :global 内的类不被导出，不能用 styles.xxx 访问，也不该进补全/置灰判断。
+         */
+        fun stripGlobalBlocks(selectorText: String): String =
+            RE_GLOBAL_BLOCK.replace(selectorText, " ")
 
         /**
          * Less / SCSS / 原生 CSS 嵌套 & 扩展：

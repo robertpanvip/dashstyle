@@ -150,7 +150,9 @@ class DashStyleHighlightAnnotator : Annotator {
         if (raw.isEmpty()) return emptyList()
         val normalized = runCatching { Util.expandSelector(rs) }.getOrNull()
             ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
-        val cleaned = normalized.replace(Regex(""":+[\w-]+(?:\([^)]*\))?"""), "")
+        // :global(...) 内的类不导出、无法判断是否使用，先剥离避免误置灰
+        val noGlobal = Util.stripGlobalBlocks(normalized)
+        val cleaned = noGlobal.replace(Regex(""":+[\w-]+(?:\([^)]*)?"""), "")
         return CLASS_NAME_RE.findAll(cleaned).mapNotNull { m ->
             val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
             name.trim().takeIf { it.isNotEmpty() }

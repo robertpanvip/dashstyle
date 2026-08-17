@@ -208,8 +208,10 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             // Less &-suffix：把 expandAmpersand 应用一次；外层已经 expandSelector，保险起见这里再做一次 text 级 normalize
             val normalized = runCatching { Util.expandSelector(rs) }.getOrNull()
                 ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
+            // :global(...) 内的类不导出、无法判断是否使用，先剥离避免误置灰
+            val noGlobal = Util.stripGlobalBlocks(normalized)
             // 去掉伪类/伪元素部分以避免误剪
-            val cleaned = normalized.replace(PSEUDO_PART_RE, "")
+            val cleaned = noGlobal.replace(PSEUDO_PART_RE, "")
             return MODULE_CLASS_RE.findAll(cleaned).mapNotNull { m ->
                 val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
                 name.trim().takeIf { it.isNotEmpty() }
