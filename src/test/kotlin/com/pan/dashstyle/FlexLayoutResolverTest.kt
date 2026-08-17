@@ -14,23 +14,23 @@ class FlexLayoutResolverTest {
     @Test
     fun `default row places children left to right with same y`() {
         val boxes = FlexLayoutResolver.place(FlexLayoutResolver.Props(), W = 200, H = 60)
-        assertTrue("应摆 3 个子项", boxes.size == 3)
-        assertTrue("行布局下 x 递增", boxes[0].x < boxes[1].x && boxes[1].x < boxes[2].x)
+        assertTrue("应摆 4 个子项", boxes.size == 4)
+        assertTrue("行布局下 x 递增", boxes[0].x < boxes[1].x && boxes[1].x < boxes[2].x && boxes[2].x < boxes[3].x)
         assertEquals("行布局默认 align-items:stretch 时 y 相同", boxes[0].y, boxes[1].y)
         assertEquals("行布局拉伸时高度一致", boxes[0].h, boxes[1].h)
     }
 
     @Test
     fun `wrap splits children into multiple lines`() {
-        // W=60：每行最多放 2 个子项（item+gap=26），3 个子项 → 2 行
+        // 一行示意最多放 3 个（capacity=3），4 个子项 wrap → 3 + 1 = 2 行
         val boxes = FlexLayoutResolver.place(
-            FlexLayoutResolver.Props(wrap = true, childCount = 3),
+            FlexLayoutResolver.Props(wrap = true, childCount = 4),
             W = 60, H = 200
         )
         assertEquals("同属第一行，y 相同", boxes[0].y, boxes[1].y)
-        assertTrue("第二行与第一行 y 不同", boxes[2].y != boxes[0].y)
-        assertTrue("第二行在第一行下方", boxes[2].y > boxes[0].y)
-        assertTrue("第二行 x 应回到行首", boxes[2].x == boxes[0].x)
+        assertTrue("第二行与第一行 y 不同", boxes[3].y != boxes[0].y)
+        assertTrue("第二行在第一行下方", boxes[3].y > boxes[0].y)
+        assertTrue("第二行 x 应回到行首", boxes[3].x == boxes[0].x)
     }
 
     @Test
@@ -59,7 +59,7 @@ class FlexLayoutResolverTest {
             FlexLayoutResolver.Props(
                 wrap = true,
                 alignContent = FlexLayoutResolver.AlignContent.FLEX_START,
-                childCount = 3
+                childCount = 4
             ),
             W = 60, H = 200
         )
@@ -80,21 +80,22 @@ class FlexLayoutResolverTest {
 
     @Test
     fun `wrap applies justify-content per line independently`() {
-        // W=60：每行最多 2 个子项，3 个子项 → 2 行（第一行 2 个，第二行 1 个）
+        // 一行示意放 3 个（capacity=3），4 个子项 wrap → 第一行 3 个、第二行 1 个
         val boxes = FlexLayoutResolver.place(
             FlexLayoutResolver.Props(
                 wrap = true,
                 justify = FlexLayoutResolver.Justify.SPACE_BETWEEN,
-                childCount = 3
+                childCount = 4
             ),
             W = 60, H = 200
         )
-        // 第一行（index 0,1）：space-between 把两个子项推到两端，应有较大间距
-        assertTrue("第一行 space-between 拉开间距", boxes[1].x - boxes[0].x > 20)
-        // 第二行只有一个子项（index 2）：单行 space-between 无效果，回到行首
-        assertEquals("第二行单子项落在行首", 4, boxes[2].x)
+        // 第一行（index 0,1,2）spread：x 递增（space-between 拉开间距）
+        assertTrue("第一行 space-between 下 x 递增", boxes[1].x > boxes[0].x)
+        assertTrue("第一行三个子项 y 相同", boxes[0].y == boxes[1].y && boxes[0].y == boxes[2].y)
+        // 第二行只有一个子项（index 3）：单行 space-between 无效果，回到行首
+        assertEquals("第二行单子项落在行首", 4, boxes[3].x)
         // 两行 y 不同，证明确实换行
-        assertTrue("两行 y 不同", boxes[2].y != boxes[0].y)
+        assertTrue("两行 y 不同", boxes[3].y != boxes[0].y)
     }
 
     // ---------- 子项级微调：align-self 覆盖容器 align-items ----------

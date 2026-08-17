@@ -23,7 +23,7 @@ object FlexLayoutResolver {
         val alignContent: AlignContent = AlignContent.FLEX_START,
         val gap: Int = 0,
         val wrap: Boolean = false,
-        val childCount: Int = 3,
+        val childCount: Int = 4,
         /**
          * 逐子项的交叉轴对齐覆盖（align-self）。下标 i 对应第 i 个子项；
          * null 表示沿用容器级 [align]。长度不足的部分视为沿用容器对齐。
@@ -104,19 +104,21 @@ object FlexLayoutResolver {
         val row = props.direction == Direction.ROW || props.direction == Direction.ROW_REVERSE
         val reverse = props.direction == Direction.ROW_REVERSE || props.direction == Direction.COLUMN_REVERSE
         val P = 4
-        // 子盒尺寸用小号，让 justify/gap/align 的差异更直观。
-        val cw = if (row) 20 else 14
-        val ch = if (row) 14 else 20
         val mainAvail = if (row) W else H
         val crossAvail = if (row) H else W
-        val itemMain = if (row) cw else ch
-        val itemCross = if (row) ch else cw
         val gap = props.gap.coerceIn(0, 40)
         fun effAlign(i: Int): Align = props.alignSelfs.getOrNull(i) ?: props.align
 
-        // ---- 换行行数（预览规则）：nowrap 显示单行，wrap 显示恰好 2 行 ----
-        val maxPerLine = if (props.wrap) ((n + 1) / 2).coerceAtLeast(1) else n
+        // ---- 预览规则：一行示意最多放 [capacity] 个盒子 ----
+        // nowrap：全部挤在同一行，超过的部分溢出到右侧；wrap：超出部分折到下一行（示例 4 个盒子 → 2 行）。
+        // 盒子尺寸按容器推导，保证 wrap 的 2 行能铺满上下整体显示。
+        val capacity = 3
+        val maxPerLine = if (props.wrap) minOf(capacity, n).coerceAtLeast(1) else n
         val lines = ((n + maxPerLine - 1) / maxPerLine).coerceAtLeast(1)
+        val itemMain = ((mainAvail - 2 * P - ((capacity - 1) * gap).coerceAtLeast(0)) / capacity).coerceAtLeast(3)
+        val itemCross = ((crossAvail - 2 * P - gap) / 2).coerceAtLeast(3)
+        val cw = if (row) itemMain else itemCross
+        val ch = if (row) itemCross else itemMain
 
         // ---- align-content 决定各行在交叉轴上的分布（仅多行时有意义）----
         val lineBase = ArrayList<Int>(lines)

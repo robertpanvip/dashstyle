@@ -566,8 +566,12 @@ object LayoutPreviewPopup {
                 g2.color = JBColor(Color(0x9aa0aa), Color(0x62666d))
                 g2.drawRect(pad, pad, boxW - 1, boxH - 1)
                 g2.color = JBColor(Color(0x4f8cff), Color(0x6aa0ff))
+                val childBorder = JBColor(Color(0x274f9d), Color(0xcfe0fa))
                 for (b in boxes) {
                     g2.fillRect(pad + b.x, pad + b.y, b.w, b.h)
+                    g2.color = childBorder
+                    g2.drawRect(pad + b.x, pad + b.y, b.w, b.h)
+                    g2.color = JBColor(Color(0x4f8cff), Color(0x6aa0ff))
                 }
                 // grid：叠画轨道分隔线，提示可拖拽调尺寸
                 val model = modelProvider()

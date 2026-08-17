@@ -125,7 +125,7 @@ private class LayoutHintCollector(
     }
 
     private fun previewModelFor(model: LayoutModel): LayoutModel =
-        if (model is LayoutModel.Flex) LayoutModel.Flex(model.props.copy(childCount = 3)) else model
+        if (model is LayoutModel.Flex) LayoutModel.Flex(model.props.copy(childCount = 4)) else model
 }
 
 /**
@@ -221,15 +221,21 @@ private class OverallPreviewPresentation(
         val ox = bx + 1 + (innerW - scaledW) / 2
         val oy = by + 1 + (innerH - scaledH) / 2
 
+        val oldStroke = g2d.stroke
+        g2d.stroke = java.awt.BasicStroke(1f)
         g2d.color = OVERALL_CHILD
         for (b in boxes) {
             val sx = ox + ((b.x - minX) * scale).toInt()
             val sy = oy + ((b.y - minY) * scale).toInt()
             val sw = ((b.w * scale).coerceAtLeast(2.0f)).toInt()
             val sh = ((b.h * scale).coerceAtLeast(2.0f)).toInt()
-            g2d.fill(RoundRectangle2D.Float(
-                sx.toFloat(), sy.toFloat(), sw.toFloat(), sh.toFloat(), 2f, 2f))
+            val r = RoundRectangle2D.Float(sx.toFloat(), sy.toFloat(), sw.toFloat(), sh.toFloat(), 2f, 2f)
+            g2d.fill(r)
+            g2d.color = OVERALL_CHILD_BORDER
+            g2d.draw(r)
+            g2d.color = OVERALL_CHILD
         }
+        g2d.stroke = oldStroke
     }
 
     override fun toString(): String = "OverallPreview"
@@ -453,5 +459,6 @@ private class PropertyPreviewPresentation(
 
 private val OVERALL_BORDER = JBColor(Color(0x808080), Color(0x808080))
 private val OVERALL_CHILD = JBColor(Color(0x4a90d9), Color(0x5a9fe6))
+private val OVERALL_CHILD_BORDER = JBColor(Color(0x2f6bb0), Color(0x9cc4ef))
 private val PROP_BORDER = JBColor(Color(0x999999), Color(0x999999))
 private val PROP_CHILD = JBColor(Color(0x4a90d9), Color(0x5a9fe6))
