@@ -87,7 +87,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         // ruleset → 归一化声明签名
         data class Entry(val ruleset: CssRuleset, val declarations: List<CssDeclaration>, val signature: String)
         val entries = rulesets.mapNotNull { rs ->
-            val decls = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
+            val decls = directDeclarations(rs.block)
             if (decls.size < 1) return@mapNotNull null
             val signature = normalizeSignature(decls)
             if (signature.isBlank()) return@mapNotNull null
@@ -138,6 +138,13 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         s = s.removeSuffix(",")
         return s.lowercase()
     }
+
+    /**
+     * 只取 block 的直接 CssDeclaration 子节点（不递归进嵌套 ruleset）。
+     * 避免把 &:hover / &-active 等嵌套块内的声明当作父 block 的声明参与重复检测。
+     */
+    private fun directDeclarations(block: CssBlock?): List<CssDeclaration> =
+        Companion.directDeclarationsStatic(block)
 
     // ================================================================
     // QuickFix
@@ -193,7 +200,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
                 for (rs in duplicates) {
                     val block = rs.block ?: continue
-                    val keep = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java)
+                    val keep = directDeclarationsStatic(block)
                         .filter { normalizeRuleSig(it) !in sigsToRemove }
                         .map { it.text }
                     val thisFileExt = (rs.containingFile?.virtualFile?.name ?: "").lowercase()
@@ -219,7 +226,8 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 for (e in edits.sortedByDescending { it.start }) {
                     doc.replaceString(e.start, e.end, e.text)
                 }
-                PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(doc)
+                // 不在 write action 内调用 doPostponedOperationsAndUnblockDocument：
+                // 它会同步派发 AWT 事件，导致 "AWT events are not allowed inside write action" 错误。
             }
         }
 
@@ -257,7 +265,11 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 if (p == null || p is PsiFile || p is XmlTag) break
                 root = p
             }
-            return root.parent ?: root
+            // Vue <style> 内嵌 CSS：parent 是 XmlTag（<style>）时，返回 root 本身
+            // （CSS 根元素），其 textRange.endOffset 在 </style> 之前，确保插入在标签内。
+            // 独立 CSS 文件：parent 是 PsiFile，返回 PsiFile 在文件末尾插入。
+            val parent = root.parent
+            return if (parent is XmlTag) root else (parent ?: root)
         }
 
         private fun appendTextToRoot(project: Project, root: PsiElement, ruleText: String) {
@@ -301,7 +313,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             // 把整个 file 扫一遍分组（性能：走文件级 CachedValue，避免每 ruleset 重复分组计算）
             val snap = groupedSnapshot(cssFile)
             val mySig = runCatching {
-                val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
+                val decls = directDeclarationsStatic(block)
                 normalizeSignatureStatic(decls)
             }.getOrNull() ?: return
             if (mySig.isBlank()) return
@@ -378,6 +390,22 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             return s.lowercase()
         }
 
+        /**
+         * 只取 block 的直接 CssDeclaration 子节点（不递归进嵌套 ruleset）。
+         * companion 版本，供 attachDuplicateWave / groupedSnapshot 使用。
+         */
+        @JvmStatic
+        fun directDeclarationsStatic(block: CssBlock?): List<CssDeclaration> {
+            if (block == null) return emptyList()
+            val result = ArrayList<CssDeclaration>()
+            var child: PsiElement? = block.firstChild
+            while (child != null) {
+                if (child is CssDeclaration) result.add(child)
+                child = child.nextSibling
+            }
+            return result
+        }
+
         // file-level cache：用 CachedValue 按文件缓存分组结果（依赖只认该文件本身，
         // 其它文件改动不会让本文件的重复分组失效）。替代原先手动 ConcurrentHashMap + PSI 强引用，
         // 避免跨项目持有过期 PSI 的内存泄漏。
@@ -387,7 +415,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 val root = (cssFile as? StylesheetFile)?.stylesheet ?: cssFile
                 val rulesets = PsiTreeUtil.findChildrenOfType(root, CssRuleset::class.java).filter { it.block != null }
                 val entries = rulesets.mapNotNull { rs ->
-                    val decls = PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList()
+                    val decls = directDeclarationsStatic(rs.block)
                     if (decls.isEmpty()) return@mapNotNull null
                     Entry(rs, decls, normalizeSignatureStatic(decls))
                 }

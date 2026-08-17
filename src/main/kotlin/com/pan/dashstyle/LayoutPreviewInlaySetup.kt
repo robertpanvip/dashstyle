@@ -43,7 +43,9 @@ class CssLayoutPreviewInlayProvider : InlayHintsProvider<CssLayoutPreviewInlayPr
 
     override fun isLanguageSupported(language: Language): Boolean {
         val id = language.id.lowercase()
-        return id.contains("css") || id == "less" || id.contains("scss")
+        // CSS 家族 + Vue SFC（<style> 内嵌 CSS 通过 PsiTreeUtil 也能找到 CssRuleset）
+        return id.contains("css") || id == "less" || id.contains("scss") ||
+            id == "vue" || id == "vue-sfc" || id.contains("vue")
     }
 
     override fun createConfigurable(settings: Settings): com.intellij.codeInsight.hints.ImmediateConfigurable {
@@ -79,8 +81,9 @@ class CssLayoutPreviewInlayProvider : InlayHintsProvider<CssLayoutPreviewInlayPr
         if (rc.contains("StylesheetFile", true) || rc.contains("CssFile", true) ||
             rc.contains("ScssFile", true) || rc.contains("LessFile", true) ||
             rc.contains("SassFile", true)) return true
+        // Vue SFC 文件：<style> 内嵌 CSS 的 CssRuleset 可通过 PsiTreeUtil 找到
         val ext = file.virtualFile?.extension?.lowercase()
-        return ext in setOf("css", "scss", "sass", "less")
+        return ext in setOf("css", "scss", "sass", "less", "vue")
     }
 
     override fun toString(): String = "CssLayoutPreviewInlayProvider"

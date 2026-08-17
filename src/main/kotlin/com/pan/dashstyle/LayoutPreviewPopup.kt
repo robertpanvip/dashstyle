@@ -231,16 +231,16 @@ object LayoutPreviewPopup {
         private fun current(): LayoutModel.Flex = LayoutModel.Flex(state[0])
 
         private fun apply() {
-        val project = editor.project ?: return
-        val block = rs.block ?: return
-        WriteCommandAction.runWriteCommandAction(project) {
-            applyFlex(block, state[0], triggerProperty)
-            val doc = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(rs.containingFile)
-            if (doc != null) {
-                com.intellij.psi.PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(doc)
+            val project = editor.project ?: return
+            val block = rs.block ?: return
+            WriteCommandAction.runWriteCommandAction(project) {
+                applyFlex(block, state[0], triggerProperty)
             }
+            // doPostponedOperationsAndUnblockDocument 不能在 write action 内调用：
+            // 它会同步派发 AWT 事件（FocusEvent 等），导致
+            // "AWT events are not allowed inside write action" 错误。
+            // write action 结束后平台会自动 flush PSI/document 同步，无需手动触发。
         }
-    }
 
         override fun build(): JBPopup {
             val form = JPanel(GridBagLayout())

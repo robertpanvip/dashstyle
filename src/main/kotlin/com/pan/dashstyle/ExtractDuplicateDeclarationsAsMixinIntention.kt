@@ -225,9 +225,9 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
             if (setValue != null) {
                 setValue.isAccessible = true
                 setValue.invoke(styleTag, newText)
-                // 成功就同步 document
-                val doc = com.intellij.psi.PsiDocumentManager.getInstance(file.project).getDocument(file)
-                if (doc != null) com.intellij.psi.PsiDocumentManager.getInstance(file.project).doPostponedOperationsAndUnblockDocument(doc)
+                // 不在 write action 内调用 doPostponedOperationsAndUnblockDocument：
+                // 它会同步派发 AWT 事件，导致 "AWT events are not allowed inside write action" 错误。
+                // write action 结束后平台会自动 flush。
                 return@runCatching
             }
             // 2) 兜底：直接走 document 替换，用 styleTag.value 的 textRange 在 file.document 上定位
@@ -243,7 +243,6 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
             val absEnd = tr.startOffset + endStart
             if (absEnd < absStart) return@runCatching
             doc.replaceString(absStart, absEnd, newText)
-            com.intellij.psi.PsiDocumentManager.getInstance(file.project).doPostponedOperationsAndUnblockDocument(doc)
         }
     }
 
