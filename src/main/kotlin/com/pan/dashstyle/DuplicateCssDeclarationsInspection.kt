@@ -4,6 +4,7 @@ import com.intellij.codeInspection.*
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.lang.css.CSSLanguage
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -160,6 +161,19 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         override fun getFamilyName(): String = "DashStyle: Extract common CSS class"
 
         override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
+            // 关键：框架可能在 write action 内调用 applyFix。此时同步弹模态框（Messages.showInputDialog）
+            // 会派发 AWT FocusEvent，触发 "AWT events are not allowed inside write action"。
+            // 检测到 write access 时，把工作退回到事件队列（EDT），等外层 write action 释放后再执行。
+            val app = ApplicationManager.getApplication()
+            if (app.isWriteAccessAllowed) {
+                app.invokeLater { requestClassNameAndExtract(project) }
+                return
+            }
+            requestClassNameAndExtract(project)
+        }
+
+        /** 弹窗询问类名 + 执行提取（须在非 write action 的 EDT 上运行）。 */
+        private fun requestClassNameAndExtract(project: Project) {
             val input = Messages.showInputDialog(
                 project,
                 "Name the new shared CSS class (kebab-case recommended):",
