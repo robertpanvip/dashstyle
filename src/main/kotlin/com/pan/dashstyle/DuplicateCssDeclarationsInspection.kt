@@ -175,8 +175,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 return
             }
 
-            val insertionTarget = findInsertionRoot(duplicates.first()) ?: return
-            val preprocessorName = determinePreprocessor(duplicates.first().containingFile)
+            val insertOffset = computeInsertionOffset(duplicates) ?: return
 
             WriteCommandAction.writeCommandAction(project).withName("Extract common CSS class").run<Nothing> {
                 val declarationsText = commonDeclarations.joinToString("\n") { d ->
@@ -200,10 +199,9 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 val sigsToRemove = commonDeclarations.map { normalizeRuleSig(it) }.toSet()
                 for (rs in duplicates) {
                     val block = rs.block ?: continue
-                    val thisFileExt = (rs.containingFile?.virtualFile?.name ?: "").lowercase()
-                    val ref = when {
-                        thisFileExt.endsWith(".less") || preprocessorName == "less" -> ".$className();"
-                        preprocessorName == "scss" || preprocessorName == "sass" -> "@extend .$className;"
+                    val ref = when (preprocessorOf(rs)) {
+                        "less" -> ".$className();"
+                        "scss", "sass" -> "@extend .$className;"
                         else -> null
                     }
                     // 逐个处理**直接声明**：匹配到的共享声明替换为引用/删除，其它直接声明不动。
@@ -223,9 +221,8 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                     }
                 }
 
-                // 在目标根末尾追加公共 class
-                val rootRange = insertionTarget.textRange
-                edits.add(Edit(rootRange.endOffset, rootRange.endOffset, ruleText))
+                // 在最近公共父作用域内追加公共 class（确保 mixin/@extend 调用在其定义之后，且 var 引用仍在作用域内）
+                edits.add(Edit(insertOffset, insertOffset, ruleText))
 
                 for (e in edits.sortedByDescending { it.start }) {
                     doc.replaceString(e.start, e.end, e.text)
@@ -243,22 +240,79 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
 
         /** 该 ruleset 对应的「合并引用」语法策略（供 fix 名称与插入逻辑共用）。 */
         private fun quickFixStrategy(rs: CssRuleset): String {
-            val preprocessorName = determinePreprocessor(rs.containingFile)
-            return when (preprocessorName) {
+            return when (preprocessorOf(rs)) {
                 "less" -> "LESS mixin call"
                 "scss", "sass" -> "@extend"
                 else -> "shared selector"
             }
         }
 
-        private fun determinePreprocessor(file: PsiFile?): String {
+        /** 具体某个 ruleset 的预处理语言；对 Vue <style lang> 也识别（不再只看文件扩展名）。 */
+        private fun preprocessorOf(rs: CssRuleset): String = determinePreprocessor(rs.containingFile, rs)
+
+        private fun determinePreprocessor(file: PsiFile?, sample: CssRuleset? = null): String {
             val n = file?.name?.lowercase() ?: return "css"
-            return when {
-                n.endsWith(".scss") -> "scss"
-                n.endsWith(".sass") -> "sass"
-                n.endsWith(".less") -> "less"
-                else -> "css"
+            if (n.endsWith(".scss")) return "scss"
+            if (n.endsWith(".sass")) return "sass"
+            if (n.endsWith(".less")) return "less"
+            // Vue SFC：样式写在 <style lang="..."> 里，扩展名是 .vue，须向上找 <style> 的 lang 属性
+            if (n.endsWith(".vue") && sample != null) {
+                var tag = PsiTreeUtil.getParentOfType(sample, XmlTag::class.java)
+                while (tag != null) {
+                    if (tag.name.equals("style", true)) {
+                        val lang = tag.getAttributeValue("lang")?.lowercase()
+                        if (lang?.contains("less") == true) return "less"
+                        if (lang?.contains("scss") == true || lang?.contains("sass") == true) return "sass"
+                        return "css"
+                    }
+                    tag = tag.parentTag
+                }
             }
+            return "css"
+        }
+
+        /**
+         * 决定公共 class 的插入位置：放到这组重复 ruleset 的**最近公共父作用域**内，
+         * 而不是总提到文件顶层。这样：
+         *  1) 值里引用的 CSS 变量（var(...)）、LESS/SCSS 变量仍在原作用域内，不会失效；
+         *  2) mixin / @extend 调用点都在该类定义之后（LESS 不允许使用尚未定义的要 mixin）。
+         * 当重复规则都位于顶层（无共同父 ruleset）时，回退到文件/tag 根的最前面。
+         */
+        private fun computeInsertionOffset(duplicates: List<CssRuleset>): Int? {
+            val lca = commonAncestorRuleset(duplicates)
+            if (lca != null) {
+                val block = lca.block ?: return null
+                // 插到该块开 `{` 之后，保证在调用点之前定义
+                return block.textRange.startOffset + 1
+            }
+            val root = findInsertionRoot(duplicates.first()) ?: return null
+            return root.textRange.startOffset
+        }
+
+        /** 最近公共父 ruleset（越深越近）；无则返回 null（代表都在顶层）。 */
+        private fun commonAncestorRuleset(duplicates: List<CssRuleset>): CssRuleset? {
+            var common: Set<CssRuleset>? = null
+            for (rs in duplicates) {
+                // 候选链 = 从根到自身（含自身）：当某个重复规则本身就是另一个重复规则的祖先时，
+                // LCA 应是该重复规则本身，不能因为它的祖先链为空而被判定为「顶层」。
+                val chain = (ancestorRulesets(rs) + rs).toSet()
+                common = if (common == null) chain else common.intersect(chain)
+                if (common.isEmpty()) return null
+            }
+            // 取深度最大的公共祖先
+            val candidates = common ?: return null  // duplicates 非空时不可能为 null，这里仅作编译器兜底
+            return candidates.maxByOrNull { ancestorRulesets(it).size }
+        }
+
+        /** 自底向上的祖先 CssRuleset 链（不含自己）。 */
+        private fun ancestorRulesets(rs: CssRuleset): List<CssRuleset> {
+            val list = mutableListOf<CssRuleset>()
+            var p = rs.parent
+            while (p != null) {
+                if (p is CssRuleset) list.add(p)
+                p = p.parent
+            }
+            return list
         }
 
         private fun findInsertionRoot(sample: CssRuleset): PsiElement? {
@@ -404,20 +458,10 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val result = ArrayList<CssDeclaration>()
             var child: PsiElement? = block.firstChild
             while (child != null) {
-                if (child is CssDeclaration && !referencesCustomProperty(child)) result.add(child)
+                if (child is CssDeclaration) result.add(child)
                 child = child.nextSibling
             }
             return result
-        }
-
-        /** 声明值里是否引用了 CSS 自定义属性（var(...)），如 `border: 1px solid var(--x)`。
-         *  这类声明的取值依赖变量所在的定义作用域：一旦被提取到文件顶层/块外的公共 class，
-         *  变量解析会脱离原作用域而失效（典型：Vue scoped 下 `--x` 定义在父块内，却被抽到
-         *  块外的 `.shared {}`）。因此它们绝不能参与「提取重复声明」。 */
-        private val VAL_REFERS_CUSTOM_PROP = Regex("""\bvar\s*\(""", RegexOption.IGNORE_CASE)
-        private fun referencesCustomProperty(d: CssDeclaration): Boolean {
-            val v = d.value?.text ?: return false
-            return VAL_REFERS_CUSTOM_PROP.containsMatchIn(v)
         }
 
         // file-level cache：用 CachedValue 按文件缓存分组结果（依赖只认该文件本身，
