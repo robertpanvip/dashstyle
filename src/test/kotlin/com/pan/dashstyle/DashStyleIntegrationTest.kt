@@ -277,10 +277,12 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             .a {
               padding: 4px;
               margin: 0;
+              border-radius: 4px;
             }
             .b {
               padding: 4px;
               margin: 0;
+              border-radius: 4px;
             }
             """.trimIndent()
         )
