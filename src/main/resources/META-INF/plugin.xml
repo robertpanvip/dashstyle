@@ -236,12 +236,9 @@
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
         <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，
-             所以移除 DashStyle 自己实现的 CssModuleImportCopyPasteProcessor（#3）避免两条逻辑冲突；
-             只保留 #7 的「复制 TSX/Vue 标签时把关联 CSS 规则一起打包到目标 CSS Module」的处理器。-->
+             所以移除 DashStyle 自己实现的 CssModuleImportCopyPasteProcessor（#3）避免两条逻辑冲突。-->
         <copyPastePreProcessor
                 implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
-        <copyPastePostProcessor
-                implementation="com.pan.dashstyle.CssBundleCopyPastePostProcessor"/>
 
         <!-- ========================= 快速修复 / 意向动作 ========================= -->
         <!-- language=JavaScript 让 WebStorm 把这些意向动作应用到 JS/TS/JSX/TSX 文件里的编辑器 Alt+Enter；
@@ -279,33 +276,6 @@
         </intentionAction>
 
         <intentionAction>
-            <className>com.pan.dashstyle.AddCssModuleImportIntention</className>
-            <language>JavaScript</language>
-            <language>XML</language>
-            <category>DashStyle</category>
-            <description><![CDATA[
-              When the qualifier <code>styles</code> is unresolved (no import), scans sibling
-              <code>*.module.(css|scss|less)</code> candidates and prepends the matching
-              <code>import styles from './Foo.module.css'</code>; works inside Vue
-              <code>&lt;script setup&gt;</code> blocks.
-            ]]></description>
-            <bindToCode>true</bindToCode>
-        </intentionAction>
-
-        <intentionAction>
-            <className>com.pan.dashstyle.CssPreprocessorTranspileIntention</className>
-            <language>CSS</language>
-            <language>XML</language>
-            <category>DashStyle</category>
-            <description><![CDATA[
-              Convert a CSS / SCSS / LESS file or Vue <code>&lt;style lang="..."&gt;</code> block between SCSS, LESS, and native CSS Nesting
-              (shared subset of features: variables, nesting, @extend, mixins, interpolation).
-              Unsupported constructs are preserved with an explicit comment warning.
-            ]]></description>
-            <bindToCode>true</bindToCode>
-        </intentionAction>
-
-        <intentionAction>
             <className>com.pan.dashstyle.ExtractDuplicateDeclarationsAsMixinIntention</className>
             <language>CSS</language>
             <language>SCSS</language>
@@ -324,15 +294,5 @@
             ]]></description>
             <bindToCode>true</bindToCode>
         </intentionAction>
-
-        <!-- ========================= 颜色提取 Action（编辑器右键菜单 + Find Action） ========================= -->
-        <action id="DashStyle.ExtractColors"
-                class="com.pan.dashstyle.ExtractColorsAction"
-                text="DashStyle: Extract Colors as CSS Variables"
-                description="Scan CSS/SCSS/LESS files or selection, extract unique colors into CSS variables, preview &amp; edit names, copy :root block to clipboard and replace references in place.">
-            <add-to-group group-id="CodeMenu" anchor="before" relative-to-action="GenerateCode"/>
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <add-to-group group-id="HelpFindAction"/>
-        </action>
     </extensions>
 </idea-plugin>

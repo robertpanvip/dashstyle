@@ -368,12 +368,10 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         val mustLoad = listOf(
             "com.pan.dashstyle.DashStyleHighlightAnnotator",
             "com.pan.dashstyle.StaticGlobalHighlightVisitor",
-            "com.pan.dashstyle.CssPreprocessorTranspileIntention",
             "com.pan.dashstyle.UnusedCssModuleClassInspection",
             "com.pan.dashstyle.DuplicateCssDeclarationsInspection",
             "com.pan.dashstyle.DashStyleDocumentationProvider",
             "com.pan.dashstyle.InlineStyleToCssModuleIntention",
-            "com.pan.dashstyle.ExtractColorsAction",
             "com.pan.dashstyle.LayoutPreviewPopup",
             "com.pan.dashstyle.LayoutPreviewGutterMarkerProvider"
         )
