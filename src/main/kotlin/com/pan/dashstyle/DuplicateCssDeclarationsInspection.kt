@@ -28,12 +28,6 @@ import com.intellij.psi.xml.XmlTag
  */
 class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
 
-    /**
-     * 提取门槛：只有重复组内**共享声明数 ≥ 3**（即重复的 "属性:值" 至少有 3 条）才提示、才提供提取。
-     * 否则像 `display:flex` 这种单条共享也会被误当成公共提取，噪声太大。
-     */
-    private const val MIN_SHARED_DECLARATIONS = 3
-
     override fun getGroupDisplayName(): String = "DashStyle"
     override fun getDisplayName(): String = "Duplicate CSS declarations (single file)"
     // 同 UnusedCssModuleClassInspection：shortName 完全由 plugin.xml 提供，
@@ -365,6 +359,9 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
     // 给 DashStyleHighlightAnnotator（作为 Annotator 直接着色）和 StaticGlobalHighlightVisitor（无 holder）的公开入口
     // ================================================================
     companion object {
+
+        /** 提取门槛：共享声明（重复的 "属性:值"）至少 3 条才提示/提取，避免单条共享也滥竽充数。 */
+        private const val MIN_SHARED_DECLARATIONS = 3
 
         /**
          * Annotator 路径（DashStyleHighlightAnnotator）使用：给 block 段画 WEAK_WARNING 波浪下划线。

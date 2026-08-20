@@ -238,7 +238,7 @@ class DashStyleHighlightAnnotator : Annotator {
                     }
                     val result = bySig.filter { (sig, list) ->
                         // 重复规则数 >= 2，且共享声明（签名里的 prop:value 段）>= 3
-                        list.size >= 2 && sig.count('|') + 1 >= 3
+                        list.size >= 2 && sig.count { it == '|' } + 1 >= 3
                     }
                     com.intellij.psi.util.CachedValueProvider.Result.create(
                         result,

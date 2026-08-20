@@ -12,6 +12,9 @@ import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
 
+/** 提取门槛：共享声明（重复的 "属性:值"）至少 3 条才提取，避免单条共享也滥竽充数。 */
+private const val MIN_SHARED_DECLARATIONS = 3
+
 /**
  * #9. 提取重复的 CSS 声明块为共享 Less mixin 并原地引用。
  *
@@ -39,9 +42,6 @@ import com.intellij.psi.util.PsiTreeUtil
  */
 @Suppress("UnstableApiUsage", "DEPRECATION")
 class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
-
-    /** 提取门槛：共享声明（重复的 "属性:值"）至少 3 条才提取，避免单条共享也滥竽充数。 */
-    private const val MIN_SHARED_DECLARATIONS = 3
 
     override fun getText(): String = "Extract duplicated CSS blocks into shared Less mixins"
     override fun getFamilyName(): String = "DashStyle: Extract duplicate CSS"
