@@ -27,6 +27,18 @@
 
     <change-notes>
         <![CDATA[
+        <h3>1.2.7</h3>
+        <ul>
+            <li>🗑️ 移除以下功能，插件回归聚焦核心能力：<code>styles.xxx</code> 智能跳转/补全、Inline Style 抽取、JSON→CSS 复制粘贴、代码检查、布局/阴影预览、Tailwind 补全：</li>
+            <ul>
+                <li>移除 CSS Module 导入自动化（含复制时自动带 import）</li>
+                <li>移除 TSX/Vue 复制 → CSS 规则随动</li>
+                <li>移除 SCSS / LESS / 原生 CSS Nesting 互转（Intention Action）</li>
+                <li>移除项目公共颜色 → CSS Variable 抽取（AnAction）</li>
+                <li>移除 CSS 尺寸/单位换算助手（Inlay）</li>
+            </ul>
+        </ul>
+
         <h3>1.2.0</h3>
         <ul>
             <li>✨ 新增 <code>styles.fooBar</code> member access 跳转/补全（此前仅支持 <code>styles["foo-bar"]</code>）</li>
