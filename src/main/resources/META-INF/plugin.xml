@@ -33,11 +33,7 @@
             <li>✨ 鼠标悬浮 CSS Module class，显示展开后的完整规则声明（含 kebab 选择器、声明列表、来源位置）</li>
             <li>✨ 未使用的 CSS Module class 自动置灰，Alt+Enter 可直接删除（遇动态 <code>styles[expr]</code> 自动关闭，不误报）</li>
             <li>✨ 缺失 class 快速创建：<code>styles.xxx</code> 解析失败时 Alt+Enter，在对应 CSS Module 末尾生成空 class 并把光标定位到大括号内</li>
-            <li>✨ 快速注入 import：写了 <code>styles.xxx</code> 但未 import 时，Alt+Enter 自动扫描同目录候选 <code>*.module.*</code> 并插入 import 语句（Vue <code>&lt;script setup&gt;</code> 兼容）</li>
             <li>✨ 单文件重复 CSS 声明检测（变黄 + 波浪线），一键抽取公共类并生成 <code>@extend</code> 回所有重复点（SCSS/LESS）</li>
-            <li>✨ 复制 <code>styles.xxx</code> → 粘贴到新文件时自动带上 import（已存在则不重复加）</li>
-            <li>✨ 复制 TSX/Vue 标签 → 自动把关联的 CSS 规则打包过去：目标有 styles import 就追加；否则在同目录新建同名 <code>.module.css</code> 并自动注入 import</li>
-            <li>✨ SCSS / LESS / 原生 CSS Nesting 常用子集互转（变量、嵌套、extend、mixin、插值）；不支持的 construct 保留并加提示注释</li>
         </ul>
 
         <h3>1.0.8</h3>

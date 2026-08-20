@@ -16,17 +16,7 @@
 
 - **代码检查**：未使用 CSS Module class 置灰 + 删除 Fix；单文件重复声明检测 + 抽取公共类 `@extend`
 
-- **导入自动化**：缺失 import 时 Alt+Enter 自动扫描同目录 `*.module.*` 并注入
-
-- **TSX/Vue 复制 → CSS 规则随动**：复制标签时把关联 CSS 规则打包，粘贴时自动追加/新建 Module 并补 import
-
-- **SCSS / LESS / 原生 CSS Nesting 互转**（Alt+Enter）：变量、嵌套、`@extend`、mixin、插值；不支持的 construct 保留并加提示注释
-
-- **项目颜色 → CSS Variable 抽取**（Code 菜单）：扫选区/文件/目录/全项目 → 语义变量名 → 预览编辑 → `:root` 进剪贴板并就地替换
-
 - **Flex/Grid 布局可视化预览**：`display:flex/grid` 行前 gutter 迷你布局图，悬浮放大预览、点击弹出可调交互面板（拖拽子项 align-self、拖拽轨道）
-
-- **CSS 尺寸/单位换算助手**：长度值行尾显示 `px ≈ rem ≈ vw` 换算、`clamp()` 实际取值、`calc()` 简化值
 
 - **Tailwind 类补全 + CSS 预览**：在 CSS 的 `@apply` 指令内自动补全（`Ctrl/Cmd+Space` 手动触发，`Enter` 确认），内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明
 - **缺失类自动生成 Tailwind CSS**：`styles.xxx` 引用的类缺失且 `xxx` 是 Tailwind 原子化类时，`Alt+Enter` 自动生成对应展开 CSS（如 `.flex { display: flex }`）
