@@ -236,7 +236,10 @@ class DashStyleHighlightAnnotator : Annotator {
                         }.getOrNull() ?: continue
                         bySig.getOrPut(sig) { mutableListOf() } += r
                     }
-                    val result = bySig.filterValues { it.size >= 2 }
+                    val result = bySig.filter { (sig, list) ->
+                        // 重复规则数 >= 2，且共享声明（签名里的 prop:value 段）>= 3
+                        list.size >= 2 && sig.count('|') + 1 >= 3
+                    }
                     com.intellij.psi.util.CachedValueProvider.Result.create(
                         result,
                         contextFile  // 只依赖该文件本身：其它文件改动不会让本文件的重复分组失效

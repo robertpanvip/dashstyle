@@ -40,6 +40,9 @@ import com.intellij.psi.util.PsiTreeUtil
 @Suppress("UnstableApiUsage", "DEPRECATION")
 class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
 
+    /** 提取门槛：共享声明（重复的 "属性:值"）至少 3 条才提取，避免单条共享也滥竽充数。 */
+    private const val MIN_SHARED_DECLARATIONS = 3
+
     override fun getText(): String = "Extract duplicated CSS blocks into shared Less mixins"
     override fun getFamilyName(): String = "DashStyle: Extract duplicate CSS"
 
@@ -49,8 +52,8 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         val selection = editor.selectionModel
         val range = selectionRangeOrNull(selection, file)
         val rules = collectCandidateRulesets(root, range)
-        // 至少出现一组 size>=2 的重复声明才显示，避免 Alt+Enter 里滥竽充数
-        groupBySignature(rules).any { it.value.size >= 2 }
+        // 共享声明（签名里的 prop:value 段）>= 3 且出现一组重复（size>=2）才显示，避免单条共享也滥竽充数
+        groupBySignature(rules).any { (sign, list) -> list.size >= 2 && sign.size >= MIN_SHARED_DECLARATIONS }
     }.getOrDefault(false)
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
@@ -277,7 +280,10 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
             bySign.getOrPut(sign) { mutableListOf() }.add(r)
             prettyBySign.putIfAbsent(sign, pretty)
         }
-        val groups = bySign.values.filter { it.size >= 2 }.sortedByDescending { g -> g.first().bodyStart } // 从后往前替换避免错位
+        // 共享声明数 >= MIN_SHARED_DECLARATIONS 且重复规则数 >= 2 才提取；按大 offset 在前排序（避免错位）
+        val groups = bySign.filter { (sign, list) ->
+            list.size >= 2 && sign.size >= MIN_SHARED_DECLARATIONS
+        }.values.sortedByDescending { g -> g.first().bodyStart }
 
         if (groups.isEmpty()) return source
         val newMixinDefs = mutableListOf<Pair<String, List<String>>>() // name → prettyDecls（按原始顺序 + 视觉一致的 prop: valueNorm）

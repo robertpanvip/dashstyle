@@ -28,6 +28,12 @@ import com.intellij.psi.xml.XmlTag
  */
 class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
 
+    /**
+     * 提取门槛：只有重复组内**共享声明数 ≥ 3**（即重复的 "属性:值" 至少有 3 条）才提示、才提供提取。
+     * 否则像 `display:flex` 这种单条共享也会被误当成公共提取，噪声太大。
+     */
+    private const val MIN_SHARED_DECLARATIONS = 3
+
     override fun getGroupDisplayName(): String = "DashStyle"
     override fun getDisplayName(): String = "Duplicate CSS declarations (single file)"
     // 同 UnusedCssModuleClassInspection：shortName 完全由 plugin.xml 提供，
@@ -93,8 +99,9 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             Entry(rs, decls, signature)
         }
 
-        // 按签名分组，只看 size >= 2 的组
-        val groups = entries.groupBy { it.signature }.filterValues { it.size >= 2 }
+        // 按签名分组，只看重复规则数 >= 2 且共享声明数 >= MIN_SHARED_DECLARATIONS 的组
+        val groups = entries.groupBy { it.signature }
+            .filterValues { it.size >= 2 && it.first().declarations.size >= MIN_SHARED_DECLARATIONS }
         if (groups.isEmpty()) return
 
         for ((_, group) in groups) {
@@ -377,6 +384,8 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             if (mySig.isBlank()) return
             val group = snap[mySig] ?: return
             if (group.size < 2) return
+            // 共享声明数 < 3 不提示（避免单条共享也画波浪线）
+            if (group.first().declarations.size < MIN_SHARED_DECLARATIONS) return
             val count = group.size
             val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
                 (if (group.first().declarations.size > 3) "\n  ..." else "")
@@ -400,7 +409,10 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val mgr = com.intellij.codeInspection.InspectionManager.getInstance(project)
 
             // 简洁做法：用文件级 CachedValue 拿分组结果：O(N) 一次共享，避免对每个 visit 的 ruleset 都全文件扫描（O(N²)）。
-            val groups = groupedSnapshot(file).filterValues { it.size >= 2 }
+            // 仅保留重复规则数 >= 2 且共享声明数 >= MIN_SHARED_DECLARATIONS 的组。
+            val groups = groupedSnapshot(file).filterValues {
+                it.size >= 2 && it.first().declarations.size >= MIN_SHARED_DECLARATIONS
+            }
             if (groups.isEmpty()) return
             for ((_, group) in groups) {
                 val fixes: Array<LocalQuickFix> = arrayOf(
