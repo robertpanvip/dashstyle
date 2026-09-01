@@ -41,6 +41,10 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 val cssFile = ruleset.containingFile ?: return
                 val cssVf = cssFile.virtualFile ?: return
 
+                // 文件有外部修改待处理（如 Cursor 改完后 IntelliJ 弹出"Reload from disk"对话框时），
+                // 跳过分析以避免 PSI 访问触发对话框自动关闭。让用户先 reload 再检查。
+                if (Util.hasPendingExternalModification(cssVf)) return
+
                 // 必须是 CSS Module 文件（*.module.*），全局 CSS 不处理
                 if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return
 

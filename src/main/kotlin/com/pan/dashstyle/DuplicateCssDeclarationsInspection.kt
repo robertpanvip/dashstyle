@@ -37,6 +37,9 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor {
         return object : PsiElementVisitor() {
             override fun visitFile(file: PsiFile) {
+                val vf = file.virtualFile
+                if (vf != null && Util.hasPendingExternalModification(vf)) return
+
                 // CSS/SCSS/LESS 文件（兼容不同版本的 Scss/Less File 实现，用反射+后缀兜底）
                 if (isStylesheetLike(file)) {
                     inspectStyleScope(stylesheetRoot(file), file, holder, ScopeKind.FILE(file))

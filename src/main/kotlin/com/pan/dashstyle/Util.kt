@@ -3,7 +3,9 @@ package com.pan.dashstyle
 import com.intellij.lang.ecmascript6.psi.ES6ImportSpecifierAlias
 import com.intellij.lang.javascript.psi.JSCallExpression
 import com.intellij.lang.javascript.psi.JSVariable
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.util.Key
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.css.CssRuleset
@@ -444,6 +446,25 @@ class Util {
             var i = start
             while (i <= end) { if (consumed[i]) return true; i++ }
             return false
+        }
+
+        /**
+         * 检测文件是否已被外部修改但 IntelliJ 尚未 reload。
+         *
+         * 当外部编辑器（如 Cursor）修改了文件后，IntelliJ 的 VFS 会检测到变化，
+         * 弹出 "File changed externally" 对话框。但如果此时插件代码访问该文件的 PSI，
+         * IntelliJ 会自动按「Keep」策略关闭对话框，之后自动保存会用旧内容覆盖磁盘上的新内容。
+         *
+         * 这个方法在插件访问文件的 PSI 之前调用，如果返回 true 则跳过分析，
+         * 避免触发对话框自动关闭，让用户有机会自己点 "Reload from disk"。
+         */
+        @JvmStatic
+        fun hasPendingExternalModification(vf: VirtualFile): Boolean {
+            val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return false
+            // 文件在 IntelliJ 内没有被修改过（unsaved = false），但 VFS 时间戳 ≠ 文档时间戳，
+            // 说明文件被外部修改了，IntelliJ 尚未 reload。
+            return !FileDocumentManager.getInstance().isDocumentUnsaved(doc) &&
+                    doc.modificationStamp != vf.modificationStamp
         }
 
         /** 按归一化颜色给一组候选名，语义优先（primary/secondary/accent 等），否则 --color-1/2/3。 */

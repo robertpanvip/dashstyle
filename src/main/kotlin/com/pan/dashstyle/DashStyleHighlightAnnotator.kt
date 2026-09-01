@@ -31,6 +31,10 @@ class DashStyleHighlightAnnotator : Annotator {
     // =================== Annotator 入口 ===================
     override fun annotate(element: PsiElement, holder: AnnotationHolder) {
         val rs = element as? CssRuleset ?: return
+        val file = rs.containingFile ?: return
+        val vf = file.virtualFile
+        // 文件有外部修改待处理时跳过，避免触发"Reload from disk"对话框自动关闭
+        if (vf != null && Util.hasPendingExternalModification(vf)) return
         runCatching { annotateUnused(rs, holder) }
         runCatching { annotateDuplicate(rs, holder) }
     }
