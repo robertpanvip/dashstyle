@@ -220,10 +220,9 @@
              文件的 styles.xxx / style={{...}} 上永远不会出现在 Alt+Enter 列表里。-->
         <intentionAction>
             <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
-            <language>JavaScript</language>
-            <language>TypeScript</language>
-            <language>TypeScript JSX</language>
-            <language>XML</language>
+
+
+
             <category>DashStyle</category>
             <description><![CDATA[
               Extracts the inline style object (<code>style={{ ... }}</code> in React/TSX
@@ -240,10 +239,9 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.CreateMissingCssClassIntention</className>
-            <language>JavaScript</language>
-            <language>TypeScript</language>
-            <language>TypeScript JSX</language>
-            <language>XML</language>
+
+
+
             <category>DashStyle</category>
             <description><![CDATA[
               When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
@@ -255,10 +253,9 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.ExtractDuplicateDeclarationsAsMixinIntention</className>
-            <language>CSS</language>
-            <language>SCSS</language>
-            <language>LESS</language>
-            <language>XML</language>
+
+
+
             <category>DashStyle</category>
             <description><![CDATA[
               Scans the current CSS/SCSS/LESS file (or the selected portion) for
