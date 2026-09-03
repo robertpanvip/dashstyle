@@ -30,12 +30,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup JDK 17 (Temurin)
+      - name: Setup JDK 21 (Temurin)
         uses: actions/setup-java@v5
         id: setup_jdk
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
           cache: gradle
 
       # gradle.properties 里有两处「只适用于本地 trae 开发机」的硬编码，
@@ -92,7 +92,7 @@ jobs:
           grep -nE "java\.home|jvmargs|proxy" gradle.properties || true
 
       # 继续用 provisioned gradle-version 8.14（和 release.yml 一致）。
-      # 此时 gradle.properties 已替换成本次 runner 真实的 temurin-17 路径。
+      # 此时 gradle.properties 已替换成本次 runner 真实的 temurin-21 路径。
       - name: Setup Gradle 8.14
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -132,11 +132,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup JDK 17 (Temurin)
+      - name: Setup JDK 21 (Temurin)
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - name: (Sanity) 确认 3 个 Verifier.java 都已经被提交到仓库
         run: |
@@ -178,7 +178,7 @@ jobs:
   #     未使用 class 置灰 / 重复声明弱警告 / 抽取公共类 QuickFix /
   #     style 字符串引用跳转 / inline style 提取 Intention / 类可加载。
   #   依赖 Job 1 先编译通过（needs: plugin-build），避免在编译错时白白下载 SDK。
-  #   注意：需要 JDK 17 + 首次会下载 WebStorm SDK（体积大、耗时较长）。
+  #   注意：需要 JDK 21 + 首次会下载 WebStorm SDK（体积大、耗时较长）。
   # ------------------------------------------------------------------
   integration-tests:
     name: IDE sandbox integration tests
@@ -189,16 +189,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup JDK 17 (Temurin)
+      - name: Setup JDK 21 (Temurin)
         uses: actions/setup-java@v5
         id: setup_jdk
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
           cache: gradle
 
       # 与 plugin-build 相同的修补：把本地开发机硬编码的 java.home / 代理参数
-      # 替换成 CI runner 实际可用的 temurin-17 路径并去掉代理，否则插件解析依赖会失败。
+      # 替换成 CI runner 实际可用的 temurin-21 路径并去掉代理，否则插件解析依赖会失败。
       - name: Patch gradle.properties (java.home + strip CI-broken proxy)
         run: |
           set -euo pipefail
