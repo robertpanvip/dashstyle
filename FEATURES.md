@@ -13,8 +13,7 @@
 | 3 | **Inline Style → CSS Module 一键抽取**（Intention Action） | `style={{...}}` 或 `:style="{...}"` → 自动语义推断类名 + 重命名输入框 + 追加到 Module 文件 |
 | 4 | **Inline Style JSON → CSS 复制粘贴**（CopyPastePreProcessor） | 支持 JS 对象字面量（key 无引号/单引号/尾随逗号/注释）、unitless 属性、负数、transform 函数区分 scale/rotate/translate 单位 |
 | 5 | **代码检查 (Inspection)** | 未使用 CSS Module class 置灰 + 删除 Fix；单文件重复 CSS 声明检测 + 抽取公共类（生成 `@extend` 回所有重复点） |
-| 6 | **Flex/Grid 布局可视化预览**（gutter LineMarker + 交互弹窗） | `display:flex/grid` 行前渲染迷你布局图（WebStorm 颜色预览式），悬浮看放大预览、点击弹出可调交互面板（拖拽子项 align-self、拖拽 grid 轨道） |
-| 7 | **Tailwind 类补全 + CSS 预览**（`@apply` 内自动补全） | 内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明，按 Enter 直接补全 |
+| 6 | **Tailwind 类补全 + CSS 预览**（`@apply` 内自动补全） | 内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明，按 Enter 直接补全 |
 
 ---
 
@@ -75,18 +74,7 @@
 | [UnusedCssModuleClassInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/UnusedCssModuleClassInspection.kt) | CSS Module 文件中存在定义但 TSX/Vue 里 `styles.xxx` / `styles["xxx"]` 未引用时类名**置灰**；扫描到动态 `styles[expr]` 自动关闭该文件的检查避免误报 | QuickFix：删除未用 ruleset |
 | [DuplicateCssDeclarationsInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/DuplicateCssDeclarationsInspection.kt) | 同一 CSS 文件里 ≥2 个 ruleset 声明块完全相同 → **黄色 + 波浪线**（仿 TS 重复代码检查视觉） | QuickFix：抽取为公共类 `.common-name`，重复点删除原声明并按语言替换为合并引用——**LESS** 用 mixin 调用 `.common-name();`（LESS 的 ruleset 本身就是 mixin），**SCSS/Sass** 用 `@extend .common-name;`，纯 **CSS** 无 extend/mixin 只删声明不动选择器 |
 
-### 2.6 Flex/Grid 布局可视化预览
-位置：[LayoutPreviewGutterMarkerProvider.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutPreviewGutterMarkerProvider.kt) / [LayoutPreviewPopup.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutPreviewPopup.kt)
-
-- **gutter 迷你布局图**：`display:flex|grid` 行前渲染 32×32 布局图（WebStorm 颜色预览式），每条布局属性行前渲染「聚焦该属性」的图标；布局解析复用 [LayoutContextResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutContextResolver.kt)，按文件 `CachedValue` 缓存
-- **悬浮放大预览**：悬停 gutter 图标，把同一布局渲染成 ~200×130 的 PNG 作为 HTML tooltip，达到与行内预览相当的清晰度
-- **点击交互弹窗**：弹出可调面板，实时画布随控件重绘
-  - flex：justify-content / align-items / align-content / flex-direction / flex-wrap / gap，子项**拖动自适应 align-self**
-  - grid：grid-template-columns/rows（**拖动轨道分隔线调 fr/px**）、gap、对齐
-- **写回**：「应用到样式」把当前值写回 CSS ruleset（已存在改值，缺失则新增）
-- **纯逻辑层**：[FlexLayoutResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/FlexLayoutResolver.kt)（含逐子项 alignSelf）/ [GridLayoutResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/GridLayoutResolver.kt)（含轨道 resize），经 [LayoutModel.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/LayoutModel.kt) 密封类统一抽象，可独立单测
-
-### 2.7 Tailwind 类补全 + CSS 预览
+### 2.6 Tailwind 类补全 + CSS 预览
 位置：[TailwindClassCompletionContributor.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassCompletionContributor.kt) / [TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)
 
 - **触发位置**：CSS 的 `@apply` 指令内（`abc { @apply <光标>; }`），CSS/SCSS/LESS 三种语言均生效
@@ -164,8 +152,8 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
   - `PsiReferenceContributor`（字符串 + member access 双引用提供者）
   - `documentationProvider`（悬浮展示完整 CSS 规则）
   - `localInspection`（未使用 class / 重复声明）
-  - `annotator` ×3 + `highlightVisitor`（CSS Module class 置灰 / 重复声明波浪线；Vue/Svelte 内嵌 `<style module>` 场景）
-  - `lineMarkerProvider`（flex/grid 布局 gutter 预览 + 阴影预览）
+  - `annotator` ×3（CSS Module class 置灰 / 重复声明波浪线；Vue/Svelte 内嵌 `<style module>` 场景）
+  - `lineMarkerProvider`（阴影预览）
   - `completion.contributor` ×3（Tailwind 类补全，CSS/SCSS/LESS）
   - `copyPastePreProcessor`（JSON→CSS 复制粘贴）
   - `intentionAction` ×3（Inline 抽取 / 缺失 class 创建 / 重复声明抽取公共类）
@@ -184,4 +172,4 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 
 ---
 
-*文档版本与 DashStyle v1.2.1 对应。*
+*文档版本与 DashStyle v1.3.0 对应。*
