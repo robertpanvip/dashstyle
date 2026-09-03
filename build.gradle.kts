@@ -66,7 +66,13 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
-Initial version
+<h3>1.3.0</h3>
+<ul>
+    <li>🗑️ 移除 Flex/Grid 布局可视化预览（gutter LineMarker + 交互弹窗）及对应测试</li>
+    <li>🗑️ 移除阴影预览（box-shadow / text-shadow gutter 预览）及对应测试</li>
+    <li>🗑️ 移除全局 HighlightVisitor（StaticGlobalHighlightVisitor），避免干扰 TypeScript/JavaScript 高亮</li>
+    <li>🔧 Java target 升级至 21；修复选择器展开缓存的失效范围，外部修改文件后不再被覆盖</li>
+</ul>
     """.trimIndent()
     }
 }
