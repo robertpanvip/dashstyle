@@ -272,5 +272,8 @@
             ]]></description>
             <bindToCode>true</bindToCode>
         </intentionAction>
+
+        <!-- 诊断：启动时打印所有已注册 Language 的真实 getID() -->
+        <postStartupActivity implementation="com.pan.dashstyle.DashStyleLanguageDumpActivity"/>
     </extensions>
 </idea-plugin>
