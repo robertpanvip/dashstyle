@@ -73,12 +73,12 @@ Initial version
 
 tasks {
     withType<JavaCompile> {
-        sourceCompatibility = "17"
-        targetCompatibility = "17"
+        sourceCompatibility = "21"
+        targetCompatibility = "21"
     }
     withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         kotlinOptions {
-            jvmTarget = "17"
+            jvmTarget = "21"
             // -Xsuppress-version-warnings：容忍 IDE SDK 中 Kotlin 2.2 metadata 与插件 2.1.0 编译器的
             //   meta 版本差，仅降级为 warning 而不是 error。
             freeCompilerArgs = freeCompilerArgs + listOf(

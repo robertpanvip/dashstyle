@@ -200,14 +200,7 @@
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
 
-<!-- ========================= CSS Flex 布局预览（inlay） ========================= -->
-        <!-- 使用 InlayHintsProvider 框架在 display:flex/grid 声明行尾添加可点击的布局预览 inlay。 -->
-        <!-- language="ANY" 配合 isLanguageSupported() 过滤，覆盖 CSS/Less/SCSS 及 Vue <style> 内嵌 CSS -->
-        <codeInsight.inlayProvider
-                language="ANY"
-                implementationClass="com.pan.dashstyle.CssLayoutPreviewInlayProvider"/>
-
-        <!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
+<!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
         <!-- 在 box-shadow / text-shadow 声明行前渲染圆角矩形 + 真实阴影的 gutter 图标，
              悬浮时把同一阴影放大渲染成 PNG 作为 tooltip。解析复用 ShadowResolver（纯逻辑）。 -->
         <codeInsight.lineMarkerProvider
@@ -219,28 +212,6 @@
         <codeInsight.lineMarkerProvider
                 language="LESS"
                 implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
-
-        <!-- ========================= 全局 HighlightVisitor 临时禁用（2026-08-14 修复 TS 高亮消失） =========================
-             <highlightVisitor implementation="com.pan.dashstyle.StaticGlobalHighlightVisitor" order="first"/>
-
-             为什么先禁用：HighlightVisitor (com.intellij.codeInsight.daemon.impl.*) 是「无 language 过滤」的全局扩展。
-             之前为了兜底 Vue/Svelte <style module> 内嵌，注册了 <highlightVisitor order="first"/>，并在 suitableForFile()
-             里允许了 .tsx/.jsx/.html。但 WS-2025.3 下：
-               * 一旦某个 language 的 HighlightVisitor 链上有任何 visitor 在 analyze() / visit() 里抛异常
-                 （哪怕 try/catch 了，ThreadLocal 清理不及时、或 holder/action.run 内部出错），GeneralHighlightingPass
-                 会直接放弃本次 pass，该文件所有 PSI 的词法/语法高亮都会整片消失——用户反馈「普通 TS 高亮全没了」
-                 就是这种典型症状。
-               * 实际上我们已经有 2 条更强的覆盖链：
-                   (a) <annotator language=CSS/SCSS/LESS> -> 直接给 CSS/SCSS/LESS 画灰/画波浪
-                   (b) <localInspection language=CSS/SCSS/LESS> + <localInspection language=ANY>
-                       -> language=ANY 的 inspection 会在所有文件（含 Vue/Svelte 内嵌 CssRuleset）遍历时
-                          用 ProblemsHolder.registerProblem(LIKE_UNUSED_SYMBOL / WARNING)，一样能触发 IDE 的
-                          GeneralHighlightingPass 把置灰和波浪线画出来。
-               * 所以 StaticGlobalHighlightVisitor 这个 order=first 的全局 visitor 是「多余且危险」的。
-                 先注释掉，TS/TSX/JS 的默认高亮光立刻恢复；以后真需要再按文件后缀精确匹配+更强 Throwable 兜底再启用。
-             -->
-        <!-- highlightVisitor 已注释（见上方说明），如需重新启用请同时把 StaticGlobalHighlightVisitor.suitableForFile()
-             严格限制在 [.vue/.svelte/.astro]，并确认 analyze() 不抛任何 Throwable。 -->
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
         <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，

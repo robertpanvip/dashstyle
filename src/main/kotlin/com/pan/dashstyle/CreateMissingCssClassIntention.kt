@@ -64,7 +64,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
                         project,
                         "More than one candidate CSS Module file found in the folder. Choose a target:",
                         "Create missing class",
-                        null,
+                        Messages.getQuestionIcon(),
                         candidates.map { it.first.name }.toTypedArray(),
                         candidates[0].first.name
                     )

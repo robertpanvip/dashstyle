@@ -2,8 +2,6 @@ package com.pan.dashstyle.shadow
 
 import com.pan.dashstyle.CssColorParser
 import com.pan.dashstyle.CssUnitAssistant
-import com.pan.dashstyle.FlexLayoutResolver
-import com.pan.dashstyle.GridLayoutResolver
 import com.pan.dashstyle.ShadowRender
 import com.pan.dashstyle.ShadowResolver
 import org.junit.jupiter.api.Assertions.*
@@ -220,76 +218,6 @@ class BugRegressionTest {
         assertEquals("0.75", CssUnitAssistant.format(0.75))
         assertEquals("0.83", CssUnitAssistant.format(0.8333))
         assertEquals("28.8", CssUnitAssistant.format(28.8))
-    }
-
-    // ==================================================================
-    // Bug #5: FlexLayoutResolver — wrap + 极端小容器
-    // ==================================================================
-
-    @Test
-    fun `bug5 flex wrap in tiny container should not crash`() {
-        val props = FlexLayoutResolver.Props(
-            direction = FlexLayoutResolver.Direction.ROW,
-            wrap = true,
-            childCount = 5,
-            gap = 0
-        )
-        // W=8, P=4 → mainAvail=8, itemMain=26, maxPerLine = (8-8+0)/(26+0) = 0 → coerceAtLeast(1)
-        val boxes = FlexLayoutResolver.place(props, W = 8, H = 100)
-        assertEquals(5, boxes.size, "All 5 items should be placed")
-        // 每个 item 独占一行（因为容器太窄）
-        for (i in 0 until 4) {
-            assertTrue(boxes[i].y < boxes[i + 1].y, "Items should stack vertically in tiny container")
-        }
-    }
-
-    @Test
-    fun `bug5 flex wrap with column direction and wrap`() {
-        val props = FlexLayoutResolver.Props(
-            direction = FlexLayoutResolver.Direction.COLUMN,
-            wrap = true,
-            childCount = 6,
-            gap = 0
-        )
-        // W=100, H=40 → mainAvail=40, itemMain=26, maxPerLine = (40-8+0)/(26+0) = 1
-        // lines = 6, each item in its own column
-        val boxes = FlexLayoutResolver.place(props, W = 100, H = 40)
-        assertEquals(6, boxes.size)
-        // 项应水平排列（多列）
-        for (i in 0 until 5) {
-            assertTrue(boxes[i].x < boxes[i + 1].x, "Items should be in separate columns")
-        }
-    }
-
-    // ==================================================================
-    // Bug #6: GridLayoutResolver — 空轨道默认行为
-    // ==================================================================
-
-    @Test
-    fun `bug6 grid with empty columns should default to 3 flex columns`() {
-        val props = GridLayoutResolver.Props(
-            columns = emptyList(),
-            childCount = 9
-        )
-        val boxes = GridLayoutResolver.place(props, W = 300, H = 200)
-        // 3 列默认 → 3 行
-        assertEquals(9, boxes.size)
-        // 第一行 3 个 x 递增
-        assertTrue(boxes[0].x < boxes[1].x && boxes[1].x < boxes[2].x)
-        // 第 4 个回到第一列
-        assertEquals(boxes[0].x, boxes[3].x)
-    }
-
-    @Test
-    fun `bug6 grid childCount exceeds rows should not crash`() {
-        val props = GridLayoutResolver.Props(
-            columns = listOf(GridLayoutResolver.Track.Flex(1)),
-            rows = listOf(GridLayoutResolver.Track.Flex(1)),
-            childCount = 100
-        )
-        val boxes = GridLayoutResolver.place(props, W = 200, H = 200)
-        // 只有 1 行 1 列，多余的 child 被 break 掉
-        assertEquals(1, boxes.size)
     }
 
     // ==================================================================
@@ -601,107 +529,6 @@ class BugRegressionTest {
     }
 
     // ==================================================================
-    // Bug #14: GridLayoutResolver 轨道解析边缘情况
-    // ==================================================================
-
-    @Test
-    fun `bug14 grid parse repeat track`() {
-        val tracks = GridLayoutResolver.parseTrackList("repeat(3, 1fr)")
-        assertEquals(3, tracks.size)
-        assertTrue(tracks.all { it is GridLayoutResolver.Track.Flex && it.weight == 1 })
-    }
-
-    @Test
-    fun `bug14 grid parse minmax track`() {
-        val track = GridLayoutResolver.parseTrack("minmax(100px, 1fr)")
-        assertNotNull(track)
-        // minmax 取第一个参数
-        assertTrue(track is GridLayoutResolver.Track.Fixed && track.px == 100)
-    }
-
-    @Test
-    fun `bug14 grid parse auto track`() {
-        val track = GridLayoutResolver.parseTrack("auto")
-        assertTrue(track is GridLayoutResolver.Track.Auto)
-    }
-
-    @Test
-    fun `bug14 grid parse mixed tracks`() {
-        val tracks = GridLayoutResolver.parseTrackList("100px 1fr auto 2fr")
-        assertEquals(4, tracks.size)
-        assertTrue(tracks[0] is GridLayoutResolver.Track.Fixed)
-        assertTrue(tracks[1] is GridLayoutResolver.Track.Flex)
-        assertTrue(tracks[2] is GridLayoutResolver.Track.Auto)
-        assertTrue(tracks[3] is GridLayoutResolver.Track.Flex)
-    }
-
-    @Test
-    fun `bug14 grid resize tracks fr to fr`() {
-        val tracks = listOf(GridLayoutResolver.Track.Flex(1), GridLayoutResolver.Track.Flex(1))
-        val result = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, delta = 1)
-        assertEquals(2, (result[0] as GridLayoutResolver.Track.Flex).weight)
-        assertEquals(1, (result[1] as GridLayoutResolver.Track.Flex).weight)
-    }
-
-    @Test
-    fun `bug14 grid resize tracks px to px`() {
-        val tracks = listOf(GridLayoutResolver.Track.Fixed(100), GridLayoutResolver.Track.Fixed(100))
-        val result = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, delta = 20)
-        assertEquals(120, (result[0] as GridLayoutResolver.Track.Fixed).px)
-        assertEquals(80, (result[1] as GridLayoutResolver.Track.Fixed).px)
-    }
-
-    @Test
-    fun `bug14 grid resize tracks out of bounds returns original`() {
-        val tracks = listOf(GridLayoutResolver.Track.Flex(1))
-        val result = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, delta = 1)
-        assertEquals(tracks, result) // 只有一条轨道，无法调整
-    }
-
-    @Test
-    fun `bug14 grid resize tracks delta zero returns original`() {
-        val tracks = listOf(GridLayoutResolver.Track.Flex(1), GridLayoutResolver.Track.Flex(1))
-        val result = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, delta = 0)
-        assertEquals(tracks, result)
-    }
-
-    // ==================================================================
-    // Bug #15: FlexLayoutResolver align-self 边缘情况
-    // ==================================================================
-
-    @Test
-    fun `bug15 flex align self overrides container align`() {
-        val props = FlexLayoutResolver.Props(
-            direction = FlexLayoutResolver.Direction.ROW,
-            align = FlexLayoutResolver.Align.STRETCH,
-            childCount = 3,
-            alignSelfs = listOf(FlexLayoutResolver.Align.FLEX_START, null, FlexLayoutResolver.Align.FLEX_END)
-        )
-        val boxes = FlexLayoutResolver.place(props, W = 200, H = 200)
-        assertEquals(3, boxes.size)
-        // 第一个子项 align-self: flex-start → 不拉伸，高度应为 itemCross
-        // 第二个子项 align-self: null → 沿用容器 STRETCH，应填满行带
-        assertTrue(boxes[0].h < boxes[1].h, "align-self:flex-start should not stretch, so height < stretched")
-        // 第三个子项 align-self: flex-end → 应在底部，y 大于 STRETCH 的 y
-        assertTrue(boxes[2].y > boxes[1].y, "align-self:flex-end should be at bottom")
-    }
-
-    @Test
-    fun `bug15 flex align self partial list uses container align for rest`() {
-        val props = FlexLayoutResolver.Props(
-            direction = FlexLayoutResolver.Direction.ROW,
-            align = FlexLayoutResolver.Align.CENTER,
-            childCount = 5,
-            alignSelfs = listOf(FlexLayoutResolver.Align.FLEX_START)
-        )
-        val boxes = FlexLayoutResolver.place(props, W = 300, H = 200)
-        assertEquals(5, boxes.size)
-        // 第一个子项 align-self: flex-start → 在顶部
-        // 其余子项沿用容器 align-items: center → 在中间
-        assertTrue(boxes[0].y < boxes[1].y, "align-self:flex-start should be higher than center-aligned items")
-    }
-
-    // ==================================================================
     // Bug #16: UnusedCssModuleClassInspection.MODULE_CLASS_RE 使用了错误的捕获组
     // ==================================================================
 
@@ -727,61 +554,6 @@ class BugRegressionTest {
         val m3 = re.find(".a .b")!!
         assertEquals("", m3.groupValues[1], "Group 1 for first class should be empty")
         assertEquals("a", m3.groupValues[2], "First class name should be 'a'")
-    }
-
-    // ==================================================================
-    // Bug #17: GridLayoutResolver.resizeAdjacentTracks 单侧 fr 逻辑反了
-    // ==================================================================
-
-    /**
-     * Bug #17: 当只有右侧是 fr 且 delta > 0（分隔线右移）时，右侧应减小权重。
-     * 当前代码在 delta > 0 时保持 rightW 不变（rightW.coerceAtLeast(minWeight)），
-     * 正确的行为应该是 rightW - delta。
-     */
-    @Test
-    fun `bug17 resize left fixed right fr delta positive should decrease right`() {
-        val tracks = listOf(
-            GridLayoutResolver.Track.Fixed(100),
-            GridLayoutResolver.Track.Flex(2)
-        )
-        // delta=1 → 分隔线右移 → 右侧应缩小: 2 - 1 = 1
-        val result = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, delta = 1)
-        assertEquals(
-            1, (result[1] as GridLayoutResolver.Track.Flex).weight,
-            "Bug #17: right FR should decrease when delta > 0 (divider moves right)"
-        )
-    }
-
-    /**
-     * Bug #17: 当只有右侧是 fr 且 delta < 0（分隔线左移）时，右侧应增大权重。
-     * 当前代码 rightW + delta（delta < 0）会让右侧减小，正确的行为是 rightW - delta = rightW + |delta|。
-     */
-    @Test
-    fun `bug17 resize left fixed right fr delta negative should increase right`() {
-        val tracks = listOf(
-            GridLayoutResolver.Track.Fixed(100),
-            GridLayoutResolver.Track.Flex(2)
-        )
-        // delta=-1 → 分隔线左移 → 右侧应增大: 2 - (-1) = 3
-        val result = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, delta = -1)
-        assertEquals(
-            3, (result[1] as GridLayoutResolver.Track.Flex).weight,
-            "Bug #17: right FR should increase when delta < 0 (divider moves left)"
-        )
-    }
-
-    /**
-     * Bug #17: 当左侧是 fr 右侧是 fixed 时，左侧应正确调整。
-     */
-    @Test
-    fun `bug17 resize left fr right fixed delta positive should increase left`() {
-        val tracks = listOf(
-            GridLayoutResolver.Track.Flex(2),
-            GridLayoutResolver.Track.Fixed(100)
-        )
-        // delta=1 → 分隔线右移 → 左侧增大: 2 + 1 = 3
-        val result = GridLayoutResolver.resizeAdjacentTracks(tracks, 0, delta = 1)
-        assertEquals(3, (result[0] as GridLayoutResolver.Track.Flex).weight)
     }
 
     // ==================================================================
@@ -830,37 +602,6 @@ class BugRegressionTest {
         assertEquals("httpServer", com.pan.dashstyle.Util.kebabToCamel("http-server"))
         // 前导连字符不应触发大写
         assertEquals("fooBar", com.pan.dashstyle.Util.kebabToCamel("-foo-bar"))
-    }
-
-    // ==================================================================
-    // Bug #20: FlexLayoutResolver 极小容器下 SPACE_* 分布产生负 gap
-    // ==================================================================
-
-    @Test
-    fun `bug20 flex space between in tiny container should not crash`() {
-        val props = FlexLayoutResolver.Props(
-            direction = FlexLayoutResolver.Direction.ROW,
-            justify = FlexLayoutResolver.Justify.SPACE_BETWEEN,
-            childCount = 5,
-            gap = 0
-        )
-        // W=20, mainAvail=20, itemMain=26, 5 items → 5*26=130 > 20
-        // gapMain = (20-8-130)/(5-1) = -118/4 = -29 (负值)
-        // 不崩溃即可，布局会重叠但不抛异常
-        val boxes = FlexLayoutResolver.place(props, W = 20, H = 100)
-        assertEquals(5, boxes.size)
-    }
-
-    @Test
-    fun `bug20 flex space evenly in tiny container should not crash`() {
-        val props = FlexLayoutResolver.Props(
-            direction = FlexLayoutResolver.Direction.ROW,
-            justify = FlexLayoutResolver.Justify.SPACE_EVENLY,
-            childCount = 5,
-            gap = 0
-        )
-        val boxes = FlexLayoutResolver.place(props, W = 20, H = 100)
-        assertEquals(5, boxes.size)
     }
 
     // ==================================================================
