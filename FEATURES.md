@@ -153,7 +153,6 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
   - `documentationProvider`（悬浮展示完整 CSS 规则）
   - `localInspection`（未使用 class / 重复声明）
   - `annotator` ×3（CSS Module class 置灰 / 重复声明波浪线；Vue/Svelte 内嵌 `<style module>` 场景）
-  - `lineMarkerProvider`（阴影预览）
   - `completion.contributor` ×3（Tailwind 类补全，CSS/SCSS/LESS）
   - `copyPastePreProcessor`（JSON→CSS 复制粘贴）
   - `intentionAction` ×3（Inline 抽取 / 缺失 class 创建 / 重复声明抽取公共类）

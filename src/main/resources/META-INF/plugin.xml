@@ -30,6 +30,7 @@
         <h3>1.3.0</h3>
         <ul>
             <li>🗑️ 移除 Flex/Grid 布局可视化预览（gutter LineMarker + 交互弹窗）及对应测试</li>
+            <li>🗑️ 移除阴影预览（box-shadow / text-shadow gutter 预览）及对应测试</li>
             <li>🗑️ 移除全局 HighlightVisitor（StaticGlobalHighlightVisitor），避免干扰 TypeScript/JavaScript 高亮</li>
             <li>🔧 Java target 升级至 21；修复选择器展开缓存的失效范围，外部修改文件后不再被覆盖</li>
         </ul>
@@ -206,19 +207,6 @@
         <annotator language="CSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
         <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
-
-<!-- ========================= CSS 阴影预览（box-shadow / text-shadow） ========================= -->
-        <!-- 在 box-shadow / text-shadow 声明行前渲染圆角矩形 + 真实阴影的 gutter 图标，
-             悬浮时把同一阴影放大渲染成 PNG 作为 tooltip。解析复用 ShadowResolver（纯逻辑）。 -->
-        <codeInsight.lineMarkerProvider
-                language="CSS"
-                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
-        <codeInsight.lineMarkerProvider
-                language="SCSS"
-                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
-        <codeInsight.lineMarkerProvider
-                language="LESS"
-                implementationClass="com.pan.dashstyle.ShadowGutterMarkerProvider"/>
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
         <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，
