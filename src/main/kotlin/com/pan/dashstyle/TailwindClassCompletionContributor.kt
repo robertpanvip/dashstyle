@@ -5,6 +5,9 @@ import com.intellij.codeInsight.completion.CompletionParameters
 import com.intellij.codeInsight.completion.CompletionProvider
 import com.intellij.codeInsight.completion.CompletionResultSet
 import com.intellij.codeInsight.completion.CompletionType
+import com.intellij.codeInsight.completion.InsertHandler
+import com.intellij.codeInsight.completion.InsertionContext
+import com.intellij.codeInsight.lookup.LookupElement
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.openapi.util.IconLoader
 import com.intellij.patterns.PlatformPatterns
@@ -41,10 +44,8 @@ class TailwindClassCompletionContributor : CompletionContributor() {
     private fun doComplete(parameters: CompletionParameters, result: CompletionResultSet) {
         val position = parameters.position
         val atRule = PsiTreeUtil.getParentOfType(position, CssAtRule::class.java, false)
-        if (atRule != null) {
-            // @apply 指令内
-            if (!atRule.text.trimStart().startsWith("@apply", ignoreCase = true)) return
-        } else {
+        val inApply = atRule != null && atRule.text.trimStart().startsWith("@apply", ignoreCase = true)
+        if (!inApply) {
             // CSS 规则体（如 .test { ju| }），必须是 CssBlock 内
             val cssBlock = PsiTreeUtil.getParentOfType(position, CssBlock::class.java, false)
                 ?: return
@@ -69,12 +70,45 @@ class TailwindClassCompletionContributor : CompletionContributor() {
         if (candidates.isEmpty()) return
 
         val lookupElements = candidates.map { t ->
-            LookupElementBuilder.create(t.name)
+            val builder = LookupElementBuilder.create(t.name)
                 .withIcon(ICON)
                 .withTypeText(t.css, true)          // 右侧灰字 = CSS 预览
                 .withTailText(" (${t.group})", true)
+
+            // 关键区分：
+            // - @apply 内：插入 Tailwind 类名（@apply 接受的就是类名）
+            // - 普通 CSS 规则体内：插入展开后的 CSS 声明（flex: 1 1 auto;）
+            if (!inApply) {
+                builder.withInsertHandler(CssDeclarationInsertHandler(t.css))
+            }
+            builder
         }
         result.addAllElements(lookupElements)
+    }
+
+    /**
+     * 在普通 CSS 规则体内，把类名替换为展开的 CSS 声明。
+     * 例如：候选 flex-auto → 插入 flex: 1 1 auto;
+     * 多声明类（如 px-4 → padding-left: 1rem; padding-right: 1rem;）会自动带分号。
+     */
+    private class CssDeclarationInsertHandler(private val cssDecl: String) : InsertHandler<LookupElement> {
+        override fun handleInsert(context: InsertionContext, item: LookupElement) {
+            val editor = context.editor
+            val document = editor.document
+            val startOffset = context.startOffset
+            val endOffset = context.tailOffset
+
+            // 构建要插入的完整声明文本（自动加 ; 保证多条声明也合法）
+            val trimmed = cssDecl.trim()
+            val insertText = if (trimmed.endsWith(";")) trimmed else "$trimmed;"
+
+            // 替换掉用户输入的前缀（startOffset → endOffset）为完整声明
+            document.replaceString(startOffset, endOffset, insertText)
+
+            // 光标留在插入文本末尾（方便继续写分号或下一条声明）
+            val caret = startOffset + insertText.length
+            editor.caretModel.moveToOffset(caret)
+        }
     }
 
     companion object {
