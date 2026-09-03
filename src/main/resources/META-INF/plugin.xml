@@ -215,12 +215,14 @@
                 implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
 
         <!-- ========================= 快速修复 / 意向动作 ========================= -->
-        <!-- language=JavaScript 让 WebStorm 把这些意向动作应用到 JS/TS/JSX/TSX 文件里的编辑器 Alt+Enter；
-             不要省略，否则 IntelliJ 平台默认这些 intention 只能在 Java 或任何其他非 JS 文件环境触发，
-             在 JSX 的 style={{...}} / styles.xxx 上便永远不会出现在 Alt+Enter 列表里。-->
+        <!-- WebStorm 里 .ts 是 TypeScript、.tsx 是独立语言 TSX（.jsx 属于 JavaScript 方言），
+             所以必须显式绑 JavaScript/TypeScript/TSX/XML，否则这些 intention 在 React TSX
+             文件的 styles.xxx / style={{...}} 上永远不会出现在 Alt+Enter 列表里。-->
         <intentionAction>
             <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
             <language>JavaScript</language>
+            <language>TypeScript</language>
+            <language>TSX</language>
             <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
@@ -239,6 +241,8 @@
         <intentionAction>
             <className>com.pan.dashstyle.CreateMissingCssClassIntention</className>
             <language>JavaScript</language>
+            <language>TypeScript</language>
+            <language>TSX</language>
             <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
