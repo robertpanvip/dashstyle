@@ -71,6 +71,9 @@ class TailwindClassCompletionContributor : CompletionContributor() {
         val candidates = TailwindClassResolver.search(prefix)
         if (candidates.isEmpty()) return
 
+        // 检测光标所在行的缩进（用于多声明类展开时保持格式一致）
+        val indent = detectIndent(position, parameters.offset)
+
         val lookupElements = candidates.map { t ->
             val builder = if (inApply) {
                 // @apply 内：create() 传类名（要插入的就是类名）
@@ -80,10 +83,9 @@ class TailwindClassCompletionContributor : CompletionContributor() {
                 // withPresentableText() 把候选列表显示改回 Tailwind 类名，
                 // withLookupString() 保证输入前缀仍按类名匹配。
                 //
-                // 为什么不用 InsertHandler？之前诊断确认：LESS/CSS 平台对 CssDeclarationImpl
-                // 场景有特殊处理，会跳过自定义 InsertHandler。把插入内容直接塞到 LookupElementBuilder
-                // 核心字符串里，平台一定用它来替换前缀，不会再被跳过。
-                val insertText = if (t.css.trim().endsWith(";")) t.css.trim() else "${t.css.trim()};"
+                // 多声明类（如 mx-4 → margin-left: 1rem; margin-right: 1rem;）
+                // 自动格式化为每条声明独占一行 + 保持当前缩进。
+                val insertText = formatCssDeclarations(t.css, indent)
                 LookupElementBuilder.create(insertText)
                     .withPresentableText(t.name)
                     .withLookupString(t.name)
@@ -94,6 +96,34 @@ class TailwindClassCompletionContributor : CompletionContributor() {
                 .withTailText(" (${t.group})", true)
         }
         result.addAllElements(lookupElements)
+    }
+
+    /**
+     * 从光标位置往回找最近的换行符之间的空白，返回当前行缩进字符串（如 "    " 或 "\t"）。
+     */
+    private fun detectIndent(position: com.intellij.psi.PsiElement, offset: Int): String {
+        val text = position.containingFile?.text ?: return ""
+        var i = (offset - 1).coerceIn(text.indices)
+        while (i >= 0 && text[i] != '\n') i--
+        val lineStart = i + 1
+        var j = lineStart
+        while (j < text.length && (text[j] == ' ' || text[j] == '\t')) j++
+        return text.substring(lineStart, j)
+    }
+
+    /**
+     * 把 TailwindClassResolver 里的单行 CSS 声明字符串格式化为多行格式。
+     * 输入："margin-left: 1rem; margin-right: 1rem"
+     * 输出（indent="  "）："margin-left: 1rem;\n  margin-right: 1rem;"
+     */
+    private fun formatCssDeclarations(css: String, indent: String): String {
+        val trimmed = css.trim().trimEnd(';')
+        val parts = trimmed.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return ""
+        val first = parts.first()
+        if (parts.size == 1) return "$first;"
+        val rest = parts.drop(1).joinToString(";\n$indent") { it }
+        return "$first;\n$indent$rest;"
     }
 
     companion object {
