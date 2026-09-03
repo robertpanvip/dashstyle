@@ -9,6 +9,7 @@ import com.intellij.codeInsight.completion.InsertHandler
 import com.intellij.codeInsight.completion.InsertionContext
 import com.intellij.codeInsight.lookup.LookupElement
 import com.intellij.codeInsight.lookup.LookupElementBuilder
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.IconLoader
 import com.intellij.patterns.PlatformPatterns
 import com.intellij.psi.css.CssAtRule
@@ -45,10 +46,27 @@ class TailwindClassCompletionContributor : CompletionContributor() {
         val position = parameters.position
         val atRule = PsiTreeUtil.getParentOfType(position, CssAtRule::class.java, false)
         val inApply = atRule != null && atRule.text.trimStart().startsWith("@apply", ignoreCase = true)
+
+        // === 诊断：打印完整 PSI 父链 ===
+        val parents = mutableListOf<String>()
+        var p: com.intellij.psi.PsiElement? = position
+        for (i in 0..15) {
+            if (p == null) break
+            parents += "${p.javaClass.simpleName}(text='${p.text?.take(30)}')"
+            p = p.parent
+        }
+        LOG.info("[TW-DIAG] doComplete: file=${position.containingFile?.name} lang=${position.containingFile?.language?.id}")
+        LOG.info("[TW-DIAG]   parents: ${parents.joinToString(" → ")}")
+        LOG.info("[TW-DIAG]   atRule=${atRule?.javaClass?.simpleName} inApply=$inApply")
+        LOG.info("[TW-DIAG]   CssBlock parent=${PsiTreeUtil.getParentOfType(position, CssBlock::class.java, false)?.javaClass?.simpleName}")
+
         if (!inApply) {
             // CSS 规则体（如 .test { ju| }），必须是 CssBlock 内
             val cssBlock = PsiTreeUtil.getParentOfType(position, CssBlock::class.java, false)
-                ?: return
+                ?: run {
+                    LOG.info("[TW-DIAG]   RETURN: no CssBlock parent")
+                    return
+                }
             // 排除 @apply 内部的 CssBlock（上一层已处理）
             if (PsiTreeUtil.getParentOfType(cssBlock, CssAtRule::class.java, true) != null) return
 
@@ -60,7 +78,10 @@ class TailwindClassCompletionContributor : CompletionContributor() {
                 if (colonIdx >= 0) {
                     val declStart = cssDecl.textOffset
                     val cursorOffset = parameters.offset
-                    if (cursorOffset > declStart + colonIdx) return
+                    if (cursorOffset > declStart + colonIdx) {
+                        LOG.info("[TW-DIAG]   RETURN: inside CssDeclaration value part")
+                        return
+                    }
                 }
             }
         }
@@ -68,6 +89,8 @@ class TailwindClassCompletionContributor : CompletionContributor() {
         val prefix = result.prefixMatcher.prefix
         val candidates = TailwindClassResolver.search(prefix)
         if (candidates.isEmpty()) return
+
+        LOG.info("[TW-DIAG]   prefix='$prefix' candidates=${candidates.size} inApply=$inApply")
 
         val lookupElements = candidates.map { t ->
             val builder = LookupElementBuilder.create(t.name)
@@ -80,6 +103,7 @@ class TailwindClassCompletionContributor : CompletionContributor() {
             // - 普通 CSS 规则体内：插入展开后的 CSS 声明（flex: 1 1 auto;）
             if (!inApply) {
                 builder.withInsertHandler(CssDeclarationInsertHandler(t.css))
+                LOG.info("[TW-DIAG]   InsertHandler attached for '${t.name}' -> '${t.css}'")
             }
             builder
         }
@@ -93,10 +117,12 @@ class TailwindClassCompletionContributor : CompletionContributor() {
      */
     private class CssDeclarationInsertHandler(private val cssDecl: String) : InsertHandler<LookupElement> {
         override fun handleInsert(context: InsertionContext, item: LookupElement) {
+            LOG.info("[TW-DIAG] InsertHandler.handleInsert CALLED! cssDecl='$cssDecl'")
             val editor = context.editor
             val document = editor.document
             val startOffset = context.startOffset
             val endOffset = context.tailOffset
+            LOG.info("[TW-DIAG]   startOffset=$startOffset tailOffset=$endOffset docText='${document.text.substring(startOffset, endOffset.coerceAtMost(document.textLength))}'")
 
             // 构建要插入的完整声明文本（自动加 ; 保证多条声明也合法）
             val trimmed = cssDecl.trim()
@@ -108,10 +134,12 @@ class TailwindClassCompletionContributor : CompletionContributor() {
             // 光标留在插入文本末尾（方便继续写分号或下一条声明）
             val caret = startOffset + insertText.length
             editor.caretModel.moveToOffset(caret)
+            LOG.info("[TW-DIAG]   DONE: inserted '$insertText'")
         }
     }
 
     companion object {
+        private val LOG = Logger.getInstance(TailwindClassCompletionContributor::class.java)
         private val ICON = IconLoader.getIcon(
             "/icons/dash.svg",
             TailwindClassCompletionContributor::class.java
