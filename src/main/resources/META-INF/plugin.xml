@@ -220,9 +220,13 @@
              文件的 styles.xxx / style={{...}} 上永远不会出现在 Alt+Enter 列表里。-->
         <intentionAction>
             <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
-
-
-
+            <!-- JavaScript / TypeScript / TypeScript JSX 是 WebStorm 2025.3 真实语言 ID，
+                 之前误用 "TSX" / "JSX"（不存在）导致语言匹配直接跳过 intention。
+                 XML 用于 Vue 文件里的 :style / v-bind:style（XmlAttribute 是 XML PSI 树节点）。 -->
+            <language>JavaScript</language>
+            <language>TypeScript</language>
+            <language>TypeScript JSX</language>
+            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               Extracts the inline style object (<code>style={{ ... }}</code> in React/TSX
@@ -239,9 +243,13 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.CreateMissingCssClassIntention</className>
-
-
-
+            <!-- JavaScript / TypeScript / TypeScript JSX 是 WebStorm 2025.3 真实语言 ID，
+                 之前误用 "TSX" / "JSX"（不存在）导致语言匹配直接跳过 intention。
+                 XML 用于 Vue template 里的 $style.xxx / $style["xxx"] 引用。 -->
+            <language>JavaScript</language>
+            <language>TypeScript</language>
+            <language>TypeScript JSX</language>
+            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
@@ -253,9 +261,11 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.ExtractDuplicateDeclarationsAsMixinIntention</className>
-
-
-
+            <!-- 只在 CSS/SCSS/LESS 家族文件里触发，加上 XML 是因为 Vue <style> 标签在 XML PSI 树里。 -->
+            <language>CSS</language>
+            <language>SCSS</language>
+            <language>LESS</language>
+            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               Scans the current CSS/SCSS/LESS file (or the selected portion) for
@@ -270,7 +280,6 @@
             <bindToCode>true</bindToCode>
         </intentionAction>
 
-        <!-- 诊断：启动时打印所有已注册 Language 的真实 getID() -->
-        <postStartupActivity implementation="com.pan.dashstyle.DashStyleLanguageDumpActivity"/>
+        <!-- postStartupActivity 诊断块已移除（DashStyleLanguageDumpActivity 用完即删） -->
     </extensions>
 </idea-plugin>

@@ -3,7 +3,6 @@ package com.pan.dashstyle
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.ecmascript6.psi.ES6ImportedBinding
 import com.intellij.lang.javascript.psi.*
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
@@ -23,8 +22,6 @@ import com.intellij.psi.xml.XmlTag
  *  - Vue $style.fooBar / $style["foo-bar"]
  */
 object CssModuleResolver {
-
-    private val LOG = Logger.getInstance(CssModuleResolver::class.java)
 
     private val MODULE_EXTS = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
 
@@ -101,10 +98,8 @@ object CssModuleResolver {
 
         // 先直接 reference.resolve()
         val resolved = (qualifierExpr as? JSReferenceExpression)?.reference?.resolve()
-        LOG.info("[DashStyleDiag] resolveQualifier '$qualifierName' → resolved=${resolved?.javaClass?.name}")
         if (resolved != null) {
             val (container, name) = fromResolvedBinding(resolved, qualifierName)
-            LOG.info("[DashStyleDiag]   fromResolvedBinding → container=${container?.javaClass?.simpleName}")
             if (container != null) return container to name
         }
 

@@ -6,7 +6,6 @@ import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.*
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
@@ -20,8 +19,6 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 
-private val LOG = Logger.getInstance(CreateMissingCssClassIntention::class.java)
-
 /**
  * #6. 缺失 class 快速创建意向动作。
  *
@@ -32,25 +29,14 @@ private val LOG = Logger.getInstance(CreateMissingCssClassIntention::class.java)
 @Suppress("UnstableApiUsage")
 class CreateMissingCssClassIntention : BaseIntentionAction() {
 
-    override fun getText(): String = "[DIAG] Create missing class in CSS Module (DashStyle 1.3)"
+    override fun getText(): String = "Create missing class in CSS Module"
     override fun getFamilyName(): String = "DashStyle: Create missing CSS class"
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean {
-        val (_, requestedName, containerMaybe, _) = locateContext(editor, file) ?: run {
-            LOG.info("[DashStyleDiag] isAvailable=false: locateContext returned null")
-            return false
-        }
-        if (requestedName.isBlank()) {
-            LOG.info("[DashStyleDiag] isAvailable=false: requestedName blank")
-            return false
-        }
-        if (containerMaybe != null) {
-            LOG.info("[DashStyleDiag] isAvailable=true: container=${containerMaybe.javaClass.simpleName}")
-            return true
-        }
-        val candidates = CssModuleResolver.findCandidateModuleFiles(file)
-        LOG.info("[DashStyleDiag] isAvailable: no container, candidates.size=${candidates.size}")
-        return candidates.isNotEmpty()
+        val (_, requestedName, containerMaybe, _) = locateContext(editor, file) ?: return false
+        if (requestedName.isBlank()) return false
+        if (containerMaybe != null) return true
+        return CssModuleResolver.findCandidateModuleFiles(file).isNotEmpty()
     }
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
@@ -151,12 +137,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
 
     private fun locateContext(editor: Editor, file: PsiFile): Context? {
         val offset = editor.caretModel.offset
-        val at = file.findElementAt(offset)
-        LOG.info("[DashStyleDiag] locateContext offset=$offset, file=${file.name}, lang=${file.language.id}, at=${at?.javaClass?.name} '${at?.text}'")
-        if (at == null) {
-            LOG.info("[DashStyleDiag]   FAIL: findElementAt returned null")
-            return null
-        }
+        val at = file.findElementAt(offset) ?: return null
 
         // A. 字符串索引 styles["xxx"]
         val literal = at as? JSLiteralExpression
@@ -175,19 +156,14 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         // B. member access styles.xxx
         val refExpr = at as? JSReferenceExpression
             ?: PsiTreeUtil.getParentOfType(at, JSReferenceExpression::class.java)
-        LOG.info("[DashStyleDiag]   refExpr=${refExpr?.javaClass?.name} qualifier=${refExpr?.qualifier?.javaClass?.name} refName=${refExpr?.referenceName}")
         if (refExpr != null && refExpr.qualifier != null && refExpr.referenceName != null) {
             val name = refExpr.referenceName!!
-            LOG.info("[DashStyleDiag]   member-access path, qualifier.text='${refExpr.qualifier!!.text}', resolving...")
             val (container, _) = CssModuleResolver.resolveQualifier(refExpr.qualifier!!, file) ?: (null to "")
-            LOG.info("[DashStyleDiag]   resolveQualifier → container=${container?.javaClass?.simpleName}")
             val exist = if (container == null) null else CssModuleResolver.resolveClassName(refExpr, name)
-            LOG.info("[DashStyleDiag]   resolveClassName '$name' → ${exist?.ruleset?.text?.take(40)}")
             if (exist != null) return null
             return Context(refExpr, name, container, false)
         }
 
-        LOG.info("[DashStyleDiag]   FAIL: no JSReferenceExpression with qualifier found")
         return null
     }
 
