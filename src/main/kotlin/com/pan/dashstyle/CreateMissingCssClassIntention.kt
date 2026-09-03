@@ -33,11 +33,21 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
     override fun getFamilyName(): String = "DashStyle: Create missing CSS class"
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean {
-        val (_, requestedName, containerMaybe, _) = locateContext(editor, file) ?: return false
-        if (requestedName.isBlank()) return false
-        if (containerMaybe != null) return true  // 有现成容器，直接追加
-        // 没有容器，但有候选 module 文件也可以
-        return CssModuleResolver.findCandidateModuleFiles(file).isNotEmpty()
+        val (_, requestedName, containerMaybe, _) = locateContext(editor, file) ?: run {
+            System.err.println("[DashStyleDiag] isAvailable=false: locateContext returned null")
+            return false
+        }
+        if (requestedName.isBlank()) {
+            System.err.println("[DashStyleDiag] isAvailable=false: requestedName blank")
+            return false
+        }
+        if (containerMaybe != null) {
+            System.err.println("[DashStyleDiag] isAvailable=true: container=${containerMaybe.javaClass.simpleName}")
+            return true
+        }
+        val candidates = CssModuleResolver.findCandidateModuleFiles(file)
+        System.err.println("[DashStyleDiag] isAvailable: no container, candidates.size=${candidates.size}")
+        return candidates.isNotEmpty()
     }
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
@@ -138,7 +148,12 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
 
     private fun locateContext(editor: Editor, file: PsiFile): Context? {
         val offset = editor.caretModel.offset
-        val at = file.findElementAt(offset) ?: return null
+        val at = file.findElementAt(offset)
+        System.err.println("[DashStyleDiag] locateContext offset=$offset, file=${file.name}, lang=${file.language.id}, at=${at?.javaClass?.name} '${at?.text}'")
+        if (at == null) {
+            System.err.println("[DashStyleDiag]   FAIL: findElementAt returned null")
+            return null
+        }
 
         // A. 字符串索引 styles["xxx"]
         val literal = at as? JSLiteralExpression
@@ -149,7 +164,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
                 val name = literal.stringValue ?: return null
                 val (container, _) = CssModuleResolver.resolveQualifier(idx.qualifier ?: return null, file) ?: (null to "")
                 val exist = if (container == null) null else CssModuleResolver.resolveClassName(literal, name)
-                if (exist != null) return null  // 已经有了就不提供快速创建
+                if (exist != null) return null
                 return Context(literal, name, container, false)
             }
         }
@@ -157,14 +172,19 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         // B. member access styles.xxx
         val refExpr = at as? JSReferenceExpression
             ?: PsiTreeUtil.getParentOfType(at, JSReferenceExpression::class.java)
+        System.err.println("[DashStyleDiag]   refExpr=${refExpr?.javaClass?.name} qualifier=${refExpr?.qualifier?.javaClass?.name} refName=${refExpr?.referenceName}")
         if (refExpr != null && refExpr.qualifier != null && refExpr.referenceName != null) {
             val name = refExpr.referenceName!!
+            System.err.println("[DashStyleDiag]   member-access path, qualifier.text='${refExpr.qualifier!!.text}', resolving...")
             val (container, _) = CssModuleResolver.resolveQualifier(refExpr.qualifier!!, file) ?: (null to "")
+            System.err.println("[DashStyleDiag]   resolveQualifier → container=${container?.javaClass?.simpleName}")
             val exist = if (container == null) null else CssModuleResolver.resolveClassName(refExpr, name)
+            System.err.println("[DashStyleDiag]   resolveClassName '$name' → ${exist?.ruleset?.text?.take(40)}")
             if (exist != null) return null
             return Context(refExpr, name, container, false)
         }
 
+        System.err.println("[DashStyleDiag]   FAIL: no JSReferenceExpression with qualifier found")
         return null
     }
 

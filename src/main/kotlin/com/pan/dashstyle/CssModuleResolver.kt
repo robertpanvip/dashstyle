@@ -98,8 +98,10 @@ object CssModuleResolver {
 
         // 先直接 reference.resolve()
         val resolved = (qualifierExpr as? JSReferenceExpression)?.reference?.resolve()
+        System.err.println("[DashStyleDiag] resolveQualifier '$qualifierName' → resolved=${resolved?.javaClass?.name}")
         if (resolved != null) {
             val (container, name) = fromResolvedBinding(resolved, qualifierName)
+            System.err.println("[DashStyleDiag]   fromResolvedBinding → container=${container?.javaClass?.simpleName}")
             if (container != null) return container to name
         }
 
