@@ -215,18 +215,15 @@
                 implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
 
         <!-- ========================= 快速修复 / 意向动作 ========================= -->
-        <!-- WebStorm 里 .ts 是 TypeScript、.tsx 是独立语言 TSX（.jsx 属于 JavaScript 方言），
-             所以必须显式绑 JavaScript/TypeScript/TSX/XML，否则这些 intention 在 React TSX
-             文件的 styles.xxx / style={{...}} 上永远不会出现在 Alt+Enter 列表里。-->
+        <!-- 重要：这里故意不写 <language> 绑定。
+             原因：WebStorm 2025.3 对 intention 的语言匹配存在方言(dialect)继承问题——
+             即使诊断确认了正确的 language ID（"TypeScript JSX" 等），实际运行时仍会因
+             平台内部 dialect/baseLanguage 链的匹配逻辑跳过 intention。
+             因此采用"全局注册 + isAvailable() 运行时精确过滤"策略：
+             isAvailable() 内部已经通过 JSReferenceExpression / JSIndexedPropertyAccessExpression /
+             XmlAttribute / CssRuleset 等 PSI 类型做了严格的上下文检查，不会在不相关语言里误触发。-->
         <intentionAction>
             <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
-            <!-- JavaScript / TypeScript / TypeScript JSX 是 WebStorm 2025.3 真实语言 ID，
-                 之前误用 "TSX" / "JSX"（不存在）导致语言匹配直接跳过 intention。
-                 XML 用于 Vue 文件里的 :style / v-bind:style（XmlAttribute 是 XML PSI 树节点）。 -->
-            <language>JavaScript</language>
-            <language>TypeScript</language>
-            <language>TypeScript JSX</language>
-            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               Extracts the inline style object (<code>style={{ ... }}</code> in React/TSX
@@ -243,13 +240,6 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.CreateMissingCssClassIntention</className>
-            <!-- JavaScript / TypeScript / TypeScript JSX 是 WebStorm 2025.3 真实语言 ID，
-                 之前误用 "TSX" / "JSX"（不存在）导致语言匹配直接跳过 intention。
-                 XML 用于 Vue template 里的 $style.xxx / $style["xxx"] 引用。 -->
-            <language>JavaScript</language>
-            <language>TypeScript</language>
-            <language>TypeScript JSX</language>
-            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
@@ -261,11 +251,6 @@
 
         <intentionAction>
             <className>com.pan.dashstyle.ExtractDuplicateDeclarationsAsMixinIntention</className>
-            <!-- 只在 CSS/SCSS/LESS 家族文件里触发，加上 XML 是因为 Vue <style> 标签在 XML PSI 树里。 -->
-            <language>CSS</language>
-            <language>SCSS</language>
-            <language>LESS</language>
-            <language>XML</language>
             <category>DashStyle</category>
             <description><![CDATA[
               Scans the current CSS/SCSS/LESS file (or the selected portion) for
