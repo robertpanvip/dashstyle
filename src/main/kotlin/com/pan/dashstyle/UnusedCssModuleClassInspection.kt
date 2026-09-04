@@ -210,8 +210,16 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         }
         private val FIXED_BINDING_PATTERNS: List<BindingPatterns> = FIXED_BINDINGS.map { BindingPatterns(it) }
         // Vue $style.member / $style["key"]（不依赖绑定名，可直接预编译）
-        private val VUE_MEMBER_RE = Regex("""\${'$'}style\.([A-Za-z_][A-Za-z0-9_-]*)""")
-        private val VUE_IDX_RE = Regex("""\${'$'}style\[(['"`])([^'"`]+)\1\]""")
+        // 注意：允许 \s* 空格，因为 Vue 模板中可能写 $style  [  'flex'  ]
+        private val VUE_MEMBER_RE = Regex("""\${'$'}style\s*\.\s*([A-Za-z_][A-Za-z0-9_-]*)""")
+        private val VUE_IDX_RE = Regex("""\${'$'}style\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
+        // 通用 Vue $xxx 别名模式（覆盖 $module、$classes 等自定义 module 名）
+        // group 1 = alias (style/module/classes...), group 2 = member name
+        private val VUE_ALIAS_MEMBER_RE = Regex("""\${'$'}([A-Za-z_]\w*)\s*\.\s*([A-Za-z_][A-Za-z0-9_-]*)""")
+        // group 1 = alias, group 2 = quote, group 3 = key name
+        private val VUE_ALIAS_IDX_RE = Regex("""\${'$'}([A-Za-z_]\w*)\s*\[\s*(['"`])([^'"`]+)\2\s*\]""")
+        // 检测 Vue $xxx[ 开括号（用于动态引用检测）
+        private val VUE_ALIAS_BRACKET_OPEN_RE = Regex("""\${'$'}([A-Za-z_]\w*)\s*\[""")
 
         /** Ruleset 级 class 名提取（按 PSI selectorList 正则，不依赖语言）。静态化供 companion 与实例两处复用。 */
         private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
@@ -381,8 +389,9 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                     used += Util.camelToKebab(s)
                 }
 
-                // --- Vue 场景 :class="$style.xxx" 或 :class="xxx in $style" ---
+                // --- Vue 场景 :class="$style.xxx" / :class="$style['xxx']" / $xxx 自定义别名 ---
                 if (srcPsi is XmlFile || (srcPsi.virtualFile?.extension?.lowercase() == "vue")) {
+                    // 精确匹配 $style.xxx（保留原始精确匹配，兼容性好）
                     for (mm in VUE_MEMBER_RE.findAll(srcText)) {
                         val n = mm.groupValues[1]
                         used += n
@@ -394,6 +403,34 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                         used += n
                         used += Util.camelToKebab(n)
                         used += Util.kebabToCamel(n)
+                    }
+                    // 通用 $xxx 别名匹配（覆盖 $module、$classes 等自定义 module 名）
+                    // 注意：VUE_ALIAS_MEMBER_RE 是 VUE_MEMBER_RE 的超集（$style 也会被匹配），
+                    // 但重复加入 used 无害（Set 去重），且能兜底自定义别名。
+                    for (mm in VUE_ALIAS_MEMBER_RE.findAll(srcText)) {
+                        val n = mm.groupValues[2]
+                        used += n
+                        used += Util.camelToKebab(n)
+                        used += Util.kebabToCamel(n)
+                    }
+                    for (mm in VUE_ALIAS_IDX_RE.findAll(srcText)) {
+                        val n = mm.groupValues[3]
+                        used += n
+                        used += Util.camelToKebab(n)
+                        used += Util.kebabToCamel(n)
+                    }
+                    // 检测 Vue 模板中的动态引用：$xxx[expr] 其中 expr 不是字符串字面量
+                    // 这覆盖了自定义 module 别名（如 $module[someVar]），\b 前缀版无法匹配此类场景
+                    if (!hasDynamic) {
+                        for (mm in VUE_ALIAS_BRACKET_OPEN_RE.findAll(srcText)) {
+                            val openPos = mm.range.last
+                            val closePos = findMatchingCloseBracket(srcText, openPos) ?: continue
+                            val content = srcText.substring(openPos + 1, closePos).trim()
+                            if (!isStringLiteral(content)) {
+                                hasDynamic = true
+                                break
+                            }
+                        }
                     }
                 }
 
