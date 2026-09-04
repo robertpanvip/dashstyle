@@ -158,12 +158,12 @@ object CssModuleFileResolver {
 
     /**
      * 统一的 import 检测与生成：检查 sourceFile 是否已有 import 指向 moduleVf，
-     * 有则返回 binding 名；没有则在文件末尾追加 `import styles from '...'`。
-     * 兼容 WebStorm PSI 不返回 importModuleText 的情况。
+     * 有则返回 binding 名；没有则追加 `import styles from '...'`。
+     *
+     * 纯 PSI 写入：使用 [PsiFileFactory] 创建新 import 节点，通过 `element.replace()` /
+     * `file.addAfter()` 修改 PSI 树，不经过 Document API，避免 Document+PSI 混合写入。
      */
     fun ensureImportExists(project: Project, sourceFile: PsiFile, moduleVf: VirtualFile): String {
-        val document = PsiDocumentManager.getInstance(project).getDocument(sourceFile) ?: return "styles"
-
         val imports = PsiTreeUtil.findChildrenOfType(sourceFile, ES6ImportDeclaration::class.java)
         val moduleFileName = moduleVf.name
         val originalFileName = moduleFileName.replace(".module.", ".")
@@ -182,48 +182,61 @@ object CssModuleFileResolver {
             }
         }
 
-        // 2. 有 import 指向原始文件（如 `import './index.less'`）→ 更新路径
+        // 2. 有 import 指向原始文件（如 `import './index.less'`）→ PSI replace 更新路径
         for (imp in imports) {
             val from = imp.importModuleText?.trim('"', '\'')
                 ?: extractModulePathFromText(imp.text)
                 ?: continue
             if (from.endsWith(originalFileName, ignoreCase = true)) {
                 val importStatement = imp.text
-                val newImport = if (importStatement.contains("from")) {
+                val newImportText = if (importStatement.contains("from")) {
                     importStatement.replace(originalFileName, moduleFileName)
                 } else {
                     "import styles from '$relativeModulePath'"
                 }
-                WriteCommandAction.writeCommandAction(project, sourceFile)
-                    .withName("Update CSS Module import")
-                    .run<Nothing> {
-                        val start = imp.textRange.startOffset
-                        val end = imp.textRange.endOffset
-                        document.replaceString(start, end, newImport)
-                        PsiDocumentManager.getInstance(project).commitDocument(document)
-                    }
-                if (newImport.startsWith("import styles")) return "styles"
-                val bindingName = newImport.removePrefix("import ").substringBefore(" from").trim()
+                val newImportPsi = createImportPsi(project, sourceFile, newImportText)
+                if (newImportPsi != null) {
+                    WriteCommandAction.writeCommandAction(project, sourceFile)
+                        .withName("Update CSS Module import")
+                        .run<Nothing> {
+                            imp.replace(newImportPsi)
+                        }
+                }
+                if (newImportText.startsWith("import styles")) return "styles"
+                val bindingName = newImportText.removePrefix("import ").substringBefore(" from").trim()
                 return bindingName.ifEmpty { "styles" }
             }
         }
 
-        // 3. 都没有 → 在最后一个 import 之后追加
-        WriteCommandAction.writeCommandAction(project, sourceFile)
-            .withName("Add CSS Module import")
-            .run<Nothing> {
-                val firstImport = imports.firstOrNull()
-                val insertOffset = if (firstImport != null) {
-                    imports.last().textRange.endOffset
-                } else {
-                    0
+        // 3. 都没有 → PSI add 在最后一个 import 之后追加
+        val importText = "import styles from '$relativeModulePath'"
+        val newImportPsi = createImportPsi(project, sourceFile, importText)
+        if (newImportPsi != null) {
+            WriteCommandAction.writeCommandAction(project, sourceFile)
+                .withName("Add CSS Module import")
+                .run<Nothing> {
+                    val lastImport = imports.lastOrNull()
+                    if (lastImport != null) {
+                        sourceFile.addAfter(newImportPsi, lastImport)
+                    } else if (sourceFile.firstChild != null) {
+                        sourceFile.addBefore(newImportPsi, sourceFile.firstChild)
+                    } else {
+                        sourceFile.add(newImportPsi)
+                    }
                 }
-                val prefix = if (insertOffset > 0) "\n" else ""
-                val importStmt = "import styles from '$relativeModulePath'"
-                document.insertString(insertOffset, "$prefix$importStmt\n")
-                PsiDocumentManager.getInstance(project).commitDocument(document)
-            }
+        }
         return "styles"
+    }
+
+    /**
+     * 从文本创建 [ES6ImportDeclaration] PSI 节点（用于 PSI 原子写入）。
+     * 使用与 sourceFile 相同的 language，保证 TSX/JSX/Vue 等文件的 import 语法兼容。
+     */
+    private fun createImportPsi(project: Project, sourceFile: PsiFile, importText: String): ES6ImportDeclaration? {
+        val ext = sourceFile.virtualFile?.extension ?: "js"
+        val dummyFile = PsiFileFactory.getInstance(project)
+            .createFileFromText("_dummy.$ext", sourceFile.language, "$importText\n")
+        return PsiTreeUtil.findChildrenOfType(dummyFile, ES6ImportDeclaration::class.java).firstOrNull()
     }
 
     // ================================================================

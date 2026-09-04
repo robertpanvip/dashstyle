@@ -194,34 +194,18 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         var cur: PsiElement? = cursor
         for (depth in 0..30) {
             if (cur == null) break
-            val className = cur.javaClass.name
-            when {
-                // JSX/TSX 属性：新版 JSX 有多种具体 class（JSAttribute/JSXAttribute/JsxAttribute/JsxAttributeImpl...），
-                // 统一反射获取 name；如果拿不到但 className 命中关键字段，也进一步按 .text 前缀判断。
-                className.contains("JSAttribute", ignoreCase = true) ||
-                    className.contains("JSXAttribute", ignoreCase = true) ||
-                    className.contains("JsxAttribute", ignoreCase = true) -> {
-                    val attrName = runCatching {
-                        cur.javaClass.methods.firstOrNull { m ->
-                            m.name == "getName" && m.parameterCount == 0
-                        }?.invoke(cur) as? CharSequence
-                    }?.getOrNull()?.toString()
-                    if (attrName == "style" || attrName?.endsWith(":style") == true || (attrName.isNullOrBlank() && cur.text.trimStart().startsWith("style"))) {
-                        val hasValue = runCatching {
-                            val valuesM = cur.javaClass.methods.firstOrNull { m ->
-                                m.name == "getValues" && m.parameterCount == 0
-                            }
-                            val v = valuesM?.invoke(cur) as? List<*>
-                            (v?.size ?: 0) > 0
-                        }.getOrDefault(false) || cur.text.contains('=')
+            // PSI 类型检查代替 javaClass.name 字符串匹配
+            when (cur) {
+                is JSAttributeNameValuePair -> {
+                    val attrName = cur.name
+                    if (attrName == "style" || (attrName?.isBlank() == true && cur.text.trimStart().startsWith("style"))) {
+                        val hasValue = cur.valueNode != null || cur.text.contains('=')
                         if (hasValue) return StyleAttrLoc(cur, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = cur)
                     }
                 }
-                cur is XmlAttribute -> {
+                is XmlAttribute -> {
                     val n = cur.name
                     if (n == "style" || n == ":style" || n == "v-bind:style") {
-                        // 某些 IntelliJ 版本中 JSX 属性可能被解析为 XmlAttribute，
-                        // 此时需根据文件扩展名判断语言类型，避免 React 项目误生成 Vue 语法
                         val ext = file?.virtualFile?.extension?.lowercase()
                         val lang = when {
                             ext == "vue" -> StyleAttrLoc.Lang.VUE
@@ -267,13 +251,19 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                             var c: PsiElement? = psi
                             for (d in 0..20) {
                                 if (c == null) break
-                                val attrName = runCatching {
-                                    c.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }?.invoke(c) as? CharSequence
-                                }?.getOrNull()?.toString()
-                                if (c is XmlAttribute) return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.VUE, xmlAttribute = c)
-                                if (attrName == "style") return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = c)
-                                val rc = c.javaClass.name
-                                if ((rc.contains("JSAttribute", true) || rc.contains("JsxAttribute", true)) && c.text.trimStart().startsWith("style"))
+                                // PSI 类型检查代替 javaClass.name/reflection
+                                when (c) {
+                                    is XmlAttribute -> {
+                                        val n = c.name
+                                        if (n == "style" || n == ":style" || n == "v-bind:style")
+                                            return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.VUE, xmlAttribute = c)
+                                    }
+                                    is JSAttributeNameValuePair -> {
+                                        if (c.name == "style")
+                                            return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = c)
+                                    }
+                                }
+                                if (c.text.trimStart().startsWith("style"))
                                     return@locate StyleAttrLoc(c, StyleAttrLoc.Lang.JSX_TSX, jsxAttribute = c)
                                 c = c.parent
                             }
@@ -292,42 +282,20 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     // ================================================================
     private fun extractObjectLiteral(loc: StyleAttrLoc): String? {
         if (loc.jsxAttribute != null) {
-            val pair: PsiElement? = runCatching {
-                val c = loc.jsxAttribute.javaClass
-                val m = c.methods.firstOrNull {
-                    it.parameterCount == 1 && it.name == "getValueByName"
-                }
-                val defCls = Class.forName(
-                    "com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair",
-                    false, c.classLoader
-                )
-                val defField = runCatching {
-                    defCls.fields.firstOrNull { f ->
-                        "DEFAULT" == f.name || "default" == f.name
-                    }?.get(null)
-                }.getOrNull()
-                if (m != null && defField != null) m.invoke(loc.jsxAttribute, defField) as? PsiElement else null
-            }.getOrNull() ?: run {
-                val values = runCatching {
-                    val m = loc.jsxAttribute.javaClass.methods.firstOrNull {
-                        it.parameterCount == 0 && it.name == "getValues"
-                    }
-                    (m?.invoke(loc.jsxAttribute) as? List<*>)?.firstOrNull() as? PsiElement
-                }.getOrNull()
-                values
-            }
-            if (pair != null) {
-                val valueNode = runCatching {
-                    pair.javaClass.methods.firstOrNull { it.parameterCount == 0 && it.name == "getValueNode" }
-                        ?.invoke(pair) as? PsiElement
-                }.getOrNull()
+            // PSI 方式：通过 JSAttributeNameValuePair 接口直接访问 valueNode/values，
+            // 不再使用 javaClass.methods reflection
+            val attr = loc.jsxAttribute
+            if (attr is JSAttributeNameValuePair) {
+                // valueNode 返回 ASTNode，通过 .psi 获取 PsiElement
+                val valueNode = attr.valueNode
                 if (valueNode != null) {
-                    val obj = PsiTreeUtil.findChildOfType(valueNode, JSObjectLiteralExpression::class.java)
+                    val valueElement = valueNode.psi
+                    val obj = PsiTreeUtil.findChildOfType(valueElement, JSObjectLiteralExpression::class.java)
                     if (obj != null) return obj.text
-                    return unwrapBracesOnce(valueNode.text)
+                    return unwrapBracesOnce(valueElement.text)
                 }
             }
-            // 最后兜底：直接 attr.text 正则拉
+            // Regex 兜底：针对非 JSAttributeNameValuePair 类型的 PSI
             val t = loc.attrPsi.text
             val m = Regex("""=\s*(\{[\s\S]*\})\s*$""").find(t) ?: return null
             return unwrapBracesOnce(m.groupValues[1])
@@ -505,18 +473,11 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
     /**
      * 在父元素中查找已有的 className 属性。
-     * 搜索所有子节点中名字为 "className" 的 JSX/JSAttribute。
+     * 通过 PSI 类型 JSAttributeNameValuePair 直接过滤，不再使用 javaClass.name 匹配。
      */
     private fun findClassNameAttr(parent: PsiElement): PsiElement? {
-        return PsiTreeUtil.collectElements(parent) { el ->
-            val c = el.javaClass.name
-            (c.contains("JSAttribute", ignoreCase = true) || c.contains("JSXAttribute", ignoreCase = true)) &&
-                el != parent &&
-                runCatching {
-                    el.javaClass.methods.firstOrNull { m -> m.name == "getName" && m.parameterCount == 0 }
-                        ?.invoke(el) == "className"
-                }.getOrDefault(false)
-        }.firstOrNull()
+        return PsiTreeUtil.findChildrenOfType(parent, JSAttributeNameValuePair::class.java)
+            .firstOrNull { it != parent && it.name == "className" }
     }
 
     /**

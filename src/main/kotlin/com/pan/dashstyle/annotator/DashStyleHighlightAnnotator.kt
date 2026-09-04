@@ -122,10 +122,8 @@ class DashStyleHighlightAnnotator : Annotator {
         if (file is com.intellij.psi.PsiFile) {
             val lower = file.name?.lowercase().orEmpty()
             if (lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".sass") || lower.endsWith(".less")) {
-                return runCatching {
-                    val m = file.javaClass.methods.firstOrNull { it.name == "getStylesheet" && it.parameterCount == 0 }
-                    (m?.invoke(file) as? PsiElement) ?: file
-                }.getOrDefault(file)
+                // PSI 方式：直接通过 StylesheetFile 接口获取 stylesheet，避免反射
+                return (file as? com.intellij.psi.css.StylesheetFile)?.stylesheet ?: file
             }
             if (lower.endsWith(".vue")) {
                 val tag = PsiTreeUtil.getContextOfType(rs, com.intellij.psi.xml.XmlTag::class.java)
@@ -139,17 +137,10 @@ class DashStyleHighlightAnnotator : Annotator {
         DeclarationSignatureUtil.computeSignature(rs)
 
     private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
-        val raw = runCatching { rs.selectorList?.text }.getOrNull().orEmpty().trim()
-        if (raw.isEmpty()) return emptyList()
-        val normalized = runCatching { CssSelectorUtil.expandSelector(rs) }.getOrNull()
-            ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
-        // :global(...) 内的类不导出、无法判断是否使用，先剥离避免误置灰
-        val noGlobal = CssSelectorUtil.stripGlobalBlocks(normalized)
-        val cleaned = noGlobal.replace(Regex(""":+[\w-]+(?:\([^)]*)?"""), "")
-        return CLASS_NAME_RE.findAll(cleaned).mapNotNull { m ->
-            val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor
-            name.trim().takeIf { it.isNotEmpty() }
-        }.distinct().toList()
+        // 委托给 CssSelectorUtil，避免内联 Regex className parser
+        val expanded = runCatching { CssSelectorUtil.expandSelector(rs) }.getOrNull()
+            ?: rs.selectorList?.text.orEmpty()
+        return CssSelectorUtil.extractClassNames(expanded)
     }
 
     companion object {
@@ -165,11 +156,11 @@ class DashStyleHighlightAnnotator : Annotator {
                 JBColor(Color(0x98, 0x98, 0x98), Color(0x9f, 0x9f, 0x9f))
             )
             val fallback = TextAttributes().apply { foregroundColor = fg }
-            val baseKey = runCatching {
-                val field = DefaultLanguageHighlighterColors::class.java.getField("INLINE_PARAMETER_HINT")
-                field.get(null) as? TextAttributesKey
-            }.getOrNull() ?: DefaultLanguageHighlighterColors.IDENTIFIER
+            // 直接字段访问（INLINE_PARAMETER_HINT 自 2022.3 起为稳定 API）
+            val baseKey = DefaultLanguageHighlighterColors.INLINE_PARAMETER_HINT
             TextAttributesKey.createTextAttributesKey("DASHSTYLE_UNUSED_CSS_CLASS", baseKey).also { key ->
+                // TextAttributesKey 的 fallbackAttributes 是 private 字段，无公开 API 设置自定义 TextAttributes。
+                // 这是 IntelliJ Platform 的已知限制，只能通过反射注入。
                 runCatching {
                     val f = TextAttributesKey::class.java.getDeclaredField("myFallbackAttributes")
                         .apply { isAccessible = true }
@@ -188,9 +179,10 @@ class DashStyleHighlightAnnotator : Annotator {
                 effectType = EffectType.WAVE_UNDERSCORE
                 effectColor = effect
             }
+            // WARNINGS_ATTRIBUTES 在某些 SDK 版本中不是公开字段，保留反射兜底
             val baseKey: TextAttributesKey = runCatching {
-                val field = DefaultLanguageHighlighterColors::class.java.getField("WARNINGS_ATTRIBUTES")
-                field.get(null) as? TextAttributesKey
+                DefaultLanguageHighlighterColors::class.java
+                    .getField("WARNINGS_ATTRIBUTES").get(null) as TextAttributesKey
             }.getOrNull() ?: DefaultLanguageHighlighterColors.IDENTIFIER
             TextAttributesKey.createTextAttributesKey("DASHSTYLE_DUPLICATE_CSS", baseKey).also { key ->
                 runCatching {
@@ -208,32 +200,16 @@ class DashStyleHighlightAnnotator : Annotator {
                     val rulesets = PsiTreeUtil.findChildrenOfType(root, CssRuleset::class.java).filter { it.block != null }
                     val bySig = hashMapOf<String, MutableList<CssRuleset>>()
                     for (r in rulesets) {
-                        val sig = runCatching {
-                            val decls = PsiTreeUtil.findChildrenOfType(r.block, CssDeclaration::class.java).toList()
-                            if (decls.isEmpty()) null
-                            else decls.mapNotNull { d ->
-                                val p = d.propertyName?.trim()?.lowercase() ?: return@mapNotNull null
-                                val v = (d.value?.text ?: "").let { s ->
-                                    var sv = s
-                                    val hex3 = Regex("""#([0-9a-fA-F]{3})(?![0-9a-fA-F])""")
-                                    sv = hex3.replace(sv) { m ->
-                                        val c = m.groupValues[1]
-                                        "#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}"
-                                    }
-                                    sv.replace(Regex("""\s+"""), " ").trim().removeSuffix(",").lowercase()
-                                }
-                                "$p:$v"
-                            }.sorted().joinToString("|").takeIf { it.isNotBlank() }
-                        }.getOrNull() ?: continue
+                        // 委托给 DeclarationSignatureUtil，避免内联 Regex 签名重复
+                        val sig = DeclarationSignatureUtil.computeSignature(r) ?: continue
                         bySig.getOrPut(sig) { mutableListOf() } += r
                     }
                     val result = bySig.filter { (sig, list) ->
-                        // 重复规则数 >= 2，且共享声明（签名里的 prop:value 段）>= 3
                         list.size >= 2 && sig.count { it == '|' } + 1 >= 3
                     }
                     com.intellij.psi.util.CachedValueProvider.Result.create(
                         result,
-                        contextFile  // 只依赖该文件本身：其它文件改动不会让本文件的重复分组失效
+                        contextFile
                     )
                 }
             )

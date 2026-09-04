@@ -13,6 +13,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
+import com.intellij.psi.xml.XmlTag
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
@@ -130,7 +131,7 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
 
     private fun scopeText(scope: Scope): String = when (scope) {
         is Scope.FileScope -> runCatching { scope.psi.text }.getOrDefault("")
-        is Scope.VueStyleScope -> readTagInnerTextViaReflection(scope.styleTag)
+        is Scope.VueStyleScope -> readTagInnerText(scope.styleTag)
     }
 
     private fun scopeReplace(scope: Scope, newText: String) {
@@ -141,24 +142,12 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
                         .getDocument(scope.psi) ?: return@runCatching
                     doc.replaceString(0, doc.textLength, newText)
                 }
-                is Scope.VueStyleScope -> replaceTagInnerTextViaReflection(scope.styleTag, scope.scopeFile, newText)
+                is Scope.VueStyleScope -> replaceTagInnerText(scope.styleTag, scope.scopeFile, newText)
             }
         }
     }
 
-    private fun tagName(el: PsiElement): String? = runCatching {
-        val m = el.javaClass.methods.firstOrNull { mm ->
-            mm.parameterCount == 0 && mm.name == "getName" && (
-                mm.returnType == String::class.java || CharSequence::class.java.isAssignableFrom(mm.returnType)
-            )
-        } ?: return@runCatching null
-        m.isAccessible = true
-        return when (val r = m.invoke(el)) {
-            is String -> r
-            is CharSequence -> r.toString()
-            else -> null
-        }
-    }.getOrNull()
+    private fun tagName(el: PsiElement): String? = (el as? XmlTag)?.name
 
     // 选区的 (start,end) 偏移（相对 PsiFile.text / styleTag.value 的文本），没选区返回 null
     private fun selectionRangeOrNull(sel: SelectionModel, file: PsiFile): Pair<Int, Int>? = runCatching {
@@ -184,59 +173,13 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         return rules.groupBy { rs -> DeclarationSignatureUtil.computeSignatureList(rs) }
     }
 
-    private fun readTagInnerTextViaReflection(styleTag: PsiElement): String = runCatching {
-        // 常见两种实现：getValue() 返回 XmlTagValue 或直接返回 String；兜底取 text
-        val getVal = styleTag.javaClass.methods.firstOrNull {
-            it.name == "getValue" && it.parameterCount == 0
-        }
-        if (getVal != null) {
-            getVal.isAccessible = true
-            when (val obj = getVal.invoke(styleTag)) {
-                is String -> return@runCatching obj
-                is CharSequence -> return@runCatching obj.toString()
-                else -> {
-                    val textM = obj?.javaClass?.methods?.firstOrNull { it.name == "getText" && it.parameterCount == 0 }
-                    if (textM != null) {
-                        textM.isAccessible = true
-                        (textM.invoke(obj) as? CharSequence)?.toString()?.let { return@runCatching it }
-                    }
-                }
-            }
-        }
-        val textM2 = styleTag.javaClass.methods.firstOrNull { it.name == "getText" && it.parameterCount == 0 }
-        if (textM2 != null) {
-            textM2.isAccessible = true
-            (textM2.invoke(styleTag) as? CharSequence)?.toString() ?: ""
-        } else ""
-    }.getOrDefault("")
+    private fun readTagInnerText(styleTag: PsiElement): String =
+        (styleTag as? XmlTag)?.value?.text ?: styleTag.text
 
-    private fun replaceTagInnerTextViaReflection(styleTag: PsiElement, file: PsiFile, newText: String) {
-        runCatching {
-            // 1) 尝试 setValue(...)
-            val setValue = styleTag.javaClass.methods.firstOrNull {
-                it.parameterCount == 1 && (it.name == "setValue" || it.name == "setTagValue")
-            }
-            if (setValue != null) {
-                setValue.isAccessible = true
-                setValue.invoke(styleTag, newText)
-                // 不在 write action 内调用 doPostponedOperationsAndUnblockDocument：
-                // 它会同步派发 AWT 事件，导致 "AWT events are not allowed inside write action" 错误。
-                // write action 结束后平台会自动 flush。
-                return@runCatching
-            }
-            // 2) 兜底：直接走 document 替换，用 styleTag.value 的 textRange 在 file.document 上定位
-            val doc = com.intellij.psi.PsiDocumentManager.getInstance(file.project).getDocument(file) ?: return@runCatching
-            val tr = styleTag.textRange
-            val tagText = doc.getText(tr) ?: return@runCatching
-            // 简单正则：找第一个 > 和最后一个 </style> 之间的内容（只处理 <style ...>inner</style> 常见形式）
-            val closeIdx = tagText.indexOfLast { it == '>' }
-            val openEnd = if (closeIdx < 0) -1 else closeIdx + 1
-            val endStart = tagText.indexOf("</style", openEnd.coerceAtLeast(0))
-            if (openEnd < 0 || endStart < openEnd) return@runCatching
-            val absStart = tr.startOffset + openEnd
-            val absEnd = tr.startOffset + endStart
-            if (absEnd < absStart) return@runCatching
-            doc.replaceString(absStart, absEnd, newText)
+    private fun replaceTagInnerText(styleTag: PsiElement, file: PsiFile, newText: String) {
+        (styleTag as? XmlTag)?.let { tag ->
+            // PSI 方式：通过 XmlTagValue.text setter 修改标签内容
+            tag.value.text = newText
         }
     }
 

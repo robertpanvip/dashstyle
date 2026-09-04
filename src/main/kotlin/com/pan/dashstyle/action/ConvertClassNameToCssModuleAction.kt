@@ -523,22 +523,27 @@ class ConvertClassNameToCssModuleAction : AnAction(
             .withName("Add CSS Module rules")
             .run<Nothing> {
                 val psiFile = PsiManager.getInstance(project).findFile(moduleVf) ?: return@run
-                val document = FileDocumentManager.getInstance().getDocument(moduleVf) ?: return@run
 
                 val sb = StringBuilder()
-                // 如果文件已有内容，先加空行
-                if (document.textLength > 0 && !document.text.endsWith("\n")) {
+                if (psiFile.textLength > 0 && !psiFile.text.endsWith("\n")) {
                     sb.append("\n")
                 }
-
                 for (name in classNames) {
                     val kebab = if (name.contains("-")) name else NamingUtil.camelToKebab(name)
                     sb.append("\n.$kebab {\n\n}\n")
                 }
 
-                val insertOffset = document.textLength
-                document.insertString(insertOffset, sb.toString())
-                FileDocumentManager.getInstance().saveDocument(document)
+                val cssText = sb.toString()
+                if (cssText.isBlank()) return@run
+
+                // PSI 方式：从文本创建 dummy CSS 文件，将其子节点 add 到目标文件
+                val dummyFile = PsiFileFactory.getInstance(project)
+                    .createFileFromText("_dummy.css", psiFile.language, cssText)
+                for (child in dummyFile.children.toList()) {
+                    if (child.text.isNotBlank()) {
+                        psiFile.add(child)
+                    }
+                }
             }
     }
 }
