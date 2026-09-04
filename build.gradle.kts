@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.0"
+version = "1.3.1"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -66,6 +66,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.1</h3>
+<ul>
+    <li>🔧 修复 <code>CreateMissingCssClassIntention</code>（缺失类快速创建）在 Intention 预览触发下可能出现的死锁：通过声明 <code>startInWriteAction = true</code>，让 <code>invoke()</code> 由框架在写锁内调用，避免 preview 的读锁与写锁竞争导致 UI 卡死</li>
+    <li>📝 同步插件市场描述、README、FEATURES 说明到最新功能状态（补齐 member access、Inline 抽取、批量迁移等）</li>
+</ul>
 <h3>1.3.0</h3>
 <ul>
     <li>🗑️ 移除 Flex/Grid 布局可视化预览（gutter LineMarker + 交互弹窗）及对应测试</li>
