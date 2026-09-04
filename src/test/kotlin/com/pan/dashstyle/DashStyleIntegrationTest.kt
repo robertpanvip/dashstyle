@@ -1030,4 +1030,43 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         Assert.assertFalse("不应生成 React 的 className", text2.contains("className"))
         Assert.assertFalse("style 属性应删除", text2.contains("style="))
     }
+
+    // ========================================================================
+    // #23. Framework 探测缓存：CachedValue 避免每次 Alt+Enter 都做 20 层
+    //      package.json IO；package.json 内容修改必须正确失效缓存。
+    // ========================================================================
+    @Test
+    fun `framework detection cached and invalidated on package json change`() {
+        val pkg = myFixture.addFileToProject(
+            "pkgC/package.json", """{"name":"c","dependencies":{"vue":"^3.4.0"}}"""
+        )
+        val tsx = myFixture.addFileToProject(
+            "pkgC/C23.tsx", "export const A = () => <div style={{color:'red'}}>x</div>\n"
+        )
+        // 第一次探测（package.json 兜底路径，结果进缓存）
+        Assert.assertEquals(
+            "package.json vue → VUE",
+            InlineStyleToCssModuleIntention.Framework.VUE, InlineStyleToCssModuleIntention.detectFramework(tsx)
+        )
+        // 第二次应命中缓存（结果一致；真实环境中不再触发目录向上扫描 IO）
+        Assert.assertEquals(
+            "第二次调用应命中缓存",
+            InlineStyleToCssModuleIntention.Framework.VUE, InlineStyleToCssModuleIntention.detectFramework(tsx)
+        )
+
+        // 修改 package.json 内容 → 缓存必须失效并重算
+        // （模拟真实用户编辑：Document.setText + 显式 commit 同步 PSI → tracker 失效缓存。
+        //   注意 VfsUtil.saveText 只改 VFS，不会 reload Document，PSI 仍读旧值。）
+        val doc = pkg.viewProvider.document
+        Assert.assertNotNull("package.json 应有 Document", doc)
+        WriteCommandAction.runWriteCommandAction(project) {
+            doc!!.setText("""{"name":"c","dependencies":{"react":"^18.2.0"}}""")
+            com.intellij.psi.PsiDocumentManager.getInstance(project).commitDocument(doc)
+        }
+        println("after change pkg.text=${pkg.text.take(60)}")
+        Assert.assertEquals(
+            "package.json 改为 react 后应失效缓存并重算为 REACT",
+            InlineStyleToCssModuleIntention.Framework.REACT, InlineStyleToCssModuleIntention.detectFramework(tsx)
+        )
+    }
 }

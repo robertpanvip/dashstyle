@@ -23,9 +23,13 @@ import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlTag
 import com.intellij.lang.javascript.psi.JSObjectLiteralExpression
 import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
+import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.css.CSSLanguage
 import com.intellij.lang.Language
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.psi.util.PsiModificationTracker
+import com.intellij.psi.util.CachedValueProvider
+import com.intellij.psi.util.CachedValuesManager
 
 /**
  * Alt+Enter 快速修复：把 JSX/Vue 里的 inline style 对象提取为 CSS Module class。
@@ -42,56 +46,108 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         private val VALID_VUE_STYLE_RE = Regex("""^\s*(?:v-bind:)?style\s*=\s*""")
         private val CLASS_NAME_RE = Regex("""^[_a-zA-Z][_a-zA-Z0-9-]*$""")
 
-        // 文件内证据：import 来源 / 框架标志性 API
-        private val VUE_EVIDENCE_RE = Regex(
-            """\bfrom\s+['"](?:vue|@vue/[^'"]+|vue-router|pinia|vuex)['"]|\bdefineComponent\s*\(|\buseCssModule\s*\("""
-        )
-        private val REACT_EVIDENCE_RE = Regex(
-            """\bfrom\s+['"](?:react|react-dom|react-router|react-router-dom|next/[^'"]+)['"]|\bReact\.Component\b"""
-        )
-        private val CLSX_IMPORT_RE = Regex("""\bfrom\s+['"](?:clsx|classnames)['"]""")
+        // 框架标志性 API 证据（非 import 语句，PSI 化成本高收益低，仅作次级文本证据）
+        private val VUE_API_RE = Regex("""\bdefineComponent\s*\(|\buseCssModule\s*\(""")
+        private val REACT_API_RE = Regex("""\bReact\.Component\b""")
         private val PACKAGE_JSON_VUE_RE = Regex(""""vue"\s*:""")
         private val PACKAGE_JSON_REACT_RE = Regex(""""react"\s*:""")
 
+        /** 探测结果 + 命中的 package.json（用作缓存依赖，内容修改会失效缓存）。 */
+        private data class FrameworkDetection(val framework: Framework, val pkgPsi: PsiFile?)
+
         /**
-         * 框架探测（区分 Vue 的 TSX 和 React 的 TSX）：
-         *  1. .vue 文件 → VUE；
-         *  2. 文件内证据（import vue 系 / import react 系）——vue 优先，
-         *     混用 react 类型工具的场景以组件框架为准；
-         *  3. 都没有 → 从文件目录向上找 package.json 按 dependencies 判断；
-         *     当前 package.json 两者都没有（或都有，多为 monorepo 根）→ 继续向上。
+         * 框架探测（区分 Vue 的 TSX 和 React 的 TSX），带 CachedValue 缓存：
+         * Alt+Enter 的 isAvailable 每次光标移动都会触发探测，不缓存的话
+         * 每次都要做最多 20 层 package.json 磁盘 IO。
+         * 缓存依赖：项目级 PSI 修改 tracker + 命中的 package.json PsiFile
+         * （两者任一变化 → 失效重算）。
          */
-        internal fun detectFramework(file: PsiFile): Framework {
-            if (file.virtualFile?.extension?.lowercase() == "vue") return Framework.VUE
+        internal fun detectFramework(file: PsiFile): Framework =
+            CachedValuesManager.getCachedValue(file) {
+                val detection = detectFrameworkUncached(file)
+                val deps: MutableList<Any> = mutableListOf(PsiModificationTracker.getInstance(file.project))
+                if (detection.pkgPsi != null) deps.add(detection.pkgPsi)
+                CachedValueProvider.Result.create(detection.framework, deps)
+            }
+
+        private fun detectFrameworkUncached(file: PsiFile): FrameworkDetection {
+            if (file.virtualFile?.extension?.lowercase() == "vue") return FrameworkDetection(Framework.VUE, null)
+
+            // 1. PSI 遍历 import 声明（结构化判断，不做全文正则 containsMatchIn）。
+            //    vue 优先：混用 react 类型工具的场景以组件框架为准。
+            var hasVueImport = false
+            var hasReactImport = false
+            for (imp in PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)) {
+                when (frameworkOfImportedModule(importedModuleName(imp))) {
+                    Framework.VUE -> hasVueImport = true
+                    Framework.REACT -> hasReactImport = true
+                    else -> {}
+                }
+            }
+            if (hasVueImport) return FrameworkDetection(Framework.VUE, null)
+            if (hasReactImport) return FrameworkDetection(Framework.REACT, null)
+
+            // 2. 框架标志性 API 证据（次级）
             val text = file.text
-            if (VUE_EVIDENCE_RE.containsMatchIn(text)) return Framework.VUE
-            if (REACT_EVIDENCE_RE.containsMatchIn(text)) return Framework.REACT
+            if (VUE_API_RE.containsMatchIn(text)) return FrameworkDetection(Framework.VUE, null)
+            if (REACT_API_RE.containsMatchIn(text)) return FrameworkDetection(Framework.REACT, null)
+
+            // 3. package.json 兜底
             return detectFrameworkFromPackageJson(file)
         }
 
-        private fun detectFrameworkFromPackageJson(file: PsiFile): Framework {
-            var dir = file.virtualFile?.parent ?: return Framework.UNKNOWN
+        /** 取 import 声明的模块名（PSI API 优先；兼容 importModuleText 不返回时回退文本解析）。 */
+        private fun importedModuleName(imp: ES6ImportDeclaration): String? =
+            imp.importModuleText?.trim('"', '\'')
+                ?: CssModuleFileResolver.extractModulePathFromText(imp.text)
+
+        /** 精确模块名匹配（scoped 包用前缀判断，其余全等比较，不用 contains）。 */
+        private fun frameworkOfImportedModule(module: String?): Framework? = when (module) {
+            "vue", "vue-router", "pinia", "vuex" -> Framework.VUE
+            "react", "react-dom", "react-router", "react-router-dom" -> Framework.REACT
+            else -> when {
+                module != null && module.startsWith("@vue/") -> Framework.VUE
+                module != null && module.startsWith("next/") -> Framework.REACT
+                else -> null
+            }
+        }
+
+        /**
+         * 从文件目录向上找 package.json（最多 20 层）。
+         * 经 PsiManager 读取（而非 VirtualFile 字节流）：读到的 PsiFile 会作为
+         * CachedValue 依赖，package.json 内容修改可正确失效缓存。
+         * 当前 package.json 两者都没有（或都有，多为 monorepo 根）→ 继续向上。
+         */
+        private fun detectFrameworkFromPackageJson(file: PsiFile): FrameworkDetection {
+            var dir = file.virtualFile?.parent ?: return FrameworkDetection(Framework.UNKNOWN, null)
             var depth = 0
             while (depth < 20) {
-                val pkg = dir.findChild("package.json")
-                if (pkg != null && pkg.isValid && !pkg.isDirectory) {
-                    val text = runCatching { String(pkg.contentsToByteArray(), Charsets.UTF_8) }.getOrNull()
-                    if (text != null) {
+                val pkgVf = dir.findChild("package.json")
+                if (pkgVf != null && pkgVf.isValid && !pkgVf.isDirectory) {
+                    val pkgPsi = PsiManager.getInstance(file.project).findFile(pkgVf)
+                    if (pkgPsi != null) {
+                        val text = pkgPsi.text
+                        val hasVue = PACKAGE_JSON_VUE_RE.containsMatchIn(text)
+                        val hasReact = PACKAGE_JSON_REACT_RE.containsMatchIn(text)
                         val result = when {
-                            PACKAGE_JSON_VUE_RE.containsMatchIn(text) &&
-                                !PACKAGE_JSON_REACT_RE.containsMatchIn(text) -> Framework.VUE
-                            PACKAGE_JSON_REACT_RE.containsMatchIn(text) &&
-                                !PACKAGE_JSON_VUE_RE.containsMatchIn(text) -> Framework.REACT
+                            hasVue && !hasReact -> Framework.VUE
+                            hasReact && !hasVue -> Framework.REACT
                             else -> null
                         }
-                        if (result != null) return result
+                        if (result != null) return FrameworkDetection(result, pkgPsi)
                     }
                 }
-                dir = dir.parent ?: return Framework.UNKNOWN
+                dir = dir.parent ?: return FrameworkDetection(Framework.UNKNOWN, null)
                 depth++
             }
-            return Framework.UNKNOWN
+            return FrameworkDetection(Framework.UNKNOWN, null)
         }
+
+        /** clsx 可用性：PSI 遍历 import（不全文正则）。 */
+        internal fun hasClsxImport(file: PsiFile): Boolean =
+            PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java).any { imp ->
+                importedModuleName(imp) in setOf("clsx", "classnames")
+            }
     }
 
     override fun getText(): String = "Extract inline style to CSS Module..."
@@ -588,10 +644,11 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 valuePart = valuePart.substring(1, valuePart.length - 1).trim()
             }
             val classAttrName = if (framework == Framework.VUE) "class" else "className"
+            val file = existingClass.containingFile ?: return@runCatching
             val newClassText = when {
                 framework == Framework.VUE ->
                     "$classAttrName={[$valuePart, $newAccess]}"
-                CLSX_IMPORT_RE.containsMatchIn(existingClass.containingFile?.text.orEmpty()) ->
+                hasClsxImport(file) ->
                     "$classAttrName={clsx($valuePart, $newAccess)}"
                 isPlainJsStringLiteral(valuePart) -> {
                     // 字符串字面量（"foo"）直接平铺进模板，避免 ${"foo"} 的丑陋内插
@@ -602,7 +659,6 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                     "$classAttrName={\${$valuePart} \${$newAccess}}"
             }
             val project = existingClass.project
-            val file = existingClass.containingFile ?: return@runCatching
             val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newClassText)
             if (newAttr != null) {
                 existingClass.replace(newAttr)
