@@ -2,21 +2,17 @@ package com.pan.dashstyle
 
 import com.intellij.codeInsight.intention.impl.BaseIntentionAction
 import com.intellij.lang.css.CSSLanguage
-import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.*
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileTypes.PlainTextLanguage
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 
 /**
@@ -31,6 +27,13 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
 
     override fun getText(): String = "Create missing class in CSS Module"
     override fun getFamilyName(): String = "DashStyle: Create missing CSS class"
+
+    /**
+     * 让 IntelliJ 框架在 write action 中调用 invoke()。
+     * 如果不加这个，generatePreview() 会在 read action 中调用 invoke()，
+     * 而 invoke() 又启动 WriteCommandAction → deadlock。
+     */
+    override fun startInWriteAction(): Boolean = true
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean {
         val (_, requestedName, containerMaybe, _) = locateContext(editor, file) ?: return false
@@ -90,16 +93,14 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         }
         if (targetFile == null) return
 
-        WriteCommandAction.writeCommandAction(project).withName("Create missing CSS class").run<Nothing> {
-            when (container) {
-                is CssModuleResolver.CssContainer.ImportedFile -> {
-                    appendRuleToFile(project, container.psiFile, kebab, tailwindCss)
-                }
-                is CssModuleResolver.CssContainer.VueStyleTag -> {
-                    appendRuleToStyleTag(project, container.styleTag, kebab, tailwindCss)
-                }
-                else -> {}
+        when (container) {
+            is CssModuleResolver.CssContainer.ImportedFile -> {
+                appendRuleToFile(project, container.psiFile, kebab, tailwindCss)
             }
+            is CssModuleResolver.CssContainer.VueStyleTag -> {
+                appendRuleToStyleTag(project, container.styleTag, kebab, tailwindCss)
+            }
+            else -> {}
         }
 
         // 打开目标文件并把光标定位到新建规则的 {} 内
