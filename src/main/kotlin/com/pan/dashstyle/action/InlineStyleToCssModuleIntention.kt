@@ -431,6 +431,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
     // ================================================================
     // 把原 style={...} 替换成 className=... / :class=...
+    // （纯 PSI：属性节点整体 replace，由 CssModuleFileResolver 的 dummy-file
+    //  工厂创建新节点；仅 PSI 替换失败时才退回 Document 兜底）
     // ================================================================
     private fun replaceStyleAttributeWithClass(
         loc: StyleAttrLoc,
@@ -440,7 +442,6 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         val access = target.classNameAccessExpr(className)
         val project = loc.attrPsi.project
         val file = loc.attrPsi.containingFile ?: return
-        val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
 
         // 根据文件扩展名确认语言类型，避免因 PSI 检测错误导致在 React 中生成 Vue 语法
         val ext = file.virtualFile?.extension?.lowercase()
@@ -456,18 +457,55 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 val existingClassName = findClassNameAttr(parent)
                 if (existingClassName != null) {
                     // 合并到已有 className 中，然后删除 style 属性
-                    mergeIntoExistingClassName(existingClassName, access, loc.attrPsi, document)
+                    mergeIntoExistingClassName(existingClassName, access, loc.attrPsi)
                     return
                 }
                 // 没有已有 className，直接替换 style 为 className
-                val range = loc.attrPsi.textRange
-                document.replaceString(range.startOffset, range.endOffset, "className={$access}")
+                if (!replaceAttrPsi(project, file, loc.attrPsi, "className={$access}", xml = false)) {
+                    replaceAttrViaDocument(project, file, loc.attrPsi, "className={$access}")
+                }
             }
             StyleAttrLoc.Lang.VUE -> {
                 // Vue 中 class 和 :class 可以共存，直接替换 :style 为 :class
-                val range = loc.attrPsi.textRange
-                document.replaceString(range.startOffset, range.endOffset, ":class=\"$access\"")
+                if (!replaceAttrPsi(project, file, loc.attrPsi, ":class=\"$access\"", xml = true)) {
+                    replaceAttrViaDocument(project, file, loc.attrPsi, ":class=\"$access\"")
+                }
             }
+        }
+    }
+
+    /**
+     * 纯 PSI 属性替换：Vue 模板（xml = true）走 XML dummy 工厂；
+     * JSX（xml = false）走 JSX dummy 工厂（不能用 attrPsi 类型判断 ——
+     * WS-2025.3 的 JSX 属性 JSXmlAttribute 同样继承 XmlAttribute）。
+     * 成功返回 true；失败（节点创建失败 / replace 抛异常）返回 false。
+     */
+    private fun replaceAttrPsi(
+        project: Project,
+        file: PsiFile,
+        attrPsi: PsiElement,
+        newAttrText: String,
+        xml: Boolean
+    ): Boolean {
+        return runCatching {
+            val newAttr: PsiElement = if (xml) {
+                CssModuleFileResolver.createXmlAttributePsi(project, newAttrText)
+                    ?: return@runCatching false
+            } else {
+                CssModuleFileResolver.createJsxAttributePsi(project, file, newAttrText)
+                    ?: return@runCatching false
+            }
+            attrPsi.replace(newAttr)
+            true
+        }.getOrDefault(false)
+    }
+
+    /** Document 兜底替换（仅 PSI 替换失败的极端场景，保持旧行为）。 */
+    private fun replaceAttrViaDocument(project: Project, file: PsiFile, attrPsi: PsiElement, newAttrText: String) {
+        runCatching {
+            val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
+            val range = attrPsi.textRange
+            document.replaceString(range.startOffset, range.endOffset, newAttrText)
         }
     }
 
@@ -482,45 +520,36 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
     /**
      * 将新的 class 访问表达式合并到已有的 className 属性中，然后删除 style 属性。
+     * 纯 PSI：先整体 replace className 节点，再 delete style 节点及其前置空白，
+     * 无需像 Document 版本那样手工换算替换后的 offset 漂移。
      * 处理 className="foo" → className={clsx("foo", styles.newClass)} 和
      * className={expr} → className={clsx(expr, styles.newClass)} 两种形式。
      */
     private fun mergeIntoExistingClassName(
         existingClassName: PsiElement,
         newAccess: String,
-        styleAttr: PsiElement,
-        document: com.intellij.openapi.editor.Document
+        styleAttr: PsiElement
     ) {
-        try {
+        runCatching {
             val existingText = existingClassName.text
             val eqIdx = existingText.indexOf('=')
-            if (eqIdx < 0) return
-            val valuePart = existingText.substring(eqIdx + 1).trim()
+            if (eqIdx < 0) return@runCatching
+            var valuePart = existingText.substring(eqIdx + 1).trim()
+            // className={expr} → 取 expr 本体，避免生成 clsx({expr}, ...) 双层花括号
+            if (valuePart.startsWith("{") && valuePart.endsWith("}")) {
+                valuePart = valuePart.substring(1, valuePart.length - 1).trim()
+            }
             val newClassNameText = "className={clsx($valuePart, $newAccess)}"
-            val existingRange = existingClassName.textRange
-            val styleRange = styleAttr.textRange
-
-            // 先替换 className，再删除 style（顺序：先替换 className 不会改变 style 的 offset）
-            document.replaceString(existingRange.startOffset, existingRange.endOffset, newClassNameText)
-            // style 的 offset 在 className 替换后可能变化（如果 className 在 style 之前）
-            val styleShift = newClassNameText.length - existingRange.length
-            val adjustedStyleStart = if (styleRange.startOffset > existingRange.startOffset) {
-                styleRange.startOffset + styleShift
-            } else {
-                styleRange.startOffset
+            val project = existingClassName.project
+            val file = existingClassName.containingFile ?: return@runCatching
+            val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newClassNameText)
+            if (newAttr != null) {
+                existingClassName.replace(newAttr)
             }
-            val adjustedStyleEnd = if (styleRange.endOffset > existingRange.startOffset) {
-                styleRange.endOffset + styleShift
-            } else {
-                styleRange.endOffset
-            }
-            // 删除 style 属性（包括前置空格/逗号）
-            val beforeStyle = document.getText(com.intellij.openapi.util.TextRange(0, document.textLength))
-                .substring(0, adjustedStyleStart)
-            val trailingSpace = if (beforeStyle.endsWith(" ") || beforeStyle.endsWith("\t")) 1 else 0
-            document.deleteString(adjustedStyleStart - trailingSpace, adjustedStyleEnd)
-        } catch (t: Throwable) {
-            LOG.warn("mergeIntoExistingClassName failed", t)
-        }
+            // 删除 style 属性及其前置空白（不含换行，保留行结构）
+            val prevWs = styleAttr.prevSibling
+            if (prevWs is PsiWhiteSpace && !prevWs.textContains('\n')) prevWs.delete()
+            styleAttr.delete()
+        }.onFailure { LOG.warn("mergeIntoExistingClassName failed", it) }
     }
 }

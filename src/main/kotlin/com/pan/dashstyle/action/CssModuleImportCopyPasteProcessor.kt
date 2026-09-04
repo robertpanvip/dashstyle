@@ -10,7 +10,6 @@ import com.google.gson.annotations.SerializedName
 import com.intellij.codeInsight.editorActions.CopyPastePreProcessor
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.*
-import com.intellij.lang.javascript.JavascriptLanguage
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
@@ -18,10 +17,8 @@ import com.intellij.openapi.editor.RawText
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiFileFactory
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
 import org.jetbrains.annotations.NotNull

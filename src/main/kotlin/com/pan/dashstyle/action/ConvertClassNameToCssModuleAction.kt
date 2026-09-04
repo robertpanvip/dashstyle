@@ -6,6 +6,7 @@ import com.pan.dashstyle.support.*
 import com.pan.dashstyle.annotator.*
 
 import com.intellij.lang.javascript.psi.JSLiteralExpression
+import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
@@ -430,58 +431,89 @@ class ConvertClassNameToCssModuleAction : AnAction(
         WriteCommandAction.writeCommandAction(project, file)
             .withName("Convert className to CSS Module")
             .run<Nothing> {
-                val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return@run
                 // 从后往前替换，避免 offset 漂移
                 val sortedSites = sites.sortedByDescending { it.startOffset }
                 for (site in sortedSites) {
                     val parts = site.value.split(CLASS_NAME_SPLIT).filter { it.isNotBlank() }
                     val matched = parts.filter { it in classNames }
+                    if (matched.isEmpty()) continue
 
-                    if (matched.size == 1) {
-                        // className="foo" → className={styles.foo}
-                        val name = matched.first()
-                        val kebab = NamingUtil.camelToKebab(name)
-                        val access = if (kebab.contains("-")) {
-                            "$importBinding[\"$kebab\"]"
-                        } else {
-                            "$importBinding.$name"
-                        }
-                        // 替换整个属性值部分
-                        val attrStart = findAttributeStart(file, site.startOffset)
-                        val attrEnd = findAttributeEnd(file, site.endOffset)
-                        if (attrStart >= 0 && attrEnd > attrStart) {
-                            val attrText = document.getText(com.intellij.openapi.util.TextRange(attrStart, attrEnd))
-                            val newAttr = attrText.replaceFirst(
-                                Regex("""["'].*?["']"""),
-                                "{$access}"
-                            )
-                            document.replaceString(attrStart, attrEnd, newAttr)
-                        }
-                    } else {
-                        // 多个 class：className="foo bar" → className={clsx(styles.foo, styles.bar)}
-                        val accessParts = matched.map { name ->
-                            val kebab = NamingUtil.camelToKebab(name)
-                            if (kebab.contains("-")) {
-                                "$importBinding[\"$kebab\"]"
-                            } else {
-                                "$importBinding.$name"
-                            }
-                        }
-                        val clsxArgs = accessParts.joinToString(", ")
-                        val attrStart = findAttributeStart(file, site.startOffset)
-                        val attrEnd = findAttributeEnd(file, site.endOffset)
-                        if (attrStart >= 0 && attrEnd > attrStart) {
-                            val attrText = document.getText(com.intellij.openapi.util.TextRange(attrStart, attrEnd))
-                            val newAttr = attrText.replaceFirst(
-                                Regex("""["'].*?["']"""),
-                                "{clsx($clsxArgs)}"
-                            )
-                            document.replaceString(attrStart, attrEnd, newAttr)
-                        }
-                    }
+                    // className="foo" → className={styles.foo}
+                    // className="foo bar" → className={clsx(styles.foo, styles.bar)}
+                    val accessList = matched.map { classNameAccessExpr(it, importBinding) }
+                    val newExpr =
+                        if (accessList.size == 1) accessList.first()
+                        else "clsx(${accessList.joinToString(", ")})"
+
+                    applyClassNameReplacement(project, file, site, newExpr)
                 }
-                PsiDocumentManager.getInstance(project).commitDocument(document)
             }
+    }
+
+    /** 单个类名 → styles.foo / styles["foo-bar"] 访问表达式。 */
+    private fun classNameAccessExpr(name: String, binding: String): String {
+        val kebab = NamingUtil.camelToKebab(name)
+        return if (kebab.contains("-")) "$binding[\"$kebab\"]" else "$binding.$name"
+    }
+
+    /**
+     * 单点替换：优先纯 PSI —— 从 literal 向上找到所属 className 属性节点，
+     * 整体 replace 为 `className={expr}` 形式（dummy 属性节点由
+     * [CssModuleFileResolver.createJsxAttributePsi] 创建，与 import 注入同一模式）。
+     * 仅当 PSI 结构不完整找不到属性节点（text-fallback site）、或 PSI 替换抛异常时，
+     * 才退回 Document 替换（PSI 不完整场景的有意文档化例外）。
+     */
+    private fun applyClassNameReplacement(project: Project, file: PsiFile, site: ClassNameSite, newExpr: String) {
+        val attr = findOwningClassNameAttribute(site.literal)
+        if (attr != null) {
+            val replaced = runCatching {
+                val namePart = attr.text.substringBefore('=').trimEnd()
+                val newAttrText = "$namePart={$newExpr}"
+                val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newAttrText)
+                if (newAttr != null) {
+                    attr.replace(newAttr)
+                    true
+                } else false
+            }.getOrDefault(false)
+            if (replaced) return
+        }
+        replaceViaDocument(project, file, site, newExpr)
+    }
+
+    /**
+     * 从字面量向上（最多 10 层）找所属 className 属性节点。
+     * 只认 PSI 类型（[JSAttributeNameValuePair] / [XmlAttribute]），
+     * 不用文本匹配 —— 避免误抓「文本恰好以 className 开头」的祖先容器。
+     */
+    private fun findOwningClassNameAttribute(start: PsiElement): PsiElement? {
+        var cur: PsiElement? = start
+        for (i in 0..10) {
+            cur ?: return null
+            when (cur) {
+                is JSAttributeNameValuePair ->
+                    if (cur.name == "className" && cur.text.contains('=')) return cur
+                is XmlAttribute ->
+                    if (cur.name == "className" && cur.text.contains('=')) return cur
+            }
+            cur = cur.parent
+        }
+        return null
+    }
+
+    /**
+     * Document 兜底替换（仅用于 PSI 不完整的 text-fallback site）：
+     * 沿用旧的 findAttributeStart/End 字符扫描 + replaceFirst。
+     */
+    private fun replaceViaDocument(project: Project, file: PsiFile, site: ClassNameSite, newExpr: String) {
+        val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
+        runCatching {
+            val attrStart = findAttributeStart(file, site.startOffset)
+            val attrEnd = findAttributeEnd(file, site.endOffset)
+            if (attrStart < 0 || attrEnd <= attrStart) return@runCatching
+            val attrText = document.getText(com.intellij.openapi.util.TextRange(attrStart, attrEnd))
+            val newAttr = attrText.replaceFirst(Regex("""["'].*?["']"""), "{$newExpr}")
+            document.replaceString(attrStart, attrEnd, newAttr)
+        }
     }
 
     private fun findAttributeStart(file: PsiFile, literalStart: Int): Int {

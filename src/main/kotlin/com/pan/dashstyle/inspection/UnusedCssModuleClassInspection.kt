@@ -172,13 +172,25 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             if (!rule.isPhysical || !rule.isWritable) return
             val next = rule.nextSibling
             runCatching { rule.delete() }
-            if (next is PsiWhiteSpace && next.text.startsWith("\n") && next.text.length > 1) {
-                val doc = PsiDocumentManager.getInstance(project).getDocument(rule.containingFile)
-                if (doc != null) {
-                    val range = next.textRange
-                    runCatching { doc.replaceString(range.startOffset, range.endOffset, "\n") }
-                }
+            // 折叠被删规则留下的多余空行：纯 PSI 替换空白节点（不走 Document API，
+            // inspect.fix 由框架在写动作内调用 applyFix，PSI 写入天然原子）
+            if (next is PsiWhiteSpace && next.isValid && next.isWritable &&
+                next.text.startsWith("\n") && next.text.length > 1
+            ) {
+                val singleNewline = createWhitespaceNode(project, rule.containingFile, "\n") ?: return
+                runCatching { next.replace(singleNewline) }
             }
+        }
+
+        /**
+         * 用 PsiFileFactory 从 dummy 文件里取一个 [PsiWhiteSpace] 节点（与 createImportPsi 同一模式），
+         * 供 PSI 原子替换使用；CSS/SCSS/LESS 均适用（沿用目标文件自身 language）。
+         */
+        private fun createWhitespaceNode(project: Project, contextFile: PsiFile, text: String): PsiWhiteSpace? {
+            val ext = contextFile.virtualFile?.extension ?: "css"
+            val dummy = PsiFileFactory.getInstance(project)
+                .createFileFromText("_dummy.$ext", contextFile.language, text)
+            return PsiTreeUtil.findChildOfType(dummy, PsiWhiteSpace::class.java)
         }
     }
 

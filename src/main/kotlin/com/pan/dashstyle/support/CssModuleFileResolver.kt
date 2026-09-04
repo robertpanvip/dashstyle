@@ -1,6 +1,9 @@
 package com.pan.dashstyle.support
 
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
+import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
+import com.intellij.lang.xml.XMLLanguage
+import com.intellij.lang.Language
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
@@ -9,6 +12,7 @@ import com.intellij.psi.css.StylesheetFile
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 
@@ -260,6 +264,55 @@ object CssModuleFileResolver {
         val dummyFile = PsiFileFactory.getInstance(project)
             .createFileFromText("_dummy.$ext", sourceFile.language, "$importText\n")
         return PsiTreeUtil.findChildrenOfType(dummyFile, ES6ImportDeclaration::class.java).firstOrNull()
+    }
+
+    /**
+     * 从属性文本（如 `className={styles.foo}` / `className={clsx(a, b)}`）创建
+     * JSX 属性 PSI 节点，供 PSI 原子替换使用，与 [createImportPsi] 同一 dummy-file 模式。
+     * 兼容两类属性 PSI：
+     *  - WS-2025.3 TSX/JSX：e4x 的 JSXmlAttribute（继承 XmlAttribute，文本 `className="foo"`）；
+     *  - 部分版本：JSAttributeNameValuePair（文本 `className={expr}` 场景）。
+     * 优先沿用目标文件语言（tsx/jsx/ts/js）；.vue 等混合语言或解析失败时
+     * 回退按语言 ID 查找的 JS/JSX 方言解析片段。
+     */
+    internal fun createJsxAttributePsi(project: Project, contextFile: PsiFile, attrText: String): PsiElement? {
+        val snippet = "const __dashstyle_dummy__ = <div $attrText />;"
+        val ext = contextFile.virtualFile?.extension ?: "tsx"
+        val sameLang = runCatching {
+            PsiFileFactory.getInstance(project).createFileFromText("_dummy.$ext", contextFile.language, snippet)
+        }.getOrNull()
+        // .vue 等 XmlFile 的 language 解析不了 JSX 片段，直接走 JS 回退
+        if (sameLang != null && sameLang !is XmlFile) {
+            findAttributeElement(sameLang)?.let { return it }
+        }
+        return runCatching {
+            // 不直接引用具体方言类（不同 WS 版本类名不同），按 ID 运行时查找
+            val jsxLang = Language.findLanguageByID("JSX")
+                ?: Language.findLanguageByID("JavaScript")
+                ?: contextFile.language
+            val jsDummy = PsiFileFactory.getInstance(project)
+                .createFileFromText("_dummy.jsx", jsxLang, snippet)
+            findAttributeElement(jsDummy)
+        }.getOrNull()
+    }
+
+    /** 在 dummy 文件里找属性节点：先 JSAttributeNameValuePair，再 XmlAttribute（e4x JSXmlAttribute 也继承它）。 */
+    private fun findAttributeElement(dummy: PsiFile?): PsiElement? {
+        if (dummy == null) return null
+        return PsiTreeUtil.findChildrenOfType(dummy, JSAttributeNameValuePair::class.java).firstOrNull()
+            ?: PsiTreeUtil.findChildrenOfType(dummy, XmlAttribute::class.java).firstOrNull()
+    }
+
+    /**
+     * 从属性文本（如 `:class="$style.foo"`）创建 XML/Vue 属性 PSI 节点（[XmlAttribute]），
+     * 供 Vue 模板属性的 PSI 原子替换使用。
+     */
+    internal fun createXmlAttributePsi(project: Project, attrText: String): XmlAttribute? {
+        return runCatching {
+            val dummy = PsiFileFactory.getInstance(project)
+                .createFileFromText("_dummy.tag", XMLLanguage.INSTANCE, "<div $attrText/>")
+            PsiTreeUtil.findChildOfType(dummy, XmlAttribute::class.java)
+        }.getOrNull()
     }
 
     // ================================================================

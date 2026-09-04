@@ -19,6 +19,7 @@ import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.pan.dashstyle.support.CssModuleResolver.CssContainer
+import com.intellij.psi.xml.XmlAttribute
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -737,5 +738,143 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         // 原有代码不能被破坏
         Assert.assertTrue("原有 const x = 1 应保留", text.contains("const x = 1"))
         Assert.assertTrue("原有 react import 应保留", text.contains("import react from 'react'"))
+    }
+
+    // ========================================================================
+    // #17. RemoveRuleQuickFix 空白折叠验证：删除规则后多余的空行应被折叠，
+    //      且全程纯 PSI 写入（Document 与 PSI 文本必须一致 —— 原子性）。
+    // ========================================================================
+    @Test
+    fun `remove rule quick fix folds whitespace via pure PSI`() {
+        val cssFile = myFixture.addFileToProject(
+            "styles17.module.css",
+            ".used { color: red; }\n\n.unused { color: blue; }\n\n.other { color: green; }\n"
+        )
+        val unusedRule = PsiTreeUtil.findChildrenOfType(cssFile, CssRuleset::class.java)
+            .firstOrNull { it.text.startsWith(".unused") }
+        Assert.assertNotNull("找不到 .unused 规则", unusedRule)
+        val selectorList = unusedRule!!.selectorList
+        Assert.assertNotNull(".unused 规则没有 selectorList", selectorList)
+
+        val quickFix = UnusedCssModuleClassInspection.RemoveRuleQuickFix("unused")
+        val descriptor = com.intellij.codeInspection.InspectionManager.getInstance(project)
+            .createProblemDescriptor(
+                selectorList!!,
+                "unused",
+                quickFix,
+                com.intellij.codeInspection.ProblemHighlightType.LIKE_UNUSED_SYMBOL,
+                /* isOnTheFly */ true
+            )
+        WriteCommandAction.runWriteCommandAction(project) {
+            quickFix.applyFix(project, descriptor)
+        }
+
+        val text = cssFile.text
+        println("=== #17 resulting styles17.module.css ===")
+        println(text)
+        Assert.assertFalse(".unused 规则应被删除: ${text.replace("\n", "\\n")}", ".unused" in text)
+        Assert.assertTrue(".used 规则应保留", text.contains(".used { color: red; }"))
+        Assert.assertTrue(".other 规则应保留", text.contains(".other { color: green; }"))
+        Assert.assertFalse(
+            "被删规则留下的多余空行应被折叠（不应出现 3 个以上连续换行）: ${text.replace("\n", "\\n")}",
+            Regex("\n{4,}").containsMatchIn(text)
+        )
+        // 原子性：纯 PSI 写入后 Document 与 PSI 文本必须一致
+        com.intellij.psi.PsiDocumentManager.getInstance(project).commitAllDocuments()
+        val docText = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(cssFile)?.text
+        Assert.assertEquals("Document 与 PSI 文本应一致（原子写入）", text, docText)
+    }
+
+    // ========================================================================
+    // #18. JSX 属性 PSI 整体替换 + 兄弟节点删除（Convert Action / Inline Style
+    //      Intention 重构后的核心写入机制）：
+    //      a) className="foo" --replace--> className={clsx("foo", styles.bar)}
+    //      b) 同一 WriteAction 内删除兄弟 style 属性 + 前置空白
+    //      c) Document 与 PSI 文本一致（原子性）
+    // ========================================================================
+    @Test
+    fun `jsx className attribute replace and sibling style delete via pure PSI`() {
+        val tsx = myFixture.addFileToProject(
+            "App18.tsx",
+            """const A = () => (
+  <div style={{ color: 'red' }} className="foo">hi</div>
+)
+"""
+        )
+        // PROBE: 打印所有 Attribute 相关 PSI 的真实类型（诊断输出：WS-2025.3 为 e4x JSXmlAttribute，继承 XmlAttribute）
+        PsiTreeUtil.processElements(tsx) { el ->
+            if (el.javaClass.name.contains("Attribute", true)) {
+                println("PROBE18: ${el.javaClass.name} isXmlAttribute=${el is XmlAttribute} | text=<${el.text}>")
+            }
+            true
+        }
+        // 与 ConvertClassNameToCssModuleAction.findOwningClassNameAttribute 同款类型化查找
+        val classNameAttr = PsiTreeUtil.findChildrenOfType(tsx, XmlAttribute::class.java)
+            .firstOrNull { it.name == "className" }
+        Assert.assertNotNull("找不到 className 属性节点（XmlAttribute 类型化查找）", classNameAttr)
+        val styleAttr = PsiTreeUtil.findChildrenOfType(tsx, XmlAttribute::class.java)
+            .firstOrNull { it.name == "style" }
+        Assert.assertNotNull("找不到 style 属性节点（XmlAttribute 类型化查找）", styleAttr)
+        val newAttr = CssModuleFileResolver.createJsxAttributePsi(
+            project, tsx, """className={clsx("foo", styles.bar)}"""
+        )
+        Assert.assertNotNull("createJsxAttributePsi 应能创建 className={clsx(...)} 节点", newAttr)
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            classNameAttr!!.replace(newAttr!!)
+            val prevWs = styleAttr!!.prevSibling
+            if (prevWs is com.intellij.psi.PsiWhiteSpace && !prevWs.textContains('\n')) prevWs.delete()
+            styleAttr!!.delete()
+        }
+
+        val text = tsx.text
+        println("=== #18 resulting App18.tsx ===")
+        println(text)
+        Assert.assertTrue(
+            "className 应被整体替换: ${text.replace("\n", "\\n")}",
+            text.contains("""className={clsx("foo", styles.bar)}""")
+        )
+        Assert.assertFalse("style 属性应被删除", text.contains("style="))
+        Assert.assertFalse("旧字符串值不应残留", text.contains("\"foo\">"))
+        Assert.assertFalse("不应产生双空格属性", Regex("  +className").containsMatchIn(text.replace("\n", " ")))
+        com.intellij.psi.PsiDocumentManager.getInstance(project).commitAllDocuments()
+        val docText = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(tsx)?.text
+        Assert.assertEquals("Document 与 PSI 文本应一致（原子写入）", text, docText)
+    }
+
+    // ========================================================================
+    // #19. XmlAttribute PSI 替换机制（Inline Style Intention Vue 分支同款）：
+    //      沙箱里 .vue 不解析为 XmlFile（真实 WS 有 Vue 插件支持），因此用
+    //      .xml 文件验证 XmlAttribute 的 dummy 工厂 + replace 机制。
+    //      :style="{...}" --replace--> :class="$style.card"
+    // ========================================================================
+    @Test
+    fun `xml style attribute replaced via xml attribute psi`() {
+        val vue = myFixture.addFileToProject(
+            "App19.vue",
+            "<template>\n  <div :style=\"{ color: 'red' }\">hi</div>\n</template>\n"
+        )
+        println("PROBE19: .vue PsiFile 实际类型 = ${vue.javaClass.name}")
+        val xml = myFixture.addFileToProject(
+            "data19.xml",
+            "<root><div :style=\"{ color: 'red' }\">hi</div></root>"
+        )
+        val styleAttr = PsiTreeUtil.findChildrenOfType(xml, XmlAttribute::class.java)
+            .firstOrNull { it.name.endsWith("style") }
+        Assert.assertNotNull("找不到 :style 属性节点", styleAttr)
+        val newAttr = CssModuleFileResolver.createXmlAttributePsi(project, ":class=\"\$style.card\"")
+        Assert.assertNotNull("createXmlAttributePsi 应能创建 :class 节点", newAttr)
+
+        WriteCommandAction.runWriteCommandAction(project) { styleAttr!!.replace(newAttr!!) }
+
+        val text = xml.text
+        println("=== #19 resulting data19.xml ===")
+        println(text)
+        Assert.assertTrue(":class 属性应出现: ${text.replace("\n", "\\n")}", text.contains(":class=\"\$style.card\""))
+        Assert.assertFalse(":style 属性应被删除", text.contains(":style="))
+        Assert.assertTrue("root 结构应保留", text.contains("<root>") && text.contains("</root>"))
+        com.intellij.psi.PsiDocumentManager.getInstance(project).commitAllDocuments()
+        val docText = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(xml)?.text
+        Assert.assertEquals("Document 与 PSI 文本应一致（原子写入）", text, docText)
     }
 }
