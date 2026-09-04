@@ -1,10 +1,5 @@
 package com.pan.dashstyle.support
 
-import com.pan.dashstyle.reference.*
-import com.pan.dashstyle.inspection.*
-import com.pan.dashstyle.action.*
-import com.pan.dashstyle.annotator.*
-
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil

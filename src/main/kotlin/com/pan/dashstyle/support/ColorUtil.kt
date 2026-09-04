@@ -1,10 +1,5 @@
 package com.pan.dashstyle.support
 
-import com.pan.dashstyle.reference.*
-import com.pan.dashstyle.inspection.*
-import com.pan.dashstyle.action.*
-import com.pan.dashstyle.annotator.*
-
 /**
  * 颜色提取与归一化（支持 HEX3 / HEX6 / HEX8 / rgb(a) / hsl(a)）。
  * 从 Util.kt 拆出，职责聚焦于颜色处理。

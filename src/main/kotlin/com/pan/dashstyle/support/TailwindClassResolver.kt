@@ -1,10 +1,5 @@
 package com.pan.dashstyle.support
 
-import com.pan.dashstyle.reference.*
-import com.pan.dashstyle.inspection.*
-import com.pan.dashstyle.action.*
-import com.pan.dashstyle.annotator.*
-
 /**
  * Tailwind 类补全的纯逻辑层。
  *

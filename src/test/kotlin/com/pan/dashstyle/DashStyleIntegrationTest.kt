@@ -442,7 +442,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
         val container = CssContainer.VueStyleTag(modTag!!, "\$style", xmlFile)
         ApplicationManager.getApplication().runReadAction {
-            val (used, dynamic) = CssModuleResolver.scanUsages(xmlFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(xmlFile, container)
             Assert.assertFalse("hasDynamic should be false", dynamic)
             Assert.assertTrue("dot access flex should be used", "flex" in used)
             Assert.assertTrue("bracket flex-item should be used", "flex-item" in used)
@@ -471,7 +471,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
         val container = CssContainer.VueStyleTag(modTag!!, "\$style", xmlFile)
         ApplicationManager.getApplication().runReadAction {
-            val (_, dynamic) = CssModuleResolver.scanUsages(xmlFile, container)
+            val (_, dynamic) = CssModuleUsageScanner.scanUsages(xmlFile, container)
             Assert.assertTrue("dynamic var ref should set hasDynamic", dynamic)
         }
     }
@@ -533,7 +533,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         )
         ApplicationManager.getApplication().runReadAction {
             val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
-            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(tsxFile, container)
             Assert.assertFalse("shadowing 不应导致 hasDynamic", dynamic)
             Assert.assertTrue("shadowing styles.card 不应被计入 CSS Module 使用", "card" !in used)
         }
@@ -558,7 +558,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         )
         ApplicationManager.getApplication().runReadAction {
             val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
-            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(tsxFile, container)
             Assert.assertFalse("classes 不应有 hasDynamic", dynamic)
             Assert.assertTrue("classes.title 不应被计入 CSS Module", "title" !in used)
         }
@@ -583,7 +583,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         )
         ApplicationManager.getApplication().runReadAction {
             val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
-            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(tsxFile, container)
             Assert.assertFalse("css 不应有 hasDynamic", dynamic)
             Assert.assertTrue("css.header 不应被计入 CSS Module", "header" !in used)
         }
@@ -608,7 +608,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         )
         ApplicationManager.getApplication().runReadAction {
             val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
-            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(tsxFile, container)
             Assert.assertFalse("styled 不应有 hasDynamic", dynamic)
             Assert.assertTrue("styled.button 不应被计入 CSS Module", "button" !in used)
         }
@@ -635,7 +635,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
         val container = CssContainer.VueStyleTag(modTag!!, "\$style", xmlFile)
         ApplicationManager.getApplication().runReadAction {
-            val (used, dynamic) = CssModuleResolver.scanUsages(xmlFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(xmlFile, container)
             Assert.assertFalse("\${'$'}notstyle.bar 不应有 hasDynamic", dynamic)
             Assert.assertTrue("\${'$'}notstyle.bar 不应被计入 CSS Module", "bar" !in used)
         }
@@ -659,7 +659,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         )
         ApplicationManager.getApplication().runReadAction {
             val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
-            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(tsxFile, container)
             Assert.assertFalse("real usage hasDynamic 应为 false", dynamic)
             Assert.assertTrue("styles.used 应被识别为 CSS Module 使用", "used" in used)
         }
@@ -697,7 +697,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         )
         ApplicationManager.getApplication().runReadAction {
             val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
-            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            val (used, dynamic) = CssModuleUsageScanner.scanUsages(tsxFile, container)
             Assert.assertFalse("mixed 场景 hasDynamic 应为 false", dynamic)
             // real 在 Foo() 内被 local const styles 遮蔽，不应计入
             Assert.assertTrue("Foo 内 styles.real 被遮蔽，不应计入 CSS Module", "real" !in used)

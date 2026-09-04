@@ -1,10 +1,5 @@
 package com.pan.dashstyle.support
 
-import com.pan.dashstyle.reference.*
-import com.pan.dashstyle.inspection.*
-import com.pan.dashstyle.action.*
-import com.pan.dashstyle.annotator.*
-
 import com.intellij.lang.ecmascript6.psi.ES6ImportSpecifierAlias
 import com.intellij.lang.javascript.psi.JSCallExpression
 import com.intellij.lang.javascript.psi.JSVariable

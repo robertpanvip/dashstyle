@@ -1,10 +1,5 @@
 package com.pan.dashstyle.support
 
-import com.pan.dashstyle.reference.*
-import com.pan.dashstyle.inspection.*
-import com.pan.dashstyle.action.*
-import com.pan.dashstyle.annotator.*
-
 /**
  * CSS class 命名转换：camelCase ↔ kebab-case。
  * 从 Util.kt 拆出，职责聚焦于命名转换。

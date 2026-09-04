@@ -47,14 +47,14 @@ class StyleMemberAccessReference(
 
     override fun resolve(): PsiElement? {
         val name = element.referenceName ?: return null
-        return CssModuleResolver.resolveClassName(element, name)?.ruleset
+        return CssSelectorResolver.resolveClassName(element, name)?.ruleset
     }
 
     override fun isSoft(): Boolean = true
 
     override fun getVariants(): Array<Any> {
         val (container, _) = CssModuleResolver.resolveStylesContainer(element) ?: return emptyArray()
-        val classes = CssModuleResolver.collectAllClasses(container)
+        val classes = CssSelectorResolver.collectAllClasses(container)
         // member-access 用 camelCase（符合 JS 对象习惯），type text 展示 kebab
         return classes.map { it.kebabName }.distinct().sorted().map { kebab ->
             val camel = NamingUtil.kebabToCamel(kebab)

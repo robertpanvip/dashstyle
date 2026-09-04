@@ -125,7 +125,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
         val (moduleFile, isNewFile) = resolveModuleFile(project, file) ?: return
 
         // 4. 生成 import（如果缺失）
-        val importBinding = CssModuleResolver.ensureImportExists(project, file, moduleFile)
+        val importBinding = CssModuleFileResolver.ensureImportExists(project, file, moduleFile)
 
         // 5. 替换选中区域中的 className 字面量
         replaceClassNames(project, editor, file, selStart, selEnd, uniqueNames, importBinding)
@@ -241,7 +241,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
         val vf = sourceFile.virtualFile ?: return null
         val parent = vf.parent ?: return null
         val sourceExt = vf.extension?.lowercase()
-        val R = CssModuleResolver
+        val R = CssModuleFileResolver
 
         // 1. 已有 import 指向 module 文件
         R.findExistingModuleImport(sourceFile)?.let { return Pair(it.first, false) }

@@ -444,17 +444,17 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
         // Vue：优先同文件 <style module>，其次任何 <style>
         if (ext == "vue") {
-            val (styleTag, alias) = CssModuleResolver.findVueStyleModule(file) ?: return null
+            val (styleTag, alias) = CssModuleFileResolver.findVueStyleModule(file) ?: return null
             return VueStyleModuleTarget(styleTag, alias)
         }
 
         // React/TSX：已有 import 指向 module 文件
-        CssModuleResolver.findExistingModuleImport(file)?.let { (vf, alias) ->
+        CssModuleFileResolver.findExistingModuleImport(file)?.let { (vf, alias) ->
             return FileTarget(vf.path, alias)
         }
 
         // 兜底：同目录下同名 Xxx.module.* 文件
-        CssModuleResolver.findSameNameModuleFile(file)?.let { vf ->
+        CssModuleFileResolver.findSameNameModuleFile(file)?.let { vf ->
             return FileTarget(vf.path, "styles")
         }
 

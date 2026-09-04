@@ -205,7 +205,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
         // ================================================================
         // 不再使用 FIXED_BINDINGS 启发式扫描。
-        // 所有引用解析委托给 CssModuleResolver.scanUsages()，它通过 PSI resolve
+        // 所有引用解析委托给 CssModuleUsageScanner.scanUsages()，它通过 PSI resolve
         // 确认 qualifier 指向实际的 CssContainer，避免与同名本地变量混淆。
         // ================================================================
 
@@ -353,7 +353,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             val used = mutableSetOf<String>()
             var hasDynamic = false
 
-            // 通过 CssModuleResolver.scanUsages() 进行绑定感知扫描。
+            // 通过 CssModuleUsageScanner.scanUsages() 进行绑定感知扫描。
             // 每个 qualifier 都通过 PSI resolve 确认其指向的 CssContainer 与目标容器相同，
             // 不依赖名称匹配，避免与同名本地变量混淆。
             for ((srcPsi, bindingName) in references) {
@@ -361,7 +361,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 if (srcText.isEmpty()) continue
 
                 val container = resolveContainerForUsageScan(cssFile, srcPsi, bindingName) ?: continue
-                val (usages, isDynamic) = CssModuleResolver.scanUsages(srcPsi, container)
+                val (usages, isDynamic) = CssModuleUsageScanner.scanUsages(srcPsi, container)
                 used += usages
                 if (isDynamic) {
                     hasDynamic = true

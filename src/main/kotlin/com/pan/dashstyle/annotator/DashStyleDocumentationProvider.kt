@@ -138,7 +138,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
         val name = (`object` as? String) ?: (`object` as? com.intellij.codeInsight.lookup.LookupElement)?.lookupString
         if (element != null && name != null) {
             val resolved = resolveFromSite(element)
-                ?: CssModuleResolver.resolveClassName(element, name)
+                ?: CssSelectorResolver.resolveClassName(element, name)
             return resolved?.ruleset
         }
         return null
@@ -147,7 +147,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
     // --------------------------------------------------
     // internal helpers
     // --------------------------------------------------
-    private fun resolveFromSite(site: PsiElement): CssModuleResolver.ResolvedClass? {
+    private fun resolveFromSite(site: PsiElement): CssSelectorResolver.ResolvedClass? {
         val direct = site as? JSLiteralExpression
             ?: site as? JSReferenceExpression
             ?: run {
@@ -160,7 +160,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
             is JSReferenceExpression -> target.referenceName
             else -> null
         } ?: return null
-        return CssModuleResolver.resolveClassName(target, nameHint)
+        return CssSelectorResolver.resolveClassName(target, nameHint)
     }
 
     private fun formatRulesetDoc(selector: String, declarations: List<CssDeclaration>, footer: String? = null): String {

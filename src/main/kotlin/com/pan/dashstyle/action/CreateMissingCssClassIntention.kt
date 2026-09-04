@@ -44,7 +44,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         val (_, requestedName, containerMaybe, _) = locateContext(editor, file) ?: return false
         if (requestedName.isBlank()) return false
         if (containerMaybe != null) return true
-        return CssModuleResolver.findCandidateModuleFiles(file).isNotEmpty()
+        return CssModuleFileResolver.findCandidateModuleFiles(file).isNotEmpty()
     }
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
@@ -57,7 +57,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         // 1) 已有直接关联的 CSS Module 容器 → 直接 append
         val container = existingContainer ?: run {
             // 2) 没有容器 → 尝试找同目录候选 module 文件
-            val candidates = CssModuleResolver.findCandidateModuleFiles(file)
+            val candidates = CssModuleFileResolver.findCandidateModuleFiles(file)
             val chosen = when (candidates.size) {
                 0 -> {
                     Messages.showErrorDialog(project,
@@ -153,7 +153,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
             if (idx != null && idx.indexExpression == literal) {
                 val name = literal.stringValue ?: return null
                 val (container, _) = CssModuleResolver.resolveQualifier(idx.qualifier ?: return null, file) ?: (null to "")
-                val exist = if (container == null) null else CssModuleResolver.resolveClassName(literal, name)
+                val exist = if (container == null) null else CssSelectorResolver.resolveClassName(literal, name)
                 if (exist != null) return null
                 return Context(literal, name, container, false)
             }
@@ -165,7 +165,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         if (refExpr != null && refExpr.qualifier != null && refExpr.referenceName != null) {
             val name = refExpr.referenceName!!
             val (container, _) = CssModuleResolver.resolveQualifier(refExpr.qualifier!!, file) ?: (null to "")
-            val exist = if (container == null) null else CssModuleResolver.resolveClassName(refExpr, name)
+            val exist = if (container == null) null else CssSelectorResolver.resolveClassName(refExpr, name)
             if (exist != null) return null
             return Context(refExpr, name, container, false)
         }
