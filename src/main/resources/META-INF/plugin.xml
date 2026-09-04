@@ -284,6 +284,10 @@
                 text="Convert className to CSS Module"
                 description="Convert className string literals to CSS Module references">
             <add-to-group group-id="RefactoringMenu" anchor="last"/>
+            <!-- 右键编辑器 → Refactor 子菜单，保证在 TSX/JSX 里一定能找到 -->
+            <add-to-group group-id="RefactoringPopup" anchor="last"/>
+            <!-- 编辑器右键直接可见（挂到 Refactor 之前），方便 JSX 下快速触发 -->
+            <add-to-group group-id="EditorPopupMenu" relative-to-action="RefactoringPopup" anchor="before"/>
         </action>
     </actions>
 </idea-plugin>
