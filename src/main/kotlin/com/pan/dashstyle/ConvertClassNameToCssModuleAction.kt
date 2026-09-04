@@ -48,10 +48,10 @@ class ConvertClassNameToCssModuleAction : AnAction(
         val file = e.getData(CommonDataKeys.PSI_FILE)
 
         val ext = file?.virtualFile?.extension?.lowercase()
-        val isJsx = ext in listOf("tsx", "jsx", "ts", "js")
+        val isTsx = ext == "tsx"
         val hasSelection = editor?.selectionModel?.hasSelection() == true
 
-        e.presentation.isEnabledAndVisible = project != null && isJsx && hasSelection
+        e.presentation.isEnabledAndVisible = project != null && isTsx && hasSelection
         e.presentation.text = "Convert className to CSS Module"
     }
 
@@ -203,6 +203,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
     private fun resolveModuleFile(project: Project, sourceFile: PsiFile): VirtualFile? {
         val vf = sourceFile.virtualFile ?: return null
         val parent = vf.parent ?: return null
+        val sourceExt = vf.extension?.lowercase()
 
         // 1. 查找同目录下已有的 *.module.* 文件
         val existingModules = parent.children.filter { child ->
@@ -238,11 +239,11 @@ class ConvertClassNameToCssModuleAction : AnAction(
                         chosen
                     }.getOrElse {
                         // 重命名失败，直接创建新文件
-                        createModuleFile(project, parent, baseName)
+                        createModuleFile(project, parent, baseName, sourceExt)
                     }
                 } else {
                     // 2b. 直接创建新的 module 文件
-                    return createModuleFile(project, parent, baseName)
+                    return createModuleFile(project, parent, baseName, sourceExt)
                 }
             }
             1 -> {
@@ -266,8 +267,14 @@ class ConvertClassNameToCssModuleAction : AnAction(
         }
     }
 
-    private fun createModuleFile(project: Project, parent: VirtualFile, baseName: String): VirtualFile? {
-        val newName = "$baseName.module.css"
+    private fun createModuleFile(project: Project, parent: VirtualFile, baseName: String, sourceExt: String? = null): VirtualFile? {
+        val ext = when (sourceExt?.lowercase()) {
+            "less" -> ".module.less"
+            "scss" -> ".module.scss"
+            "sass" -> ".module.sass"
+            else -> ".module.css"
+        }
+        val newName = "$baseName$ext"
         return runCatching {
             parent.createChildData(this, newName)
         }.getOrNull()
