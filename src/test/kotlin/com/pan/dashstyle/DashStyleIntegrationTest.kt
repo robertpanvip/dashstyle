@@ -877,4 +877,157 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         val docText = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(xml)?.text
         Assert.assertEquals("Document 与 PSI 文本应一致（原子写入）", text, docText)
     }
+
+    // ========================================================================
+    // #20. 框架探测：区分 Vue 的 TSX / React 的 TSX ——
+    //      文件内 import 证据优先（vue 系 / react 系），都没有则向上找
+    //      package.json 按 dependencies 判断；.vue 文件直接判 VUE。
+    // ========================================================================
+    @Test
+    fun `framework detection distinguishes vue tsx react tsx and package json`() {
+        val reactTsx = myFixture.addFileToProject(
+            "R20.tsx",
+            "import { useState } from 'react'\nexport const A = () => <div style={{color:'red'}}>x</div>\n"
+        )
+        Assert.assertEquals(
+            "from 'react' 应判定 REACT",
+            InlineStyleToCssModuleIntention.Framework.REACT,
+            InlineStyleToCssModuleIntention.detectFramework(reactTsx)
+        )
+
+        val vueTsx = myFixture.addFileToProject(
+            "V20.tsx",
+            "import { defineComponent } from 'vue'\nexport default defineComponent({ setup: () => () => <div style={{color:'red'}}>x</div> })\n"
+        )
+        Assert.assertEquals(
+            "from 'vue' 应判定 VUE",
+            InlineStyleToCssModuleIntention.Framework.VUE,
+            InlineStyleToCssModuleIntention.detectFramework(vueTsx)
+        )
+
+        // 无文件证据 → package.json 兜底
+        myFixture.addFileToProject("pkgVue/package.json", """{"name":"a","dependencies":{"vue":"^3.4.0"}}""")
+        val plainVue = myFixture.addFileToProject(
+            "pkgVue/P20.tsx", "export const A = () => <div style={{color:'red'}}>x</div>\n"
+        )
+        Assert.assertEquals(
+            "package.json 只有 vue 应判定 VUE",
+            InlineStyleToCssModuleIntention.Framework.VUE,
+            InlineStyleToCssModuleIntention.detectFramework(plainVue)
+        )
+
+        myFixture.addFileToProject("pkgReact/package.json", """{"name":"b","dependencies":{"react":"^18.2.0","react-dom":"^18.2.0"}}""")
+        val plainReact = myFixture.addFileToProject(
+            "pkgReact/P21.tsx", "export const A = () => <div style={{color:'red'}}>x</div>\n"
+        )
+        Assert.assertEquals(
+            "package.json 只有 react 应判定 REACT",
+            InlineStyleToCssModuleIntention.Framework.REACT,
+            InlineStyleToCssModuleIntention.detectFramework(plainReact)
+        )
+
+        val vueFile = myFixture.addFileToProject(
+            "S20.vue", "<template><div :style=\"{color:'red'}\">x</div></template>"
+        )
+        Assert.assertEquals(
+            ".vue 文件应直接判定 VUE",
+            InlineStyleToCssModuleIntention.Framework.VUE,
+            InlineStyleToCssModuleIntention.detectFramework(vueFile)
+        )
+    }
+
+    // ========================================================================
+    // #21. React TSX：已有 className 的合并 ——
+    //      a) findClassAttr 必须能找到已有 className（e4x 类型兼容，旧实现只搜
+    //         JSAttributeNameValuePair 导致 merge 永不触发、生成重复 className）；
+    //      b) 未安装 clsx → 模板字符串合并（不生成 clsx 调用）；
+    //      c) style 属性删除、无双 className。
+    // ========================================================================
+    @Test
+    fun `react inline style merge into existing className uses template literal`() {
+        val tsx = myFixture.addFileToProject(
+            "M21.tsx",
+            "import { useState } from 'react'\nconst A = () => (\n  <div style={{ color: 'red' }} className=\"foo\">hi</div>\n)\n"
+        )
+        val intention = InlineStyleToCssModuleIntention()
+        val styleAttr = PsiTreeUtil.findChildrenOfType(tsx, XmlAttribute::class.java)
+            .firstOrNull { it.name == "style" }
+        Assert.assertNotNull("找不到 style 属性", styleAttr)
+
+        val found = intention.findClassAttr(styleAttr!!.parent, "className")
+        Assert.assertNotNull("findClassAttr 应找到已有 className（e4x 兼容，旧实现的 bug）", found)
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            intention.mergeIntoExistingClass(
+                found!!, "styles.bar", styleAttr, InlineStyleToCssModuleIntention.Framework.REACT
+            )
+        }
+
+        val text = tsx.text
+        println("=== #21 resulting M21.tsx ===")
+        println(text)
+        Assert.assertTrue(
+            "无 clsx 时应合并为模板字符串: ${text.replace("\n", "\\n")}",
+            text.contains("className={`foo \${styles.bar}`}")
+        )
+        Assert.assertFalse("style 属性应删除", text.contains("style="))
+        Assert.assertFalse("未安装 clsx 不应生成 clsx 调用", text.contains("clsx"))
+        Assert.assertEquals("className 只应出现一次（不能有重复属性）", 1, Regex("className=").findAll(text).count())
+    }
+
+    // ========================================================================
+    // #22. Vue TSX：class（Vue JSX 惯例）而非 className ——
+    //      a) 已有 class → 数组语法合并 class={[old, new]}；
+    //      b) 无已有 class → handleJsxReplacement 端到端：style 替换为 class={styles.card}。
+    // ========================================================================
+    @Test
+    fun `vue tsx inline style uses class attribute and array merge`() {
+        val tsx = myFixture.addFileToProject(
+            "M22.tsx",
+            "import { defineComponent } from 'vue'\nconst A = () => (\n  <div style={{ color: 'red' }} class=\"foo\">hi</div>\n)\n"
+        )
+        val intention = InlineStyleToCssModuleIntention()
+        val styleAttr = PsiTreeUtil.findChildrenOfType(tsx, XmlAttribute::class.java)
+            .firstOrNull { it.name == "style" }
+        Assert.assertNotNull(styleAttr)
+
+        val classAttr = intention.findClassAttr(styleAttr!!.parent, "class")
+        Assert.assertNotNull("findClassAttr 应找到已有 class（Vue JSX 惯例）", classAttr)
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            intention.mergeIntoExistingClass(
+                classAttr!!, "styles.bar", styleAttr, InlineStyleToCssModuleIntention.Framework.VUE
+            )
+        }
+        val text = tsx.text
+        println("=== #22 merge resulting M22.tsx ===")
+        println(text)
+        Assert.assertTrue(
+            "Vue JSX 应合并为数组语法: ${text.replace("\n", "\\n")}",
+            text.contains("""class={["foo", styles.bar]}""")
+        )
+        Assert.assertFalse("style 属性应删除", text.contains("style="))
+
+        // 端到端：无已有 class 的 Vue tsx → style 整体替换为 class={styles.card}
+        val tsx2 = myFixture.addFileToProject(
+            "M22b.tsx",
+            "import { defineComponent } from 'vue'\nconst B = () => (\n  <div style={{ color: 'red' }}>hi</div>\n)\n"
+        )
+        val s2 = PsiTreeUtil.findChildrenOfType(tsx2, XmlAttribute::class.java).firstOrNull { it.name == "style" }
+        Assert.assertNotNull(s2)
+        WriteCommandAction.runWriteCommandAction(project) {
+            intention.handleJsxReplacement(
+                project, tsx2, s2!!, "styles.card", InlineStyleToCssModuleIntention.Framework.VUE
+            )
+        }
+        val text2 = tsx2.text
+        println("=== #22 replace resulting M22b.tsx ===")
+        println(text2)
+        Assert.assertTrue(
+            "Vue tsx 应生成 class= 而非 className=: ${text2.replace("\n", "\\n")}",
+            text2.contains("class={styles.card}")
+        )
+        Assert.assertFalse("不应生成 React 的 className", text2.contains("className"))
+        Assert.assertFalse("style 属性应删除", text2.contains("style="))
+    }
 }

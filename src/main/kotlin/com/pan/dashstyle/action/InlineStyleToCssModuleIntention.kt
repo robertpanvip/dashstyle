@@ -33,11 +33,65 @@ import com.intellij.openapi.diagnostic.Logger
 @Suppress("UnstableApiUsage")
 class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
+    /** 当前文件所属的前端框架（决定 JSX 属性名 class/className 与合并策略）。 */
+    internal enum class Framework { VUE, REACT, UNKNOWN }
+
     companion object {
         private val LOG = Logger.getInstance(InlineStyleToCssModuleIntention::class.java)
         private val VALID_JSX_STYLE_RE = Regex("""^\s*style\s*=\s*""")
         private val VALID_VUE_STYLE_RE = Regex("""^\s*(?:v-bind:)?style\s*=\s*""")
         private val CLASS_NAME_RE = Regex("""^[_a-zA-Z][_a-zA-Z0-9-]*$""")
+
+        // 文件内证据：import 来源 / 框架标志性 API
+        private val VUE_EVIDENCE_RE = Regex(
+            """\bfrom\s+['"](?:vue|@vue/[^'"]+|vue-router|pinia|vuex)['"]|\bdefineComponent\s*\(|\buseCssModule\s*\("""
+        )
+        private val REACT_EVIDENCE_RE = Regex(
+            """\bfrom\s+['"](?:react|react-dom|react-router|react-router-dom|next/[^'"]+)['"]|\bReact\.Component\b"""
+        )
+        private val CLSX_IMPORT_RE = Regex("""\bfrom\s+['"](?:clsx|classnames)['"]""")
+        private val PACKAGE_JSON_VUE_RE = Regex(""""vue"\s*:""")
+        private val PACKAGE_JSON_REACT_RE = Regex(""""react"\s*:""")
+
+        /**
+         * 框架探测（区分 Vue 的 TSX 和 React 的 TSX）：
+         *  1. .vue 文件 → VUE；
+         *  2. 文件内证据（import vue 系 / import react 系）——vue 优先，
+         *     混用 react 类型工具的场景以组件框架为准；
+         *  3. 都没有 → 从文件目录向上找 package.json 按 dependencies 判断；
+         *     当前 package.json 两者都没有（或都有，多为 monorepo 根）→ 继续向上。
+         */
+        internal fun detectFramework(file: PsiFile): Framework {
+            if (file.virtualFile?.extension?.lowercase() == "vue") return Framework.VUE
+            val text = file.text
+            if (VUE_EVIDENCE_RE.containsMatchIn(text)) return Framework.VUE
+            if (REACT_EVIDENCE_RE.containsMatchIn(text)) return Framework.REACT
+            return detectFrameworkFromPackageJson(file)
+        }
+
+        private fun detectFrameworkFromPackageJson(file: PsiFile): Framework {
+            var dir = file.virtualFile?.parent ?: return Framework.UNKNOWN
+            var depth = 0
+            while (depth < 20) {
+                val pkg = dir.findChild("package.json")
+                if (pkg != null && pkg.isValid && !pkg.isDirectory) {
+                    val text = runCatching { String(pkg.contentsToByteArray(), Charsets.UTF_8) }.getOrNull()
+                    if (text != null) {
+                        val result = when {
+                            PACKAGE_JSON_VUE_RE.containsMatchIn(text) &&
+                                !PACKAGE_JSON_REACT_RE.containsMatchIn(text) -> Framework.VUE
+                            PACKAGE_JSON_REACT_RE.containsMatchIn(text) &&
+                                !PACKAGE_JSON_VUE_RE.containsMatchIn(text) -> Framework.REACT
+                            else -> null
+                        }
+                        if (result != null) return result
+                    }
+                }
+                dir = dir.parent ?: return Framework.UNKNOWN
+                depth++
+            }
+            return Framework.UNKNOWN
+        }
     }
 
     override fun getText(): String = "Extract inline style to CSS Module..."
@@ -430,7 +484,7 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     }
 
     // ================================================================
-    // 把原 style={...} 替换成 className=... / :class=...
+    // 把原 style={...} 替换成 class / className
     // （纯 PSI：属性节点整体 replace，由 CssModuleFileResolver 的 dummy-file
     //  工厂创建新节点；仅 PSI 替换失败时才退回 Document 兜底）
     // ================================================================
@@ -453,26 +507,115 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
         when (effectiveLang) {
             StyleAttrLoc.Lang.JSX_TSX -> {
-                val parent = loc.attrPsi.parent
-                val existingClassName = findClassNameAttr(parent)
-                if (existingClassName != null) {
-                    // 合并到已有 className 中，然后删除 style 属性
-                    mergeIntoExistingClassName(existingClassName, access, loc.attrPsi)
-                    return
-                }
-                // 没有已有 className，直接替换 style 为 className
-                if (!replaceAttrPsi(project, file, loc.attrPsi, "className={$access}", xml = false)) {
-                    replaceAttrViaDocument(project, file, loc.attrPsi, "className={$access}")
-                }
+                // React 的 tsx / Vue 的 tsx：按框架探测决定 class vs className
+                handleJsxReplacement(project, file, loc.attrPsi, access, detectFramework(file))
             }
             StyleAttrLoc.Lang.VUE -> {
-                // Vue 中 class 和 :class 可以共存，直接替换 :style 为 :class
+                // .vue 内 <script lang="tsx"> 的 JSX 块：jsxAttribute 命中 → 同样走 Vue JSX 语法
+                if (loc.jsxAttribute != null && ext == "vue") {
+                    handleJsxReplacement(project, file, loc.attrPsi, access, Framework.VUE)
+                    return
+                }
+                // Vue 模板属性：class 和 :class 可以共存，直接替换 :style 为 :class
                 if (!replaceAttrPsi(project, file, loc.attrPsi, ":class=\"$access\"", xml = true)) {
                     replaceAttrViaDocument(project, file, loc.attrPsi, ":class=\"$access\"")
                 }
             }
         }
     }
+
+    /**
+     * JSX 路径（React 的 tsx / Vue 的 tsx / .vue 内 JSX 块）：
+     *  - React → className（React JSX 惯例）；
+     *  - Vue → class（Vue JSX 惯例，className 不生效）；
+     *  - UNKNOWN → 保守用 className（与旧行为一致）。
+     * 已有 class 属性 → 合并（见 [mergeIntoExistingClass]）；没有 → style 属性整体替换。
+     */
+    internal fun handleJsxReplacement(
+        project: Project,
+        file: PsiFile,
+        styleAttr: PsiElement,
+        access: String,
+        framework: Framework
+    ) {
+        val classAttrName = if (framework == Framework.VUE) "class" else "className"
+        val existingClass = findClassAttr(styleAttr.parent, classAttrName)
+        if (existingClass != null) {
+            // 合并到已有 class 属性中，然后删除 style 属性
+            mergeIntoExistingClass(existingClass, access, styleAttr, framework)
+            return
+        }
+        val newAttrText = "$classAttrName={$access}"
+        if (!replaceAttrPsi(project, file, styleAttr, newAttrText, xml = false)) {
+            replaceAttrViaDocument(project, file, styleAttr, newAttrText)
+        }
+    }
+
+    /**
+     * 在父元素中查找已有的 class / className 属性。
+     * 双类型兼容：WS-2025.3 的 JSX 属性是 e4x JSXmlAttribute（继承 XmlAttribute），
+     * 部分版本是 JSAttributeNameValuePair —— 只搜后者会导致 merge 永不触发、
+     * style 被替换成第二个 className（与原有 className 重复，JSX 编译报错）。
+     */
+    internal fun findClassAttr(parent: PsiElement, attrName: String): PsiElement? {
+        return PsiTreeUtil.findChildrenOfType(parent, XmlAttribute::class.java)
+            .firstOrNull { it !== parent && it.name == attrName }
+            ?: PsiTreeUtil.findChildrenOfType(parent, JSAttributeNameValuePair::class.java)
+                .firstOrNull { it !== parent && it.name == attrName }
+    }
+
+    /**
+     * 将新的 class 访问表达式合并到已有 class 属性中，然后删除 style 属性。
+     * 纯 PSI：先整体 replace class 节点，再 delete style 节点及其前置空白。
+     * 按框架选择合并策略（避免盲目生成 clsx —— 未安装 clsx 的项目会编译错误）：
+     *  - Vue JSX：class={[old, new]}（数组语法，Vue 原生支持，无第三方依赖）；
+     *  - React 已 import clsx/classnames：className={clsx(old, new)}；
+     *  - React 无 clsx：className={`old ${new}`} 模板字符串（纯字符串字面量直接平铺）。
+     */
+    internal fun mergeIntoExistingClass(
+        existingClass: PsiElement,
+        newAccess: String,
+        styleAttr: PsiElement,
+        framework: Framework
+    ) {
+        runCatching {
+            val existingText = existingClass.text
+            val eqIdx = existingText.indexOf('=')
+            if (eqIdx < 0) return@runCatching
+            var valuePart = existingText.substring(eqIdx + 1).trim()
+            // class={expr} → 取 expr 本体，避免生成 {clsx({expr}, ...)} 双层花括号
+            if (valuePart.startsWith("{") && valuePart.endsWith("}")) {
+                valuePart = valuePart.substring(1, valuePart.length - 1).trim()
+            }
+            val classAttrName = if (framework == Framework.VUE) "class" else "className"
+            val newClassText = when {
+                framework == Framework.VUE ->
+                    "$classAttrName={[$valuePart, $newAccess]}"
+                CLSX_IMPORT_RE.containsMatchIn(existingClass.containingFile?.text.orEmpty()) ->
+                    "$classAttrName={clsx($valuePart, $newAccess)}"
+                isPlainJsStringLiteral(valuePart) -> {
+                    // 字符串字面量（"foo"）直接平铺进模板，避免 ${"foo"} 的丑陋内插
+                    val raw = valuePart.substring(1, valuePart.length - 1)
+                    "$classAttrName={`$raw \${$newAccess}`}"
+                }
+                else ->
+                    "$classAttrName={\${$valuePart} \${$newAccess}}"
+            }
+            val project = existingClass.project
+            val file = existingClass.containingFile ?: return@runCatching
+            val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newClassText)
+            if (newAttr != null) {
+                existingClass.replace(newAttr)
+            }
+            // 删除 style 属性及其前置空白（不含换行，保留行结构）
+            val prevWs = styleAttr.prevSibling
+            if (prevWs is PsiWhiteSpace && !prevWs.textContains('\n')) prevWs.delete()
+            styleAttr.delete()
+        }.onFailure { LOG.warn("mergeIntoExistingClass failed", it) }
+    }
+
+    private fun isPlainJsStringLiteral(s: String): Boolean =
+        s.length >= 2 && ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'")))
 
     /**
      * 纯 PSI 属性替换：Vue 模板（xml = true）走 XML dummy 工厂；
@@ -507,49 +650,5 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             val range = attrPsi.textRange
             document.replaceString(range.startOffset, range.endOffset, newAttrText)
         }
-    }
-
-    /**
-     * 在父元素中查找已有的 className 属性。
-     * 通过 PSI 类型 JSAttributeNameValuePair 直接过滤，不再使用 javaClass.name 匹配。
-     */
-    private fun findClassNameAttr(parent: PsiElement): PsiElement? {
-        return PsiTreeUtil.findChildrenOfType(parent, JSAttributeNameValuePair::class.java)
-            .firstOrNull { it != parent && it.name == "className" }
-    }
-
-    /**
-     * 将新的 class 访问表达式合并到已有的 className 属性中，然后删除 style 属性。
-     * 纯 PSI：先整体 replace className 节点，再 delete style 节点及其前置空白，
-     * 无需像 Document 版本那样手工换算替换后的 offset 漂移。
-     * 处理 className="foo" → className={clsx("foo", styles.newClass)} 和
-     * className={expr} → className={clsx(expr, styles.newClass)} 两种形式。
-     */
-    private fun mergeIntoExistingClassName(
-        existingClassName: PsiElement,
-        newAccess: String,
-        styleAttr: PsiElement
-    ) {
-        runCatching {
-            val existingText = existingClassName.text
-            val eqIdx = existingText.indexOf('=')
-            if (eqIdx < 0) return@runCatching
-            var valuePart = existingText.substring(eqIdx + 1).trim()
-            // className={expr} → 取 expr 本体，避免生成 clsx({expr}, ...) 双层花括号
-            if (valuePart.startsWith("{") && valuePart.endsWith("}")) {
-                valuePart = valuePart.substring(1, valuePart.length - 1).trim()
-            }
-            val newClassNameText = "className={clsx($valuePart, $newAccess)}"
-            val project = existingClassName.project
-            val file = existingClassName.containingFile ?: return@runCatching
-            val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newClassNameText)
-            if (newAttr != null) {
-                existingClassName.replace(newAttr)
-            }
-            // 删除 style 属性及其前置空白（不含换行，保留行结构）
-            val prevWs = styleAttr.prevSibling
-            if (prevWs is PsiWhiteSpace && !prevWs.textContains('\n')) prevWs.delete()
-            styleAttr.delete()
-        }.onFailure { LOG.warn("mergeIntoExistingClassName failed", it) }
     }
 }
