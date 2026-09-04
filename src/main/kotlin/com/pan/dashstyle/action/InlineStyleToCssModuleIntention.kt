@@ -24,6 +24,7 @@ import com.intellij.psi.xml.XmlTag
 import com.intellij.lang.javascript.psi.JSObjectLiteralExpression
 import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
+import com.intellij.lang.ecmascript6.psi.ES6ImportSpecifier
 import com.intellij.lang.css.CSSLanguage
 import com.intellij.lang.Language
 import com.intellij.openapi.diagnostic.Logger
@@ -143,11 +144,40 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             return FrameworkDetection(Framework.UNKNOWN, null)
         }
 
-        /** clsx 可用性：PSI 遍历 import（不全文正则）。 */
-        internal fun hasClsxImport(file: PsiFile): Boolean =
-            PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java).any { imp ->
-                importedModuleName(imp) in setOf("clsx", "classnames")
+        /** 提供 clsx 语义的包（默认/命名导出均可直接调用）。 */
+        private val CLSX_MODULES = setOf("clsx", "classnames")
+
+        /**
+         * clsx 可用性 = 能解析出可直接调用的本地绑定名。
+         * （仅模块被 import 不够 —— 副作用导入 `import 'clsx'` / namespace 导入
+         * `import * as x` 都不能生成 `x(...)` 调用。）
+         */
+        internal fun hasClsxImport(file: PsiFile): Boolean = clsxLocalName(file) != null
+
+        /**
+         * PSI 解析 clsx/classnames 的「本地调用名」：
+         *  - `import cn from 'clsx'` → cn（不能硬编码 clsx，否则 cn 场景生成未定义标识符）
+         *  - `import classNames from 'classnames'` → classNames
+         *  - `import { clsx } from 'clsx'` / `import { clsx as c } from 'clsx'` → clsx / c
+         * 优先级：名为 clsx 的命名导入 > 默认导入 > 其它命名导入；
+         * namespace（* as）与副作用导入返回 null（调用方回退模板字符串策略）。
+         */
+        internal fun clsxLocalName(file: PsiFile): String? {
+            for (imp in PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)) {
+                if (importedModuleName(imp) !in CLSX_MODULES) continue
+                val named = imp.importSpecifiers.mapNotNull { specifierLocalName(it) }
+                    .filter { it.isNotBlank() }
+                named.firstOrNull { it == "clsx" }?.let { return it }
+                imp.importedBindings.firstOrNull { !it.isNamespaceImport }
+                    ?.name?.takeIf { it.isNotBlank() }?.let { return it }
+                named.firstOrNull()?.let { return it }
             }
+            return null
+        }
+
+        /** 命名导入本地名：`{ clsx as c }` 的名字在 alias 节点上（specifier.name 为 null），优先取 alias。 */
+        private fun specifierLocalName(spec: ES6ImportSpecifier): String? =
+            spec.alias?.name?.takeIf { it.isNotBlank() } ?: spec.name
     }
 
     override fun getText(): String = "Extract inline style to CSS Module..."
@@ -572,12 +602,66 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                     handleJsxReplacement(project, file, loc.attrPsi, access, Framework.VUE)
                     return
                 }
-                // Vue 模板属性：class 和 :class 可以共存，直接替换 :style 为 :class
-                if (!replaceAttrPsi(project, file, loc.attrPsi, ":class=\"$access\"", xml = true)) {
-                    replaceAttrViaDocument(project, file, loc.attrPsi, ":class=\"$access\"")
-                }
+                // Vue 模板属性：先处理已有 :class 的合并（避免重复 :class）
+                handleVueTemplateReplacement(project, file, loc.attrPsi, access)
             }
         }
+    }
+
+    /**
+     * Vue 模板（XmlAttribute）路径：`:style` → `:class`。
+     *  - 已有 `:class`/`v-bind:class` → **必须合并**：直接替换会产生第二个 `:class`，
+     *    Vue 编译器报 Duplicate attribute；合并为 `:class="[old, $style.x]"`
+     *    （Vue 数组绑定原生接受 字符串/对象/数组 混排并递归展平）。
+     *  - 只有静态 `class="foo"` → 生成新 `:class` 与之共存（Vue 自动合并静态+动态 class）。
+     */
+    internal fun handleVueTemplateReplacement(
+        project: Project,
+        file: PsiFile,
+        styleAttr: PsiElement,
+        access: String
+    ): Boolean {
+        val tag = styleAttr.parent
+        val existingBind = tag?.children
+            ?.asSequence()
+            ?.filterIsInstance<XmlAttribute>()
+            ?.firstOrNull { it.name == ":class" || it.name == "v-bind:class" }
+        if (existingBind != null && mergeVueTemplateClass(existingBind, access)) {
+            deleteAttrWithLeadingWs(styleAttr)
+            return true
+        }
+        val newAttrText = ":class=\"$access\""
+        return if (replaceAttrPsi(project, file, styleAttr, newAttrText, xml = true)) {
+            true
+        } else {
+            replaceAttrViaDocument(project, file, styleAttr, newAttrText)
+            false
+        }
+    }
+
+    /**
+     * Vue 模板 `:class` 值合并：
+     *  - `dyn` / `{active: x}` 等任意表达式 → `[{...}, $style.x]`；
+     *  - 已是 `[a, b]` 数组 → 平铺 `[a, b, $style.x]`；
+     *  - 空值 → 直接 `$style.x`。
+     * 纯 PSI：Xml 工厂造新节点整体 replace，成功返回 true。
+     */
+    private fun mergeVueTemplateClass(existing: XmlAttribute, access: String): Boolean {
+        val value = existing.value
+            ?: existing.valueElement?.text?.trim('"', '\'')
+            ?: return false
+        val newValue = when {
+            value.isBlank() -> access
+            isWrappedArrayLiteral(value) -> {
+                val inner = value.substring(1, value.length - 1).trim()
+                if (inner.isEmpty()) access else "[$inner, $access]"
+            }
+            else -> "[$value, $access]"
+        }
+        val newAttr = CssModuleFileResolver.createXmlAttributePsi(
+            existing.project, ":class=\"$newValue\""
+        ) ?: return false
+        return runCatching { existing.replace(newAttr); true }.getOrDefault(false)
     }
 
     /**
@@ -585,7 +669,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
      *  - React → className（React JSX 惯例）；
      *  - Vue → class（Vue JSX 惯例，className 不生效）；
      *  - UNKNOWN → 保守用 className（与旧行为一致）。
-     * 已有 class 属性 → 合并（见 [mergeIntoExistingClass]）；没有 → style 属性整体替换。
+     * 已有 class 属性 → 合并（见 [mergeIntoExistingClass]）；没有（或合并失败，
+     * 例如属性节点创建异常）→ style 属性整体替换，保证不丢样式信息。
      */
     internal fun handleJsxReplacement(
         project: Project,
@@ -596,9 +681,7 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     ) {
         val classAttrName = if (framework == Framework.VUE) "class" else "className"
         val existingClass = findClassAttr(styleAttr.parent, classAttrName)
-        if (existingClass != null) {
-            // 合并到已有 class 属性中，然后删除 style 属性
-            mergeIntoExistingClass(existingClass, access, styleAttr, framework)
+        if (existingClass != null && mergeIntoExistingClass(existingClass, access, styleAttr, framework)) {
             return
         }
         val newAttrText = "$classAttrName={$access}"
@@ -608,70 +691,139 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     }
 
     /**
-     * 在父元素中查找已有的 class / className 属性。
+     * 在同一标签的兄弟属性中查找已有的 class / className 属性。
+     * 只扫 [parent] 的**直接属性子节点**（JSX e4x 的 JSAttributeList / Vue 的 XmlTag
+     * 均把属性作为直接子级），不递归后代 —— 递归会把子元素或属性值内嵌 JSX 的
+     * className 误当兄弟，把新 class 合并进错误的元素。
      * 双类型兼容：WS-2025.3 的 JSX 属性是 e4x JSXmlAttribute（继承 XmlAttribute），
-     * 部分版本是 JSAttributeNameValuePair —— 只搜后者会导致 merge 永不触发、
-     * style 被替换成第二个 className（与原有 className 重复，JSX 编译报错）。
+     * 部分版本是 JSAttributeNameValuePair。
      */
     internal fun findClassAttr(parent: PsiElement, attrName: String): PsiElement? {
-        return PsiTreeUtil.findChildrenOfType(parent, XmlAttribute::class.java)
-            .firstOrNull { it !== parent && it.name == attrName }
-            ?: PsiTreeUtil.findChildrenOfType(parent, JSAttributeNameValuePair::class.java)
-                .firstOrNull { it !== parent && it.name == attrName }
+        val direct = parent.children.asSequence()
+            .filter { it is XmlAttribute || it is JSAttributeNameValuePair }
+        direct.firstOrNull { attributeNameOf(it) == attrName }?.let { return it }
+        return null
+    }
+
+    private fun attributeNameOf(el: PsiElement): String? = when (el) {
+        is XmlAttribute -> el.name
+        is JSAttributeNameValuePair -> el.name
+        else -> null
     }
 
     /**
      * 将新的 class 访问表达式合并到已有 class 属性中，然后删除 style 属性。
      * 纯 PSI：先整体 replace class 节点，再 delete style 节点及其前置空白。
-     * 按框架选择合并策略（避免盲目生成 clsx —— 未安装 clsx 的项目会编译错误）：
+     * 按框架与已有值形态选择合并策略（避免盲目生成 clsx —— 未安装/别名导入的项目会编译错误）：
      *  - Vue JSX：class={[old, new]}（数组语法，Vue 原生支持，无第三方依赖）；
-     *  - React 已 import clsx/classnames：className={clsx(old, new)}；
-     *  - React 无 clsx：className={`old ${new}`} 模板字符串（纯字符串字面量直接平铺）。
+     *    已是数组字面量则平铺为 [a, b, new]，避免 [[a, b], new] 双层嵌套。
+     *  - React 已 import clsx/classnames：className={本地名(old, new)}；
+     *    已是同名调用则平铺参数 local(a, b, new)，避免 clsx(clsx(...)) 嵌套。
+     *  - React 无 clsx 且旧值是纯字符串字面量 → 平铺进模板 `` `foo ${new}` ``；
+     *    旧值已是模板字面量 → 在其内部追加，避免 `` `${`...`}` `` 嵌套；
+     *    其余动态表达式（三元/拼接/函数调用）→ 模板字符串包裹 `` `${old} ${new}` ``。
+     * 返回是否成功；失败（节点创建/替换异常）时**不删除 style 属性**，
+     * 由调用方 [handleJsxReplacement] 回退为整体替换，保证原样式信息不丢失。
      */
     internal fun mergeIntoExistingClass(
         existingClass: PsiElement,
         newAccess: String,
         styleAttr: PsiElement,
         framework: Framework
-    ) {
-        runCatching {
-            val existingText = existingClass.text
-            val eqIdx = existingText.indexOf('=')
-            if (eqIdx < 0) return@runCatching
-            var valuePart = existingText.substring(eqIdx + 1).trim()
-            // class={expr} → 取 expr 本体，避免生成 {clsx({expr}, ...)} 双层花括号
-            if (valuePart.startsWith("{") && valuePart.endsWith("}")) {
-                valuePart = valuePart.substring(1, valuePart.length - 1).trim()
-            }
-            val classAttrName = if (framework == Framework.VUE) "class" else "className"
-            val file = existingClass.containingFile ?: return@runCatching
-            val newClassText = when {
-                framework == Framework.VUE ->
-                    "$classAttrName={[$valuePart, $newAccess]}"
-                hasClsxImport(file) ->
-                    "$classAttrName={clsx($valuePart, $newAccess)}"
-                isPlainJsStringLiteral(valuePart) -> {
-                    // 字符串字面量（"foo"）直接平铺进模板，避免 ${"foo"} 的丑陋内插
-                    val raw = valuePart.substring(1, valuePart.length - 1)
-                    "$classAttrName={`$raw \${$newAccess}`}"
-                }
-                else ->
-                    "$classAttrName={\${$valuePart} \${$newAccess}}"
-            }
-            val project = existingClass.project
-            val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newClassText)
-            if (newAttr != null) {
-                existingClass.replace(newAttr)
-            }
-            // 删除 style 属性及其前置空白（不含换行，保留行结构）
-            val prevWs = styleAttr.prevSibling
-            if (prevWs is PsiWhiteSpace && !prevWs.textContains('\n')) prevWs.delete()
-            styleAttr.delete()
-        }.onFailure { LOG.warn("mergeIntoExistingClass failed", it) }
+    ): Boolean {
+        val existingText = existingClass.text
+        val eqIdx = existingText.indexOf('=')
+        if (eqIdx < 0) return false
+        var valuePart = existingText.substring(eqIdx + 1).trim()
+        // class={expr} → 取 expr 本体，避免生成 {clsx({expr}, ...)} 双层花括号
+        if (valuePart.startsWith("{") && valuePart.endsWith("}")) {
+            valuePart = valuePart.substring(1, valuePart.length - 1).trim()
+        }
+        val classAttrName = if (framework == Framework.VUE) "class" else "className"
+        val file = existingClass.containingFile ?: return false
+        val clsxName = if (framework == Framework.VUE) null else clsxLocalName(file)
+        val newClassText = when {
+            // 空值（class={}/class=""）：等价于没有旧类，直接写新值
+            valuePart.isEmpty() -> "$classAttrName={$newAccess}"
+            // Vue JSX：已是数组字面量 → 平铺，避免 [[a, b], new]
+            // prefix/close 要同时补数组括号与 JSX 表达式容器括号（缺任一都会
+            // 生成不平衡文本 → dummy 解析错误恢复吞掉尾部 ` />;`）
+            framework == Framework.VUE && isWrappedArrayLiteral(valuePart) ->
+                flattenInto("$classAttrName={[", valuePart, newAccess, "]}")
+            framework == Framework.VUE ->
+                "$classAttrName={[$valuePart, $newAccess]}"
+            // React + clsx 可用：已是同名调用 → 平铺参数，避免 clsx(clsx(a, b), c)
+            // flattenInto 的 wrappedValue 约定是「包装壳」（[args] / (args)），必须传
+            // 去掉函数名后的参数括号段，否则首字符（函数名首字母）会被当壳误剥；
+            // close 必须同时闭合调用括号与 JSX 表达式容器 `}`，缺 `}` 会让 dummy
+            // 片段解析错误恢复、把 ` />;` 尾部吞进属性节点（历史 bug）
+            clsxName != null && isCallOf(valuePart, clsxName) ->
+                flattenInto(
+                    "$classAttrName={$clsxName(",
+                    valuePart.substring(valuePart.indexOf('(')),
+                    newAccess, ")}"
+                )
+            clsxName != null ->
+                "$classAttrName={$clsxName($valuePart, $newAccess)}"
+            // 旧值已是模板字面量 → 内部追加，避免嵌套模板 `${`...`}`
+            isTemplateLiteral(valuePart) ->
+                "$classAttrName={${valuePart.dropLast(1)} \${$newAccess}`}"
+            // 纯字符串字面量（内部无同类引号，排除 "a"+"b" 拼接）→ 平铺进模板
+            isPlainJsStringLiteral(valuePart) ->
+                "$classAttrName={`${valuePart.substring(1, valuePart.length - 1)} \${$newAccess}`}"
+            // 动态表达式（三元/拼接/调用等）→ 模板字符串包裹
+            else ->
+                "$classAttrName={`\${$valuePart} \${$newAccess}`}"
+        }
+        val project = existingClass.project
+        val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newClassText)
+        if (newAttr == null) {
+            LOG.warn("mergeIntoExistingClass: attribute node creation failed: $newClassText")
+            return false
+        }
+        return runCatching {
+            existingClass.replace(newAttr)
+            deleteAttrWithLeadingWs(styleAttr)
+            true
+        }.getOrElse {
+            LOG.warn("mergeIntoExistingClass failed", it)
+            false
+        }
     }
 
-    private fun isPlainJsStringLiteral(s: String): Boolean =
-        s.length >= 2 && ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'")))
+    /** 平铺合并：`prefix + 旧值去壳 + ", new" + suffix`（数组 [args] / 调用 (args) 共用）。 */
+    private fun flattenInto(prefix: String, wrappedValue: String, newAccess: String, close: String): String {
+        val inner = wrappedValue.substring(1, wrappedValue.length - 1).trim()
+        return if (inner.isEmpty()) "$prefix$newAccess$close" else "$prefix$inner, $newAccess$close"
+    }
+
+    /** 删除属性节点及其前置空白（不含换行，保留行结构）。 */
+    private fun deleteAttrWithLeadingWs(attr: PsiElement) {
+        val prevWs = attr.prevSibling
+        if (prevWs is PsiWhiteSpace && !prevWs.textContains('\n')) prevWs.delete()
+        attr.delete()
+    }
+
+    /** `[a, b]` 形态的数组字面量（表达式只有以 `[` 开头才可能是数组字面量）。 */
+    private fun isWrappedArrayLiteral(s: String): Boolean =
+        s.length >= 2 && s.startsWith("[") && s.endsWith("]")
+
+    /** `` `foo ${x}` `` 形态的单一模板字面量（内部无裸反引号，可安全内接）。 */
+    private fun isTemplateLiteral(s: String): Boolean =
+        s.length >= 2 && s.startsWith("`") && s.endsWith("`") &&
+            !s.substring(1, s.length - 1).contains('`')
+
+    /** `name(args...)` 形态的指定函数调用（贪婪匹配到末尾 `)`，内层括号保留在 args 里）。 */
+    private fun isCallOf(s: String, name: String): Boolean =
+        Regex("""^$name\s*\([\s\S]*\)$""").matches(s)
+
+    private fun isPlainJsStringLiteral(s: String): Boolean {
+        if (s.length < 2) return false
+        val q = s.first()
+        if ((q != '"' && q != '\'') || s.last() != q) return false
+        // 内部不能再现同类引号：`"a" + "b"` 拼接不是单一字面量，平铺会产生悬挂引号
+        return !s.substring(1, s.length - 1).contains(q)
+    }
 
     /**
      * 纯 PSI 属性替换：Vue 模板（xml = true）走 XML dummy 工厂；

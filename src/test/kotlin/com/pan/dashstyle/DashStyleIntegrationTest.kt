@@ -12,6 +12,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiFile
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
@@ -801,13 +802,6 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
 )
 """
         )
-        // PROBE: 打印所有 Attribute 相关 PSI 的真实类型（诊断输出：WS-2025.3 为 e4x JSXmlAttribute，继承 XmlAttribute）
-        PsiTreeUtil.processElements(tsx) { el ->
-            if (el.javaClass.name.contains("Attribute", true)) {
-                println("PROBE18: ${el.javaClass.name} isXmlAttribute=${el is XmlAttribute} | text=<${el.text}>")
-            }
-            true
-        }
         // 与 ConvertClassNameToCssModuleAction.findOwningClassNameAttribute 同款类型化查找
         val classNameAttr = PsiTreeUtil.findChildrenOfType(tsx, XmlAttribute::class.java)
             .firstOrNull { it.name == "className" }
@@ -850,11 +844,11 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     // ========================================================================
     @Test
     fun `xml style attribute replaced via xml attribute psi`() {
-        val vue = myFixture.addFileToProject(
+        // 沙箱里 .vue 解析为 PsiPlainTextFileImpl（无 Vue 插件），故用 .xml 验证机制
+        myFixture.addFileToProject(
             "App19.vue",
             "<template>\n  <div :style=\"{ color: 'red' }\">hi</div>\n</template>\n"
         )
-        println("PROBE19: .vue PsiFile 实际类型 = ${vue.javaClass.name}")
         val xml = myFixture.addFileToProject(
             "data19.xml",
             "<root><div :style=\"{ color: 'red' }\">hi</div></root>"
@@ -1067,6 +1061,296 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         Assert.assertEquals(
             "package.json 改为 react 后应失效缓存并重算为 REACT",
             InlineStyleToCssModuleIntention.Framework.REACT, InlineStyleToCssModuleIntention.detectFramework(tsx)
+        )
+    }
+
+    // ===================== #24-#28 公共小工具 =====================
+
+    /** 在 [file] 里找到 style 属性与同标签的 [classAttrName]，执行 merge，返回合并后全文。 */
+    private fun mergeStyleIntoClass(
+        file: PsiFile,
+        classAttrName: String,
+        access: String,
+        framework: InlineStyleToCssModuleIntention.Framework
+    ): String {
+        val intention = InlineStyleToCssModuleIntention()
+        val styleAttr = PsiTreeUtil.findChildrenOfType(file, XmlAttribute::class.java)
+            .firstOrNull { it.name == "style" }
+        Assert.assertNotNull("找不到 style 属性", styleAttr)
+        val classAttr = intention.findClassAttr(styleAttr!!.parent, classAttrName)
+        Assert.assertNotNull("findClassAttr 应找到已有 $classAttrName", classAttr)
+        WriteCommandAction.runWriteCommandAction(project) {
+            Assert.assertTrue(
+                "mergeIntoExistingClass 应成功（失败时不得删 style）",
+                intention.mergeIntoExistingClass(classAttr!!, access, styleAttr, framework)
+            )
+        }
+        return file.text
+    }
+
+    // ========================================================================
+    // #24. clsx/classnames 本地绑定名（A1 修复）——
+    //      clsxLocalName 解析矩阵：默认导入 / classnames 默认名 / 命名导入 /
+    //      别名导入 / 副作用导入 / namespace 导入 / 近似包名；
+    //      merge 生成的调用必须用「本地绑定名」而不是硬编码 clsx
+    //      （旧实现 hasClsxImport 匹配 classnames 却生成 clsx(...) → 未定义标识符）。
+    // ========================================================================
+    @Test
+    fun `clsx local binding name is used instead of hardcoded clsx`() {
+        fun localName(fileName: String, src: String): String? =
+            InlineStyleToCssModuleIntention.clsxLocalName(myFixture.addFileToProject(fileName, src))
+
+        Assert.assertEquals(
+            "import cn from 'clsx' 应解析出本地名 cn", "cn",
+            localName("C24a.tsx", "import cn from 'clsx'\nexport const A = () => <div>x</div>\n")
+        )
+        Assert.assertEquals(
+            "import classNames from 'classnames' 应解析出 classNames", "classNames",
+            localName("C24b.tsx", "import classNames from 'classnames'\nexport const A = () => <div>x</div>\n")
+        )
+        Assert.assertEquals(
+            "import { clsx } from 'clsx' → clsx", "clsx",
+            localName("C24c.tsx", "import { clsx } from 'clsx'\nexport const A = () => <div>x</div>\n")
+        )
+        Assert.assertEquals(
+            "import { clsx as c } from 'clsx' → 别名 c", "c",
+            localName("C24d.tsx", "import { clsx as c } from 'clsx'\nexport const A = () => <div>x</div>\n")
+        )
+        Assert.assertNull(
+            "副作用导入 import 'clsx' 不是可调用绑定",
+            localName("C24e.tsx", "import 'clsx'\nexport const A = () => <div>x</div>\n")
+        )
+        Assert.assertNull(
+            "namespace 导入需成员访问，不能直接调用",
+            localName("C24f.tsx", "import * as ns from 'clsx'\nexport const A = () => <div>x</div>\n")
+        )
+        Assert.assertNull(
+            "clsx-deep 不是 clsx/classnames",
+            localName("C24g.tsx", "import cn from 'clsx-deep'\nexport const A = () => <div>x</div>\n")
+        )
+
+        // 别名默认导入：merge 必须生成 cn(...)，而不是未定义的 clsx(...)
+        val tsx = myFixture.addFileToProject(
+            "M24.tsx",
+            "import { useState } from 'react'\nimport cn from 'clsx'\nconst A = () => (\n  <div style={{ color: 'red' }} className=\"foo\">hi</div>\n)\n"
+        )
+        val text = mergeStyleIntoClass(tsx, "className", "styles.bar", InlineStyleToCssModuleIntention.Framework.REACT)
+        println("=== #24 alias merge M24.tsx ===")
+        println(text)
+        Assert.assertTrue(
+            "应生成本地绑定名调用 cn(...): ${text.replace("\n", "\\n")}",
+            text.contains("""className={cn("foo", styles.bar)}""")
+        )
+        Assert.assertFalse("不应出现硬编码 clsx( 调用", text.contains("clsx("))
+        Assert.assertFalse("style 属性应删除", text.contains("style="))
+
+        // namespace 导入 → 回退模板字符串（不能生成 ns(...) / clsx(...)）
+        val tsx2 = myFixture.addFileToProject(
+            "M24b.tsx",
+            "import { useState } from 'react'\nimport * as ns from 'clsx'\nconst A = () => (\n  <div style={{ color: 'red' }} className=\"foo\">hi</div>\n)\n"
+        )
+        val text2 = mergeStyleIntoClass(tsx2, "className", "styles.bar", InlineStyleToCssModuleIntention.Framework.REACT)
+        println("=== #24 namespace fallback M24b.tsx ===")
+        println(text2)
+        Assert.assertTrue(
+            "namespace 导入应回退模板字符串: ${text2.replace("\n", "\\n")}",
+            text2.contains("className={`foo \${styles.bar}`}")
+        )
+        Assert.assertFalse("不应生成 ns(...) 调用", text2.contains("ns("))
+    }
+
+    // ========================================================================
+    // #25. React 动态表达式合并（A2/A5 修复）——
+    //      三元：整体包进模板字符串插值；
+    //      字符串拼接 "a" + "b"：不得误判为纯字面量（旧实现产生悬挂引号坏代码）；
+    //      已有模板字面量：内接追加而不是嵌套新模板。
+    // ========================================================================
+    @Test
+    fun `react dynamic expression merge wraps into template interpolation`() {
+        val ternary = myFixture.addFileToProject(
+            "M25.tsx",
+            "import { useState } from 'react'\nconst A = () => (\n  <div style={{ color: 'red' }} className={isActive ? 'a' : 'b'}>hi</div>\n)\n"
+        )
+        val t1 = mergeStyleIntoClass(ternary, "className", "styles.bar", InlineStyleToCssModuleIntention.Framework.REACT)
+        println("=== #25 ternary M25.tsx ===")
+        println(t1)
+        Assert.assertTrue(
+            "三元应整体包进插值: ${t1.replace("\n", "\\n")}",
+            t1.contains("className={`\${isActive ? 'a' : 'b'} \${styles.bar}`}")
+        )
+        Assert.assertFalse("style 属性应删除", t1.contains("style="))
+
+        // A2：拼接表达式 —— 旧实现误判 "a" + "b" 为字面量，生成 `a" + "b ${...}` 悬挂引号
+        val concat = myFixture.addFileToProject(
+            "M25b.tsx",
+            "import { useState } from 'react'\nconst B = () => (\n  <div style={{ color: 'red' }} className={\"a\" + \"b\"}>hi</div>\n)\n"
+        )
+        val t2 = mergeStyleIntoClass(concat, "className", "styles.bar", InlineStyleToCssModuleIntention.Framework.REACT)
+        println("=== #25 concat M25b.tsx ===")
+        println(t2)
+        Assert.assertTrue(
+            "拼接表达式应整体进插值: ${t2.replace("\n", "\\n")}",
+            t2.contains("className={`\${\"a\" + \"b\"} \${styles.bar}`}")
+        )
+        Assert.assertFalse("不应产生悬挂引号的坏合并（旧 bug）", t2.contains("`a\""))
+
+        // A5：已有模板字面量 → 内接（反引号数量不变）
+        val tpl = myFixture.addFileToProject(
+            "M25c.tsx",
+            "import { useState } from 'react'\nconst C = () => (\n  <div style={{ color: 'red' }} className={`foo \${x}`}>hi</div>\n)\n"
+        )
+        val t3 = mergeStyleIntoClass(tpl, "className", "styles.bar", InlineStyleToCssModuleIntention.Framework.REACT)
+        println("=== #25 template M25c.tsx ===")
+        println(t3)
+        Assert.assertTrue(
+            "模板字面量应内接追加: ${t3.replace("\n", "\\n")}",
+            t3.contains("className={`foo \${x} \${styles.bar}`}")
+        )
+        Assert.assertEquals("模板不应嵌套（反引号恰好 2 个）", 2, t3.count { it == '`' })
+    }
+
+    // ========================================================================
+    // #26. 平铺语义（A4/A6 修复）——
+    //      React：已有 clsx(...) 调用 → 追加参数而不是嵌套 clsx(clsx(...))；
+    //      Vue JSX：已有 class={[...]} 数组 → 平铺追加而不是嵌套 [[...], x]
+    //      （Vue 数组绑定原生递归展平，嵌套虽合法但属冗余噪音）。
+    // ========================================================================
+    @Test
+    fun `flatten existing clsx call and vue array instead of nesting`() {
+        val react = myFixture.addFileToProject(
+            "M26.tsx",
+            "import { useState } from 'react'\nimport clsx from 'clsx'\nconst A = () => (\n  <div style={{ color: 'red' }} className={clsx(\"a\", \"b\")}>hi</div>\n)\n"
+        )
+        val t1 = mergeStyleIntoClass(react, "className", "styles.bar", InlineStyleToCssModuleIntention.Framework.REACT)
+        println("=== #26 clsx flatten M26.tsx ===")
+        println(t1)
+        Assert.assertTrue(
+            "clsx 调用应平铺追加参数: ${t1.replace("\n", "\\n")}",
+            t1.contains("""className={clsx("a", "b", styles.bar)}""")
+        )
+        Assert.assertEquals("clsx( 只应出现 1 次（不嵌套）", 1, Regex("""clsx\(""").findAll(t1).count())
+        Assert.assertFalse("style 属性应删除", t1.contains("style="))
+
+        val vueTsx = myFixture.addFileToProject(
+            "M26b.tsx",
+            "import { defineComponent } from 'vue'\nconst B = () => (\n  <div style={{ color: 'red' }} class={[\"a\", \"b\"]}>hi</div>\n)\n"
+        )
+        val t2 = mergeStyleIntoClass(vueTsx, "class", "styles.bar", InlineStyleToCssModuleIntention.Framework.VUE)
+        println("=== #26 vue array flatten M26b.tsx ===")
+        println(t2)
+        Assert.assertTrue(
+            "Vue 数组应平铺追加: ${t2.replace("\n", "\\n")}",
+            t2.contains("""class={["a", "b", styles.bar]}""")
+        )
+        Assert.assertFalse("不应嵌套 [[", t2.contains("[["))
+        Assert.assertFalse("Vue JSX 不应引入 clsx", t2.contains("clsx"))
+        Assert.assertFalse("style 属性应删除", t2.contains("style="))
+    }
+
+    // ========================================================================
+    // #27. Vue 模板 :class 合并（B1 修复；.xml fixture 模拟 .vue 模板，
+    //      沙箱无 Vue 插件时 .vue 会解析为 PsiPlainTextFileImpl）——
+    //      已有 :class="dyn" → 合并为 [dyn, $style.card]，绝不产生第二个 :class
+    //      （重复 :class 是 Vue 编译错误）；对象绑定 → 数组混排；已是数组 → 平铺；
+    //      只有静态 class → 新 :class 与之共存（Vue 自动合并静态+动态）。
+    // ========================================================================
+    @Test
+    fun `vue template merges into existing class binding without duplication`() {
+        val intention = InlineStyleToCssModuleIntention()
+        fun merge(fileName: String, content: String): String {
+            val xml = myFixture.addFileToProject(fileName, content)
+            val styleAttr = PsiTreeUtil.findChildrenOfType(xml, XmlAttribute::class.java)
+                .firstOrNull { it.name.endsWith(":style") }
+            Assert.assertNotNull("找不到 :style 属性", styleAttr)
+            var ok = false
+            WriteCommandAction.runWriteCommandAction(project) {
+                ok = intention.handleVueTemplateReplacement(project, xml, styleAttr!!, "\$style.card")
+            }
+            Assert.assertTrue("应走 PSI 合并路径（而非 Document 兜底）", ok)
+            return xml.text
+        }
+
+        // a) 任意表达式 dyn → [dyn, $style.card]，静态 class 保留
+        val t1 = merge(
+            "data27a.xml",
+            "<root><div class=\"s\" :class=\"dyn\" :style=\"{ color: 'red' }\">hi</div></root>"
+        )
+        println("=== #27 vue template data27a.xml ===")
+        println(t1)
+        Assert.assertTrue("应合并为数组绑定: $t1", t1.contains(":class=\"[dyn, \$style.card]\""))
+        Assert.assertEquals("只应有一个 :class（重复会 Vue 编译报错）", 1, Regex(""":class=""").findAll(t1).count())
+        Assert.assertTrue("静态 class 应保留", t1.contains("class=\"s\""))
+        Assert.assertFalse(":style 应删除", t1.contains(":style="))
+
+        // b) 对象绑定 → 数组混排
+        val t2 = merge(
+            "data27b.xml",
+            "<root><div :class=\"{ active: isActive }\" :style=\"{ color: 'red' }\">hi</div></root>"
+        )
+        println("=== #27 vue object data27b.xml ===")
+        println(t2)
+        Assert.assertTrue(
+            "对象绑定应数组混排: ${t2.replace("\n", "\\n")}",
+            t2.contains(":class=\"[{ active: isActive }, \$style.card]\"")
+        )
+        Assert.assertEquals(":class 只应有一个", 1, Regex(""":class=""").findAll(t2).count())
+
+        // c) 已是数组 → 平铺（不嵌套）
+        val t3 = merge(
+            "data27c.xml",
+            "<root><div :class=\"[a, b]\" :style=\"{ color: 'red' }\">hi</div></root>"
+        )
+        println("=== #27 vue array data27c.xml ===")
+        println(t3)
+        Assert.assertTrue("数组应平铺追加: $t3", t3.contains(":class=\"[a, b, \$style.card]\""))
+        Assert.assertFalse("不应嵌套 [[", t3.contains("[["))
+
+        // d) 无 :class：与静态 class 共存
+        val t4 = merge(
+            "data27d.xml",
+            "<root><div class=\"s\" :style=\"{ color: 'red' }\">hi</div></root>"
+        )
+        println("=== #27 vue no-bind data27d.xml ===")
+        println(t4)
+        Assert.assertTrue("应新增 :class: $t4", t4.contains(":class=\"\$style.card\""))
+        Assert.assertTrue("静态 class 应共存", t4.contains("class=\"s\""))
+        Assert.assertFalse(":style 应删除", t4.contains(":style="))
+        Assert.assertEquals(":class 只应有一个", 1, Regex(""":class=""").findAll(t4).count())
+    }
+
+    // ========================================================================
+    // #28. 兄弟范围（A3 修复）——
+    //      findClassAttr 只扫同标签直接属性；后代 span 的 className 不能被
+    //      误当作兄弟合并目标（旧实现递归 descendants 会合并进错误的元素）。
+    // ========================================================================
+    @Test
+    fun `findClassAttr only matches sibling attributes not descendants`() {
+        val tsx = myFixture.addFileToProject(
+            "M28.tsx",
+            "import { useState } from 'react'\nconst A = () => (\n  <div style={{ color: 'red' }}><span className=\"inner\">x</span></div>\n)\n"
+        )
+        val intention = InlineStyleToCssModuleIntention()
+        val styleAttr = PsiTreeUtil.findChildrenOfType(tsx, XmlAttribute::class.java)
+            .firstOrNull { it.name == "style" }
+        Assert.assertNotNull("找不到 style 属性", styleAttr)
+
+        val found = intention.findClassAttr(styleAttr!!.parent, "className")
+        Assert.assertNull("后代 span 的 className 不应被当作兄弟属性", found)
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            intention.handleJsxReplacement(
+                project, tsx, styleAttr, "styles.card", InlineStyleToCssModuleIntention.Framework.REACT
+            )
+        }
+        val text = tsx.text
+        println("=== #28 sibling scope M28.tsx ===")
+        println(text)
+        Assert.assertTrue("style 应替换为 className: $text", text.contains("className={styles.card}"))
+        Assert.assertTrue("span 原有 className 应原样保留", text.contains("className=\"inner\""))
+        Assert.assertFalse("style 属性应删除", text.contains("style="))
+        Assert.assertEquals(
+            "className 恰好 2 次（div 新增 + span 原有）",
+            2, Regex("className=").findAll(text).count()
         )
     }
 }
