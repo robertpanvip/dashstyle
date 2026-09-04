@@ -523,10 +523,12 @@ class ConvertClassNameToCssModuleAction : AnAction(
 
         // 1. 检查是否已有 import 指向该 module 文件
         for (imp in imports) {
-            val moduleText = imp.importModuleText ?: continue
-            val from = moduleText.trim('"', '\'')
+            // 优先用 API 获取 module 路径；为 null 时回退到整行文本匹配
+            val from = imp.importModuleText?.trim('"', '\'')
+                ?: extractModulePathFromText(imp.text)
+                ?: continue
             if (from.endsWith(moduleFileName, ignoreCase = true) ||
-                from.contains(moduleFileName.replaceFirst(".module.", ".").replace(".", ""), ignoreCase = true)
+                from.endsWith("/$moduleFileName", ignoreCase = true)
             ) {
                 val bindings = imp.importedBindings
                 val defaultBinding = bindings.firstOrNull()
@@ -536,8 +538,9 @@ class ConvertClassNameToCssModuleAction : AnAction(
 
         // 2. 查找是否有 import 指向原始文件（如 `import './index.less'`）
         for (imp in imports) {
-            val moduleText = imp.importModuleText ?: continue
-            val from = moduleText.trim('"', '\'')
+            val from = imp.importModuleText?.trim('"', '\'')
+                ?: extractModulePathFromText(imp.text)
+                ?: continue
             if (from.endsWith(originalFileName, ignoreCase = true)) {
                 val importStatement = imp.text
                 val newImport = if (importStatement.contains("from")) {
@@ -585,6 +588,21 @@ class ConvertClassNameToCssModuleAction : AnAction(
             }
 
         return "styles"
+    }
+
+    /**
+     * 从 import 语句的原始文本中提取 module 路径（兼容 WebStorm PSI 不返回 importModuleText 的情况）。
+     * 匹配 import ... from "..." / import ... from '...' / import "..." / import '...'
+     */
+    private fun extractModulePathFromText(text: String): String? {
+        val pattern = Pattern.compile("""from\s*["']([^"']+)["']""")
+        val m = pattern.matcher(text)
+        if (m.find()) return m.group(1)
+        // side-effect import: import "./foo.less"
+        val sideEffect = Pattern.compile("""^import\s*["']([^"']+)["']""")
+        val m2 = sideEffect.matcher(text.trim())
+        if (m2.find()) return m2.group(1)
+        return null
     }
 
     private fun computeRelativeImportPath(source: VirtualFile, target: VirtualFile): String {
