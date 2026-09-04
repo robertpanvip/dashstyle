@@ -41,18 +41,40 @@ class ConvertClassNameToCssModuleAction : AnAction(
     }
 
     // ================================================================
-    // 可见性：仅当选中 JSX/TSX 代码且有 className 字面量时启用
+    // 可见性：
+    //   - 在顶层菜单始终显示（Refactor / 右键 RefactorThis / 键盘快捷键），避免"菜单里找不到"的体验
+    //   - 真正可用仅当：有项目 + 有编辑器 + 文件是 TSX / JSX / Vue（JSX 风格也能解析
+    //     className="..."）。其他场景置为禁用 + 附 tooltip 原因
     // ================================================================
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun update(e: AnActionEvent) {
         val project = e.project
         val file = e.getData(CommonDataKeys.PSI_FILE)
+        val editor = e.getData(CommonDataKeys.EDITOR)
 
         val ext = file?.virtualFile?.extension?.lowercase()
-        val isTsx = ext == "tsx"
+        val supportedFile = ext == "tsx" || ext == "jsx" || ext == "vue"
 
-        e.presentation.isEnabledAndVisible = project != null && isTsx
-        e.presentation.text = "Convert className to CSS Module"
+        val hasContext = project != null && editor != null && file != null
+        val enabled = hasContext && supportedFile
+
+        e.presentation.isEnabledAndVisible = hasContext || project != null
+        // 没有项目时直接隐藏；有项目但不满足条件也显示（置灰），让用户知道有这个功能
+        if (hasContext) {
+            e.presentation.isEnabled = enabled
+            e.presentation.isVisible = true
+        }
+        e.presentation.text = "Convert className to CSS Module..."
+        if (!enabled && hasContext) {
+            e.presentation.description = when (ext) {
+                "ts", "js" -> "This action requires JSX markup — switch to a .tsx / .jsx file"
+                "vue" -> "Vue SFCs are supported experimentally; only JSX-style `className=\"...\"` attributes inside `<script setup lang=\"tsx\">` or JSX blocks will be converted"
+                null -> "Open a .tsx / .jsx file first"
+                else -> "Unsupported file type: $ext (expected .tsx / .jsx / .vue)"
+            }
+        }
     }
 
     // ================================================================
