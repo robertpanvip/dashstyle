@@ -404,4 +404,217 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
         }.isSuccess // 不崩就行
         Assert.assertTrue("DuplicateCss normalizer 静态绑定签名匹配", sigSameOk)
     }
+
+    // ========================================================================
+    // #6. Vue $style.flex / $style['flex'] 模式 → 必须被识别为 used
+    // ========================================================================
+    @Test
+    fun `vue $style dot and bracket access should mark classes as used`() {
+        val cssFile = myFixture.configureByText(
+            "App.module.css",
+            """
+            .flex { display: flex; }
+            .flex-item { gap: 8px; }
+            .flexItem { color: red; }
+            .unused { opacity: 0; }
+            """.trimIndent()
+        )
+        val vueFile = myFixture.configureByText(
+            "App.vue",
+            """
+            <template>
+              <div :class="${'$'}style.flex">
+                <span :class="${'$'}style['flex-item']">Item</span>
+                <span :class='${'$'}style["flexItem"]'>Item2</span>
+              </div>
+            </template>
+            """.trimIndent()
+        )
+        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(vueFile to "style")
+        )
+        Assert.assertFalse("hasDynamic should be false", snap.hasDynamic)
+        Assert.assertTrue("dot access flex should be used", "flex" in snap.used)
+        Assert.assertTrue("bracket flex-item should be used", "flex-item" in snap.used)
+        Assert.assertTrue("bracket flexItem should be used", "flexItem" in snap.used)
+        Assert.assertFalse("unused should not be in used set", "unused" in snap.used)
+    }
+
+    // ========================================================================
+    // #7. Vue $style 带空格变体（如 $style  [  'flex'  ]）→ 必须被识别
+    // ========================================================================
+    @Test
+    fun `vue $style with extra whitespace in brackets should still match`() {
+        val cssFile = myFixture.configureByText(
+            "App.module.css",
+            ".flex { display: flex; }\n.unused { opacity: 0; }\n"
+        )
+        val vueFile = myFixture.configureByText(
+            "App.vue",
+            """
+            <template>
+              <div :class="${'$'}style  [  'flex'  ]">Hello</div>
+            </template>
+            """.trimIndent()
+        )
+        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(vueFile to "style")
+        )
+        Assert.assertTrue("whitespace bracket flex should be used", "flex" in snap.used)
+        Assert.assertFalse("unused should not be in used", "unused" in snap.used)
+    }
+
+    // ========================================================================
+    // #8. Vue 自定义别名 $module / $classes 模式 → 必须被识别
+    // ========================================================================
+    @Test
+    fun `vue custom alias $module and $classes patterns should be recognized`() {
+        val cssFile = myFixture.configureByText(
+            "App.module.css",
+            """
+            .card { padding: 8px; }
+            .title { font-size: 16px; }
+            .unused { opacity: 0; }
+            """.trimIndent()
+        )
+        val vueFile = myFixture.configureByText(
+            "App.vue",
+            """
+            <template>
+              <div :class="${'$'}module.card">
+                <span :class="${'$'}classes['title']">Title</span>
+              </div>
+            </template>
+            """.trimIndent()
+        )
+        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(vueFile to "style")
+        )
+        Assert.assertTrue("module.card should be used", "card" in snap.used)
+        Assert.assertTrue("classes.title should be used", "title" in snap.used)
+        Assert.assertFalse("unused should not be in used", "unused" in snap.used)
+    }
+
+    // ========================================================================
+    // #9. Vue 动态引用 $style[varName] → hasDynamic 应为 true
+    // ========================================================================
+    @Test
+    fun `vue dynamic $style variable reference should set hasDynamic`() {
+        val cssFile = myFixture.configureByText(
+            "App.module.css",
+            ".flex { display: flex; }\n"
+        )
+        val vueFile = myFixture.configureByText(
+            "App.vue",
+            """
+            <template>
+              <div :class="${'$'}style[className]">Hello</div>
+            </template>
+            """.trimIndent()
+        )
+        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(vueFile to "style")
+        )
+        Assert.assertTrue("dynamic var ref should set hasDynamic", snap.hasDynamic)
+    }
+
+    // ========================================================================
+    // #10. Vue ternary 表达式 $style[cond ? 'a' : 'b'] → 提取所有字符串
+    // ========================================================================
+    @Test
+    fun `vue ternary in bracket expression should extract both strings`() {
+        val cssFile = myFixture.configureByText(
+            "App.module.css",
+            """
+            .active { color: green; }
+            .inactive { color: gray; }
+            .unused { opacity: 0; }
+            """.trimIndent()
+        )
+        val vueFile = myFixture.configureByText(
+            "App.vue",
+            """
+            <template>
+              <div :class="${'$'}style[isActive ? 'active' : 'inactive']">Hello</div>
+            </template>
+            """.trimIndent()
+        )
+        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(vueFile to "style")
+        )
+        Assert.assertFalse("ternary 只有字符串字面量，hasDynamic 应为 false", snap.hasDynamic)
+        Assert.assertTrue("active 应被识别", "active" in snap.used)
+        Assert.assertTrue("inactive 应被识别", "inactive" in snap.used)
+        Assert.assertFalse("unused 不应在 used 中", "unused" in snap.used)
+    }
+
+    // ========================================================================
+    // #11. JSX styles['xxx'] 模式（非 Vue 文件）→ 必须被识别
+    // ========================================================================
+    @Test
+    fun `jsx styles bracket string key should be recognized as used`() {
+        val cssFile = myFixture.configureByText(
+            "App.module.css",
+            """
+            .hello-world { color: red; }
+            .foo-bar { font-size: 14px; }
+            .unused { opacity: 0; }
+            """.trimIndent()
+        )
+        val tsxFile = myFixture.configureByText(
+            "App.tsx",
+            """
+            import styles from './App.module.css'
+            function App() {
+              return (
+                <div>
+                  <span className={styles['hello-world']}>Hello</span>
+                  <span className={styles["foo-bar"]}>Foo</span>
+                </div>
+              )
+            }
+            """.trimIndent()
+        )
+        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(tsxFile to "styles")
+        )
+        Assert.assertFalse("hasDynamic 应为 false", snap.hasDynamic)
+        Assert.assertTrue("styles['hello-world'] 应被识别", "hello-world" in snap.used)
+        Assert.assertTrue("styles[\"foo-bar\"] 应被识别", "foo-bar" in snap.used)
+        Assert.assertFalse("unused 不应在 used 中", "unused" in snap.used)
+    }
+
+    // ========================================================================
+    // #12. computeFileSnapshot 对 TSX + Vue 混合引用去重
+    // ========================================================================
+    @Test
+    fun `multiple source files referencing same css module are merged correctly`() {
+        val cssFile = myFixture.configureByText(
+            "App.module.css",
+            """
+            .shared { color: blue; }
+            .unused { opacity: 0; }
+            """.trimIndent()
+        )
+        val tsxFile = myFixture.configureByText(
+            "App.tsx",
+            """
+            import styles from './App.module.css'
+            function App() { return <div className={styles.shared}></div> }
+            """.trimIndent()
+        )
+        val vueFile = myFixture.configureByText(
+            "App.vue",
+            """
+            <template>
+              <div :class="${'$'}style.shared">Vue</div>
+            </template>
+            """.trimIndent()
+        )
+        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(tsxFile to "styles", vueFile to "style")
+        )
+        Assert.assertTrue("shared 应被识别为 used（来自 TSX）", "shared" in snap.used)
+        Assert.assertFalse("unused 不应在 used 中", "unused" in snap.used)
+    }
 }
