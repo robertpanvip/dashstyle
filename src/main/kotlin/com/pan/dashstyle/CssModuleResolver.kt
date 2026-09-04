@@ -10,6 +10,7 @@ import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.css.StylesheetFile
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 
@@ -327,7 +328,55 @@ object CssModuleResolver {
             used += kebab
         }
 
+        // 3. Vue template 属性值 fallback（当 Vue 插件未将 $style.xxx 解析为 JS PSI 时）
+        //    扫描 <template> 内所有属性值，提取 $alias.xxx 和 $alias["xxx"] 模式
+        if (container is CssContainer.VueStyleTag && sourceFile is XmlFile) {
+            val alias = container.moduleAlias  // "$style" 或 "$xxx"
+            scanVueTemplateAttributes(sourceFile, alias, used, dynamicRef = { dynamic = true })
+        }
+
         return used to dynamic
+    }
+
+    /**
+     * 扫描 Vue XML 文件 template 标签内的属性值，提取 module alias 引用。
+     * 用于 Vue 插件未将 template 表达式解析为 JS PSI 的 fallback。
+     */
+    private fun scanVueTemplateAttributes(
+        vueFile: XmlFile,
+        alias: String,
+        used: MutableSet<String>,
+        dynamicRef: () -> Unit
+    ) {
+        val templateTag = Util.findTagInFile(vueFile, "template") ?: return
+        val aliasDollar = if (alias.startsWith("\$")) alias else "\$$alias"
+        // 匹配 $alias.xxx 或 $alias["xxx"] 或 $alias['xxx']
+        val memberPattern = Regex("""\Q$aliasDollar\E\s*\.\s*([a-zA-Z_]\w*)""")
+        val bracketPattern = Regex("""\Q$aliasDollar\E\s*\[\s*"([^"]*)"\s*\]""")
+        val bracketSinglePattern = Regex("""\Q$aliasDollar\E\s*\[\s*'([^']*)'\s*\]""")
+        // 匹配任何 $alias[ 开头但没有引号的情况，即动态引用
+        val openBracketPattern = Regex("""\Q$aliasDollar\E\s*\[\s*(?!["'])""")
+
+        for (attr in PsiTreeUtil.findChildrenOfType(templateTag, XmlAttribute::class.java)) {
+            val value = attr.value ?: continue
+            // 静态字符串成员
+            for (m in memberPattern.findAll(value)) {
+                val name = m.groupValues[1]
+                val kebab = if (name.contains("-")) name else Util.camelToKebab(name)
+                used += kebab
+            }
+            for (m in bracketPattern.findAll(value)) {
+                used += m.groupValues[1]
+            }
+            for (m in bracketSinglePattern.findAll(value)) {
+                used += m.groupValues[1]
+            }
+            // 动态引用 $alias[expr]（expr 不是字符串字面量）：
+            // 匹配 $alias[ 之后第一个字符不是引号，说明是变量表达式
+            if (openBracketPattern.containsMatchIn(value)) {
+                dynamicRef()
+            }
+        }
     }
 
     // ================================================================

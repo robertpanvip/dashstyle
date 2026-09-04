@@ -9,6 +9,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.pan.dashstyle.CssModuleResolver.CssContainer
@@ -413,8 +414,9 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     // ========================================================================
     @Test
     fun `vue $style access via scanUsages should mark classes as used`() {
-        val vueFile = myFixture.addFileToProject(
-            "App.vue",
+        // 整个 Vue SFC 内容放在 .xml 文件中，保证沙箱能正确解析 <style module> 和 <template>
+        val xmlFile = myFixture.configureByText(
+            "App.vue.xml",
             """
             <style module>
             .flex { display: flex; }
@@ -429,12 +431,12 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             </template>
             """.trimIndent()
         )
+        val modTag = PsiTreeUtil.findChildrenOfType(xmlFile, XmlTag::class.java)
+            .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+        Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
+        val container = CssContainer.VueStyleTag(modTag!!, "\$style", xmlFile)
         ApplicationManager.getApplication().runReadAction {
-            val modTag = PsiTreeUtil.findChildrenOfType(vueFile, XmlTag::class.java)
-                .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
-            Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
-            val container = CssContainer.VueStyleTag(modTag!!, "\$style", vueFile)
-            val (used, dynamic) = CssModuleResolver.scanUsages(vueFile, container)
+            val (used, dynamic) = CssModuleResolver.scanUsages(xmlFile, container)
             Assert.assertFalse("hasDynamic should be false", dynamic)
             Assert.assertTrue("dot access flex should be used", "flex" in used)
             Assert.assertTrue("bracket flex-item should be used", "flex-item" in used)
@@ -447,8 +449,8 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     // ========================================================================
     @Test
     fun `vue dynamic $style variable reference should set hasDynamic via scanUsages`() {
-        val vueFile = myFixture.addFileToProject(
-            "App.vue",
+        val xmlFile = myFixture.configureByText(
+            "App.vue.xml",
             """
             <style module>
             .flex { display: flex; }
@@ -458,12 +460,12 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             </template>
             """.trimIndent()
         )
+        val modTag = PsiTreeUtil.findChildrenOfType(xmlFile, XmlTag::class.java)
+            .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+        Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
+        val container = CssContainer.VueStyleTag(modTag!!, "\$style", xmlFile)
         ApplicationManager.getApplication().runReadAction {
-            val modTag = PsiTreeUtil.findChildrenOfType(vueFile, XmlTag::class.java)
-                .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
-            Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
-            val container = CssContainer.VueStyleTag(modTag!!, "\$style", vueFile)
-            val (_, dynamic) = CssModuleResolver.scanUsages(vueFile, container)
+            val (_, dynamic) = CssModuleResolver.scanUsages(xmlFile, container)
             Assert.assertTrue("dynamic var ref should set hasDynamic", dynamic)
         }
     }
@@ -611,8 +613,8 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     // ========================================================================
     @Test
     fun `vue unrelated $foo bar should not be counted as css module usage`() {
-        val vueFile = myFixture.addFileToProject(
-            "App.vue",
+        val xmlFile = myFixture.configureByText(
+            "App.vue.xml",
             """
             <style module>
             .bar { color: red; }
@@ -622,12 +624,12 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             </template>
             """.trimIndent()
         )
+        val modTag = PsiTreeUtil.findChildrenOfType(xmlFile, XmlTag::class.java)
+            .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+        Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
+        val container = CssContainer.VueStyleTag(modTag!!, "\$style", xmlFile)
         ApplicationManager.getApplication().runReadAction {
-            val modTag = PsiTreeUtil.findChildrenOfType(vueFile, XmlTag::class.java)
-                .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
-            Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
-            val container = CssContainer.VueStyleTag(modTag!!, "\$style", vueFile)
-            val (used, dynamic) = CssModuleResolver.scanUsages(vueFile, container)
+            val (used, dynamic) = CssModuleResolver.scanUsages(xmlFile, container)
             Assert.assertFalse("\${'$'}notstyle.bar 不应有 hasDynamic", dynamic)
             Assert.assertTrue("\${'$'}notstyle.bar 不应被计入 CSS Module", "bar" !in used)
         }
