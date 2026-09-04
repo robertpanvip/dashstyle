@@ -123,18 +123,20 @@ object CssModuleResolver {
         val qualifierName = qualifierExpr.text
         if (qualifierName.isBlank()) return null
 
-        // 先直接 reference.resolve()
+        // 完全依赖 IntelliJ JS PSI 的 reference.resolve()
+        // 它本身已经做了 scope-aware 查找，优先最近的声明，不需要我们手动逐层搜索
         val resolved = (qualifierExpr as? JSReferenceExpression)?.reference?.resolve()
         if (resolved != null) {
             val (container, name) = fromResolvedBinding(resolved, qualifierName)
             if (container != null) return container to name
         }
 
-        // Vue fallback
+        // Vue fallback: 只有 template 中的 $style/$xxx 需要特殊处理
+        // 因为 Vue template 中 $style 不是通过 JS 声明的，是由 Vue 编译器注入
         if (contextFile?.name?.endsWith(".vue") == true && contextFile is XmlFile) {
             val templateTag = Util.findTagInFile(contextFile, "template")
             if (templateTag != null && PsiTreeUtil.isAncestor(templateTag, qualifierExpr, false)) {
-                // $style / $xxx (module alias)
+                // $style / $xxx (module alias) 是 Vue 注入，没有 JS 声明需要自己找
                 if (qualifierName.startsWith("\$")) {
                     val alias = qualifierName.drop(1)
                     val styles = PsiTreeUtil.findChildrenOfType(contextFile, XmlTag::class.java)
@@ -148,30 +150,20 @@ object CssModuleResolver {
                     val any = styles.firstOrNull()
                     if (any != null) return CssContainer.VueStyleTag(any, "\$style", contextFile) to qualifierName
                 }
-                // setup 里声明的同名变量
-                val scriptTag = Util.findScriptTag(contextFile)
-                val variable = Util.findVariableDeclarationByName(qualifierName, scriptTag)
-                if (variable != null) {
-                    val init = variable.initializer
-                    if (init is JSCallExpression && Util.isUseCssModuleFromVue(init)) {
-                        val moduleStyleTag = Util.findModuleStyleTag(contextFile)
-                        if (moduleStyleTag != null) return CssContainer.VueStyleTag(moduleStyleTag, qualifierName, contextFile) to qualifierName
-                    }
-                    if (init is JSObjectLiteralExpression) return CssContainer.LocalObjectLiteral(init, contextFile, qualifierName) to qualifierName
-                    if (init != null) {
-                        val (container, name) = fromResolvedBinding(init, qualifierName)
-                        if (container != null) return container to name
-                    }
-                }
             }
         }
 
-        // 再兜底：本地变量（scope-aware，不全局扫描文件）
-        // 先找最近的作用域（函数/块），再从内向外逐层查找
-        if (contextFile != null) {
-            val variable = findVariableInScope(qualifierExpr, qualifierName, contextFile)
+        // 没有 resolve 结果，说明 qualifierExpr 不是 JSReferenceExpression 或 resolve 失败
+        // 此时 fallback 检查 setup script 中同名变量（Vue useCssModule 场景）
+        if (contextFile != null && qualifierExpr is JSReferenceExpression) {
+            val scriptTag = Util.findScriptTag(contextFile)
+            val variable = Util.findVariableDeclarationByName(qualifierName, scriptTag)
             if (variable != null) {
                 val init = variable.initializer
+                if (init is JSCallExpression && Util.isUseCssModuleFromVue(init)) {
+                    val moduleStyleTag = Util.findModuleStyleTag(contextFile)
+                    if (moduleStyleTag != null) return CssContainer.VueStyleTag(moduleStyleTag, qualifierName, contextFile) to qualifierName
+                }
                 if (init is JSObjectLiteralExpression) return CssContainer.LocalObjectLiteral(init, contextFile, qualifierName) to qualifierName
                 if (init != null) {
                     val (container, name) = fromResolvedBinding(init, qualifierName)
@@ -179,31 +171,7 @@ object CssModuleResolver {
                 }
             }
         }
-        return null
-    }
 
-    /**
-     * 从 qualifierExpr 开始，向外逐层查找名为 [name] 的 JSVariable 声明。
-     * 优先找当前作用域内的变量，避免在整个文件里按文本名匹配到错误变量。
-     */
-    private fun findVariableInScope(qualifierExpr: PsiElement, name: String, contextFile: PsiFile): JSVariable? {
-        // 从 qualifierExpr 开始，逐层向外找 enclosing 函数/文件
-        var scope: PsiElement? = PsiTreeUtil.getParentOfType(qualifierExpr, JSFunction::class.java, JSBlockStatement::class.java)
-        // 如果 qualifierExpr 本身就是顶级表达式（不在任何函数内），scope 会设为 null
-        val seen = mutableSetOf<PsiElement>()
-        while (scope != null) {
-            if (!seen.add(scope)) break
-            val found = PsiTreeUtil.findChildrenOfType(scope, JSVariable::class.java)
-                .firstOrNull { it.name == name }
-            if (found != null) return found
-            scope = PsiTreeUtil.getParentOfType(scope, JSFunction::class.java, JSBlockStatement::class.java)
-        }
-        // 兜底：文件级变量（import binding / 顶级声明）
-        for (child in contextFile.children) {
-            val v = PsiTreeUtil.findChildrenOfType(child, JSVariable::class.java)
-                .firstOrNull { it.name == name }
-            if (v != null) return v
-        }
         return null
     }
 
