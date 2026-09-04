@@ -267,4 +267,13 @@
 
         <!-- postStartupActivity 诊断块已移除（DashStyleLanguageDumpActivity 用完即删） -->
     </extensions>
+
+    <actions>
+        <action id="DashStyle.ConvertClassNameToCssModule"
+                class="com.pan.dashstyle.ConvertClassNameToCssModuleAction"
+                text="Convert className to CSS Module"
+                description="Convert className string literals to CSS Module references">
+            <add-to-group group-id="RefactoringMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
