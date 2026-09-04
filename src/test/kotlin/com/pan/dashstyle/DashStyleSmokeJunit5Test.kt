@@ -81,21 +81,14 @@ class DashStyleSmokeJunit5Test {
     }
 
     @Test
-    @DisplayName("LESS 展开 / Util 核心 API 存在性 smoke")
+    @DisplayName("LESS 展开 / 核心 API 存在性 smoke")
     fun `less ampersand api exists`() {
-        // 用 Java 反射兜底找 expandSelector：Kotlin 把 companion 的方法编译成 Util.Companion.expandSelector，
-        // 所以不仅看 Util 本身的 declaredMethods，也看 companion 里面。
-        val utilCls = Util::class.java
-        val topMethods = utilCls.declaredMethods.map { it.name }.toSet()
-        val companionField = runCatching { utilCls.getDeclaredField("Companion") }.getOrNull()
-        val companionMethods = companionField?.let { f ->
-            f.isAccessible = true
-            f.get(null)?.javaClass?.declaredMethods?.map { it.name }?.toSet().orEmpty()
-        }.orEmpty()
-        val allMethods = topMethods + companionMethods
+        // 重构后 expandSelector 位于 support.CssSelectorUtil（不再在 Util 里）。
+        // 用反射兜底校验该方法确实存在，防止后续重构再次移动后烟雾测试失准。
+        val selectorMethods = CssSelectorUtil::class.java.declaredMethods.map { it.name }.toSet()
         assertTrue(
-            allMethods.any { it.startsWith("expandSelector") },
-            "Util.expandSelector(...) 必须存在（直接或在 Util.Companion 中），实际=$allMethods"
+            selectorMethods.any { it.startsWith("expandSelector") },
+            "CssSelectorUtil.expandSelector(...) 必须存在，实际=$selectorMethods"
         )
         // 基础层保持稳定：camel/kebab 互转
         assertEquals("foo-bar", NamingUtil.camelToKebab("fooBar"))

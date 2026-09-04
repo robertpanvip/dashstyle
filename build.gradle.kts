@@ -84,12 +84,15 @@ intellijPlatform {
 
 tasks {
     withType<JavaCompile> {
-        sourceCompatibility = "21"
-        targetCompatibility = "21"
+        // 本机/Gradle 用 JDK 17（见 gradle.properties 的 org.gradle.java.home），
+        // jvm target 必须 ≤ 运行 JDK，否则 javac 报 "invalid source release: 21"。
+        // 插件运行在 WebStorm 的 JBR 21 上，17 字节码向下兼容，不影响功能。
+        sourceCompatibility = "17"
+        targetCompatibility = "17"
     }
     withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         kotlinOptions {
-            jvmTarget = "21"
+            jvmTarget = "17"
             // -Xsuppress-version-warnings：容忍 IDE SDK 中 Kotlin 2.2 metadata 与插件 2.1.0 编译器的
             //   meta 版本差，仅降级为 warning 而不是 error。
             freeCompilerArgs = freeCompilerArgs + listOf(

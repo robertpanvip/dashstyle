@@ -98,46 +98,46 @@
              按 Enter 直接补全。类清单来自 TailwindClassResolver（纯逻辑，内置常用类）。 -->
         <completion.contributor
                 language="CSS"
-                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+                implementationClass="com.pan.dashstyle.reference.TailwindClassCompletionContributor"/>
         <completion.contributor
                 language="SCSS"
-                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+                implementationClass="com.pan.dashstyle.reference.TailwindClassCompletionContributor"/>
         <completion.contributor
                 language="LESS"
-                implementationClass="com.pan.dashstyle.TailwindClassCompletionContributor"/>
+                implementationClass="com.pan.dashstyle.reference.TailwindClassCompletionContributor"/>
 
         <!-- ========================= 引用 & 跳转 ========================= -->
         <psi.referenceContributor
-                implementation="com.pan.dashstyle.StyleStringKeyReferenceContributor"/>
+                implementation="com.pan.dashstyle.reference.StyleStringKeyReferenceContributor"/>
 
         <!-- styles.xxx member access 也能跳转/补全 -->
         <psi.referenceContributor
-                implementation="com.pan.dashstyle.StyleMemberAccessReferenceContributor"/>
+                implementation="com.pan.dashstyle.reference.StyleMemberAccessReferenceContributor"/>
 
         <!-- ========================= 悬浮文档（#4） ========================= -->
         <lang.documentationProvider
                 language="CSS"
-                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                implementationClass="com.pan.dashstyle.annotator.DashStyleDocumentationProvider"
                 order="first"/>
         <lang.documentationProvider
                 language="JavaScript"
-                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                implementationClass="com.pan.dashstyle.annotator.DashStyleDocumentationProvider"
                 order="first"/>
         <lang.documentationProvider
                 language="TypeScript"
-                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                implementationClass="com.pan.dashstyle.annotator.DashStyleDocumentationProvider"
                 order="first"/>
         <lang.documentationProvider
                 language="TypeScript JSX"
-                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                implementationClass="com.pan.dashstyle.annotator.DashStyleDocumentationProvider"
                 order="first"/>
         <lang.documentationProvider
                 language="SCSS"
-                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                implementationClass="com.pan.dashstyle.annotator.DashStyleDocumentationProvider"
                 order="first"/>
         <lang.documentationProvider
                 language="LESS"
-                implementationClass="com.pan.dashstyle.DashStyleDocumentationProvider"
+                implementationClass="com.pan.dashstyle.annotator.DashStyleDocumentationProvider"
                 order="first"/>
 
         <!-- ========================= 代码检查（#1 未使用 class / #2 重复 declarations） ========================= -->
@@ -154,7 +154,7 @@
                 shortName="DashStyle.UnusedCssClass.Css"
                 enabledByDefault="true"
                 level="WEAK WARNING"
-                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
                 language="SCSS"
                 displayName="Unused CSS Module class"
@@ -162,7 +162,7 @@
                 shortName="DashStyle.UnusedCssClass.Scss"
                 enabledByDefault="true"
                 level="WEAK WARNING"
-                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
                 language="LESS"
                 displayName="Unused CSS Module class"
@@ -170,7 +170,7 @@
                 shortName="DashStyle.UnusedCssClass.Less"
                 enabledByDefault="true"
                 level="WEAK WARNING"
-                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
                 language="ANY"
                 displayName="Unused CSS Module class (fallback)"
@@ -178,7 +178,7 @@
                 shortName="DashStyle.UnusedCssClass.Any"
                 enabledByDefault="true"
                 level="WEAK WARNING"
-                implementationClass="com.pan.dashstyle.UnusedCssModuleClassInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
                 language="CSS"
                 displayName="Duplicate CSS declarations (single file)"
@@ -186,7 +186,7 @@
                 shortName="DashStyle.DuplicateCss.Css"
                 enabledByDefault="true"
                 level="WARNING"
-                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
         <localInspection
                 language="SCSS"
                 displayName="Duplicate CSS declarations (single file)"
@@ -194,7 +194,7 @@
                 shortName="DashStyle.DuplicateCss.Scss"
                 enabledByDefault="true"
                 level="WARNING"
-                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
         <localInspection
                 language="LESS"
                 displayName="Duplicate CSS declarations (single file)"
@@ -202,7 +202,7 @@
                 shortName="DashStyle.DuplicateCss.Less"
                 enabledByDefault="true"
                 level="WARNING"
-                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
         <localInspection
                 language="ANY"
                 displayName="Duplicate CSS declarations (single file, fallback)"
@@ -210,17 +210,17 @@
                 shortName="DashStyle.DuplicateCss.Any"
                 enabledByDefault="true"
                 level="WARNING"
-                implementationClass="com.pan.dashstyle.DuplicateCssDeclarationsInspection"/>
+                implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
 
-        <annotator language="CSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
-        <annotator language="SCSS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
-        <annotator language="LESS" implementationClass="com.pan.dashstyle.DashStyleHighlightAnnotator"/>
+        <annotator language="CSS" implementationClass="com.pan.dashstyle.annotator.DashStyleHighlightAnnotator"/>
+        <annotator language="SCSS" implementationClass="com.pan.dashstyle.annotator.DashStyleHighlightAnnotator"/>
+        <annotator language="LESS" implementationClass="com.pan.dashstyle.annotator.DashStyleHighlightAnnotator"/>
 
         <!-- ========================= 复制粘贴处理器 ========================= -->
         <!-- 用户反馈：复制 `styles.xxx` → 粘贴到别处的场景，IntelliJ 平台自带「Add import on paste」已能自动补 import，
              所以移除 DashStyle 自己实现的 CssModuleImportCopyPasteProcessor（#3）避免两条逻辑冲突。-->
         <copyPastePreProcessor
-                implementation="com.pan.dashstyle.JsonToCssCopyPastePreProcessor"/>
+                implementation="com.pan.dashstyle.action.JsonToCssCopyPastePreProcessor"/>
 
         <!-- ========================= 快速修复 / 意向动作 ========================= -->
         <!-- 重要：这里故意不写 <language> 绑定。
@@ -231,7 +231,7 @@
              isAvailable() 内部已经通过 JSReferenceExpression / JSIndexedPropertyAccessExpression /
              XmlAttribute / CssRuleset 等 PSI 类型做了严格的上下文检查，不会在不相关语言里误触发。-->
         <intentionAction>
-            <className>com.pan.dashstyle.InlineStyleToCssModuleIntention</className>
+            <className>com.pan.dashstyle.action.InlineStyleToCssModuleIntention</className>
             <category>DashStyle</category>
             <description><![CDATA[
               Extracts the inline style object (<code>style={{ ... }}</code> in React/TSX
@@ -247,7 +247,7 @@
         </intentionAction>
 
         <intentionAction>
-            <className>com.pan.dashstyle.CreateMissingCssClassIntention</className>
+            <className>com.pan.dashstyle.action.CreateMissingCssClassIntention</className>
             <category>DashStyle</category>
             <description><![CDATA[
               When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
@@ -260,7 +260,7 @@
         </intentionAction>
 
         <intentionAction>
-            <className>com.pan.dashstyle.ExtractDuplicateDeclarationsAsMixinIntention</className>
+            <className>com.pan.dashstyle.action.ExtractDuplicateDeclarationsAsMixinIntention</className>
             <category>DashStyle</category>
             <description><![CDATA[
               Scans the current CSS/SCSS/LESS file (or the selected portion) for
@@ -280,14 +280,14 @@
 
     <actions>
         <action id="DashStyle.ConvertClassNameToCssModule"
-                class="com.pan.dashstyle.ConvertClassNameToCssModuleAction"
+                class="com.pan.dashstyle.action.ConvertClassNameToCssModuleAction"
                 text="Convert className to CSS Module"
                 description="Convert className string literals to CSS Module references">
             <add-to-group group-id="RefactoringMenu" anchor="last"/>
-            <!-- 右键编辑器 → Refactor 子菜单，保证在 TSX/JSX 里一定能找到 -->
-            <add-to-group group-id="RefactoringPopup" anchor="last"/>
-            <!-- 编辑器右键直接可见（挂到 Refactor 之前），方便 JSX 下快速触发 -->
-            <add-to-group group-id="EditorPopupMenu" relative-to-action="RefactoringPopup" anchor="before"/>
+            <!-- 编辑器右键直接可见，方便 TSX/JSX 下快速触发。
+                 注意：不要引用 "RefactoringPopup" group——该 group id 在 WebStorm 平台未注册，
+                 引用未注册的 group 会在插件加载时抛 ActionManager 断言错误（连累本地集成测试）。 -->
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>
