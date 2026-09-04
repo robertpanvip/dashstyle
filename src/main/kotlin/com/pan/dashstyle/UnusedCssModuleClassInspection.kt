@@ -11,6 +11,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 
@@ -198,28 +199,10 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         private val INLINE_CLASS_RE = Regex("""(?:^|[^\w-])\.-?([_a-zA-Z][_a-zA-Z0-9-]*)""")
 
         // ================================================================
-        // 性能优化：computeFileSnapshot 里会遍历多个候选绑定名（styles/css/classes/...），
-        // 不能在 per-source-file 内层循环里反复构造 Regex。这里把固定绑定名的模式预编译成一次，
-        // 动态 bindingNameHint 仅在确实不在固定集合里时才补一个。
+        // 不再使用 FIXED_BINDINGS 启发式扫描。
+        // 所有引用解析委托给 CssModuleResolver.scanUsages()，它通过 PSI resolve
+        // 确认 qualifier 指向实际的 CssContainer，避免与同名本地变量混淆。
         // ================================================================
-        private val FIXED_BINDINGS = setOf("styles", "css", "classes", "styled", "style", "moduleStyles")
-        private class BindingPatterns(val binding: String) {
-            val memberRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)""")
-            val idxRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
-            val bracketOpenRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[""")
-        }
-        private val FIXED_BINDING_PATTERNS: List<BindingPatterns> = FIXED_BINDINGS.map { BindingPatterns(it) }
-        // Vue $style.member / $style["key"]（不依赖绑定名，可直接预编译）
-        // 注意：允许 \s* 空格，因为 Vue 模板中可能写 $style  [  'flex'  ]
-        private val VUE_MEMBER_RE = Regex("""\${'$'}style\s*\.\s*([A-Za-z_][A-Za-z0-9_-]*)""")
-        private val VUE_IDX_RE = Regex("""\${'$'}style\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
-        // 通用 Vue $xxx 别名模式（覆盖 $module、$classes 等自定义 module 名）
-        // group 1 = alias (style/module/classes...), group 2 = member name
-        private val VUE_ALIAS_MEMBER_RE = Regex("""\${'$'}([A-Za-z_]\w*)\s*\.\s*([A-Za-z_][A-Za-z0-9_-]*)""")
-        // group 1 = alias, group 2 = quote, group 3 = key name
-        private val VUE_ALIAS_IDX_RE = Regex("""\${'$'}([A-Za-z_]\w*)\s*\[\s*(['"`])([^'"`]+)\2\s*\]""")
-        // 检测 Vue $xxx[ 开括号（用于动态引用检测）
-        private val VUE_ALIAS_BRACKET_OPEN_RE = Regex("""\${'$'}([A-Za-z_]\w*)\s*\[""")
 
         /** Ruleset 级 class 名提取（按 PSI selectorList 正则，不依赖语言）。静态化供 companion 与实例两处复用。 */
         private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
@@ -331,6 +314,32 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             return CachedValueProvider.Result.create(snap, deps)
         }
 
+        /**
+         * 为引用源文件创建对应的 CssContainer，供 scanUsages 使用。
+         * - 对于 Vue 文件，优先查找 <style module> 标签创建 VueStyleTag 容器
+         * - 对于 JS/TS/JSX/TSX 文件，创建 ImportedFile 容器
+         */
+        private fun resolveContainerForUsageScan(
+            cssFile: PsiFile,
+            sourceFile: PsiFile,
+            bindingName: String
+        ): CssModuleResolver.CssContainer? {
+            val cssVf = cssFile.virtualFile ?: return null
+
+            // Vue 文件：尝试匹配 <style module> 标签
+            if (sourceFile.virtualFile?.extension?.lowercase() == "vue" || sourceFile is XmlFile) {
+                val modTag = PsiTreeUtil.findChildrenOfType(sourceFile, XmlTag::class.java)
+                    .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+                if (modTag != null) {
+                    val alias = if (bindingName.isBlank() || bindingName == "style") "\$style" else "\$$bindingName"
+                    return CssModuleResolver.CssContainer.VueStyleTag(modTag, alias, sourceFile)
+                }
+            }
+
+            // 默认：创建 ImportedFile 容器
+            return CssModuleResolver.CssContainer.ImportedFile(cssFile, cssVf, bindingName, null)
+        }
+
         fun computeFileSnapshot(
             cssFile: PsiFile,
             references: List<Pair<PsiFile, String>>
@@ -339,105 +348,20 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             val used = mutableSetOf<String>()
             var hasDynamic = false
 
-            // 候选绑定名模式：固定集合预编译 + 动态 hint 兜底（避免 per-source-file 内层循环重复构造 Regex）
-            val patterns = ArrayList<BindingPatterns>(FIXED_BINDING_PATTERNS.size + 1)
-            patterns += FIXED_BINDING_PATTERNS
-            val hint = references.firstOrNull()?.second?.ifBlank { "styles" } ?: "styles"
-            if (hint !in FIXED_BINDINGS) patterns += BindingPatterns(hint)
-
-            for ((srcPsi, _) in references) {
+            // 通过 CssModuleResolver.scanUsages() 进行绑定感知扫描。
+            // 每个 qualifier 都通过 PSI resolve 确认其指向的 CssContainer 与目标容器相同，
+            // 不依赖名称匹配，避免与同名本地变量混淆。
+            for ((srcPsi, bindingName) in references) {
                 val srcText = runCatching { srcPsi.text }.getOrNull().orEmpty()
                 if (srcText.isEmpty()) continue
 
-                // --- 分析 bindingName[expr] 括号内表达式，提取已知字符串 + 判断是否动态 ---
-                // 替代旧版 dynRe 的"只检查首字符是否引号"的粗粒度判断。
-                // 新逻辑：配平括号，提取 [expr] 内容，尝试从 ternaries / template literals 中提取字符串字面量。
-                // 只有完全无法解析时才算动态。
-                val bracketStrings = mutableListOf<String>()
-                for (bp in patterns) {
-                    val (extracted, isDynamic) = analyzeBracketExpressions(srcText, bp)
-                    if (isDynamic) {
-                        hasDynamic = true
-                        break
-                    }
-                    bracketStrings += extracted
+                val container = resolveContainerForUsageScan(cssFile, srcPsi, bindingName) ?: continue
+                val (usages, isDynamic) = CssModuleResolver.scanUsages(srcPsi, container)
+                used += usages
+                if (isDynamic) {
+                    hasDynamic = true
+                    break
                 }
-                if (hasDynamic) break
-
-                // --- 文本级 usedClassNames 扫描：同时覆盖 member access 和字符串索引 ---
-                // 注意：used 里同时存 camelCase(fooBar) + kebab(foo-bar)，匹配双风格。
-                for (bp in patterns) {
-                    // styles.fooBar
-                    for (mm in bp.memberRe.findAll(srcText)) {
-                        val name = mm.groupValues[1]
-                        used += name
-                        used += Util.camelToKebab(name)
-                    }
-                    // styles["foo-bar"] / styles['foo-bar'] / styles[`fooBar`]
-                    // 注意：idxRe 只匹配完全用引号包裹的字符串字面量，不匹配 ternaries / template literals
-                    for (mm in bp.idxRe.findAll(srcText)) {
-                        val name = mm.groupValues[2]
-                        used += name
-                        used += Util.camelToKebab(name)
-                        used += Util.kebabToCamel(name)
-                    }
-                }
-                // 把从 bracket 表达式（ternary / template literal）中提取的字符串也加入 used
-                for (s in bracketStrings) {
-                    used += s
-                    used += Util.kebabToCamel(s)
-                    used += Util.camelToKebab(s)
-                }
-
-                // --- Vue 场景 :class="$style.xxx" / :class="$style['xxx']" / $xxx 自定义别名 ---
-                if (srcPsi is XmlFile || (srcPsi.virtualFile?.extension?.lowercase() == "vue")) {
-                    // 精确匹配 $style.xxx（保留原始精确匹配，兼容性好）
-                    for (mm in VUE_MEMBER_RE.findAll(srcText)) {
-                        val n = mm.groupValues[1]
-                        used += n
-                        used += Util.camelToKebab(n)
-                        used += Util.kebabToCamel(n)
-                    }
-                    for (mm in VUE_IDX_RE.findAll(srcText)) {
-                        val n = mm.groupValues[2]
-                        used += n
-                        used += Util.camelToKebab(n)
-                        used += Util.kebabToCamel(n)
-                    }
-                    // 通用 $xxx 别名匹配（覆盖 $module、$classes 等自定义 module 名）
-                    // 注意：VUE_ALIAS_MEMBER_RE 是 VUE_MEMBER_RE 的超集（$style 也会被匹配），
-                    // 但重复加入 used 无害（Set 去重），且能兜底自定义别名。
-                    for (mm in VUE_ALIAS_MEMBER_RE.findAll(srcText)) {
-                        val n = mm.groupValues[2]
-                        used += n
-                        used += Util.camelToKebab(n)
-                        used += Util.kebabToCamel(n)
-                    }
-                    for (mm in VUE_ALIAS_IDX_RE.findAll(srcText)) {
-                        val n = mm.groupValues[3]
-                        used += n
-                        used += Util.camelToKebab(n)
-                        used += Util.kebabToCamel(n)
-                    }
-                    // 检测 Vue 模板中的动态引用：$xxx[expr] 其中 expr 不是字符串字面量
-                    // 这覆盖了自定义 module 别名（如 $module[someVar]），\b 前缀版无法匹配此类场景
-                    if (!hasDynamic) {
-                        for (mm in VUE_ALIAS_BRACKET_OPEN_RE.findAll(srcText)) {
-                            val openPos = mm.range.last
-                            val closePos = findMatchingCloseBracket(srcText, openPos) ?: continue
-                            val content = srcText.substring(openPos + 1, closePos).trim()
-                            if (!isStringLiteral(content)) {
-                                hasDynamic = true
-                                break
-                            }
-                        }
-                    }
-                }
-
-                // 注意：只统计 binding 成员访问（styles.foo / styles["foo"]）与 Vue $style 引用。
-                // 普通字符串 className="foo" / class="foo" 是全局 CSS 类名，与 CSS Module 导出无关，
-                // 绝不能计入 used（否则 <div className="foo"/> 会误判 .foo 已使用）。
-                // clsx(styles.foo, cond && styles.bar) 已由上面的 memberRe/idxRe 文本扫描覆盖。
             }
 
             if (hasDynamic) return Snapshot(used, true, emptyMap(), emptySet())
@@ -537,180 +461,6 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             }?.name ?: imp.importedBindings.firstOrNull()?.name ?: "styles"
         }
 
-        // ================================================================
-        // 括号表达式分析：styles[expr] 中 expr 的静态分析
-        // 替代旧版"只看首字符是否引号"的粗粒度判断，尝试从表达式提取已知字符串。
-        // ================================================================
-
-        /**
-         * 分析 [binding] 后紧跟的 `[expr]` 形式的括号表达式，
-         * 返回 (提取到的字符串列表, 是否有完全动态的引用)。
-         *
-         * 对于 styles[cond ? "a" : "b"] 会提取 ["a", "b"] 且 isDynamic=false。
-         * 对于 styles[unknownVar] 会返回 ([], true)。
-         * 对于纯字符串索引 styles["foo"] 不会匹配这里（idxRe 已处理）。
-         */
-        private fun analyzeBracketExpressions(text: String, bp: BindingPatterns): Pair<List<String>, Boolean> {
-            val extracted = mutableListOf<String>()
-            var searchFrom = 0
-            while (true) {
-                val m = bp.bracketOpenRe.find(text, searchFrom) ?: break
-                val openPos = m.range.last  // '[' 的位置
-                // 配平括号找到匹配的 ']'，跳过字符串和模板字面量
-                val closePos = findMatchingCloseBracket(text, openPos) ?: break
-                val content = text.substring(openPos + 1, closePos).trim()
-                if (content.isEmpty()) {
-                    searchFrom = closePos + 1
-                    continue
-                }
-
-                // 跳过纯字符串字面量（已被 idxRe 处理）
-                if (isStringLiteral(content)) {
-                    searchFrom = closePos + 1
-                    continue
-                }
-
-                // 尝试从表达式提取字符串字面量
-                val strings = extractStringsFromExpr(content, text, openPos + 1)
-                if (strings.isEmpty()) {
-                    // 完全无法提取 → 真正的动态引用
-                    return emptyList<String>() to true
-                }
-                extracted += strings
-                searchFrom = closePos + 1
-            }
-            return extracted to false
-        }
-
-        /** 从 openPos 开始配平方括号，返回匹配的 ']' 位置，跳过字符串/模板字面量内的括号。 */
-        private fun findMatchingCloseBracket(text: String, openPos: Int): Int? {
-            if (openPos >= text.length || text[openPos] != '[') return null
-            var depth = 0
-            var i = openPos
-            while (i < text.length) {
-                val c = text[i]
-                when {
-                    c == '[' && depth >= 0 -> depth++
-                    c == ']' -> { depth--; if (depth == 0) return i }
-                    c == '"' -> { i = skipToEndOfString(text, i, '"'); if (i < 0) return null }
-                    c == '\'' -> { i = skipToEndOfString(text, i, '\''); if (i < 0) return null }
-                    c == '`' -> { i = skipToEndOfTemplate(text, i); if (i < 0) return null }
-                }
-                i++
-            }
-            return null
-        }
-
-        private fun skipToEndOfString(text: String, from: Int, quote: Char): Int {
-            var i = from + 1
-            while (i < text.length) {
-                val c = text[i]
-                if (c == '\\') { i += 2; continue }
-                if (c == quote) return i
-                i++
-            }
-            return -1
-        }
-
-        private fun skipToEndOfTemplate(text: String, from: Int): Int {
-            var i = from + 1
-            while (i < text.length) {
-                val c = text[i]
-                if (c == '\\') { i += 2; continue }
-                if (c == '`') return i
-                if (c == '$' && i + 1 < text.length && text[i + 1] == '{') {
-                    val close = findMatchingCloseBrace(text, i + 1) ?: return -1
-                    i = close + 1
-                    continue
-                }
-                i++
-            }
-            return -1
-        }
-
-        private fun findMatchingCloseBrace(text: String, openPos: Int): Int? {
-            var depth = 0
-            var i = openPos
-            while (i < text.length) {
-                when (text[i]) {
-                    '{' -> depth++
-                    '}' -> { depth--; if (depth == 0) return i }
-                    '"' -> { i = skipToEndOfString(text, i, '"'); if (i < 0) return null }
-                    '\'' -> { i = skipToEndOfString(text, i, '\''); if (i < 0) return null }
-                    '`' -> { i = skipToEndOfTemplate(text, i); if (i < 0) return null }
-                }
-                i++
-            }
-            return null
-        }
-
-        private fun isStringLiteral(s: String): Boolean {
-            val t = s.trim()
-            return (t.startsWith("'") && t.endsWith("'")) ||
-                (t.startsWith("\"") && t.endsWith("\"")) ||
-                (t.startsWith("`") && t.endsWith("`"))
-        }
-
-        /**
-         * 尝试从 [expr] 内容中提取字符串字面量。
-         * content 是 styles[ 和 ] 之间的文本（不含括号本身）。
-         * openPos 是 content 在 text 中的起始位置（用于跨多字符模式匹配）。
-         */
-        private fun extractStringsFromExpr(content: String, text: String, openPos: Int): List<String> {
-            val results = mutableListOf<String>()
-
-            // Case 1: ternary — cond ? "a" : "b" 或 cond ? 'a' : 'b'
-            // 用更健壮的方式：找到 ? 和 : 的位置，然后提取两侧的字符串
-            val qIdx = content.indexOf('?')
-            val cIdx = content.indexOf(':')
-            if (qIdx >= 0 && cIdx > qIdx) {
-                val thenPart = content.substring(qIdx + 1, cIdx).trim()
-                val elsePart = content.substring(cIdx + 1).trim()
-                for (part in listOf(thenPart, elsePart)) {
-                    val str = tryUnquote(part)
-                    if (str != null) results += str
-                }
-                // 如果 ternary 的两边都能提取到字符串，就算成功
-                if (results.size == 2) return results.distinct()
-                results.clear()
-            }
-
-            // Case 2: template literal — `prefix-${var}-suffix`
-            val tmpl = tryUnquoteBacktick(content.trim())
-            if (tmpl != null) {
-                // 按 ${...} 拆分，保留静态部分（非空）
-                val parts = tmpl.split(Regex("""\$\{[^}]*\}"""))
-                results.addAll(parts.filter { it.isNotEmpty() })
-                if (results.isNotEmpty()) return results.distinct()
-            }
-
-            // Case 3: string concatenation — "a" + "b" 或 'a' + 'b'
-            if (content.contains("+")) {
-                val parts = content.split("+").map { it.trim() }
-                val allStrings = parts.all { tryUnquote(it) != null }
-                if (allStrings) {
-                    val combined = parts.joinToString("") { tryUnquote(it)!! }
-                    if (combined.isNotEmpty()) return listOf(combined)
-                }
-            }
-
-            // 无法提取任何字符串
-            return emptyList()
-        }
-
-        private fun tryUnquote(s: String): String? {
-            val t = s.trim()
-            return when {
-                t.startsWith("'") && t.endsWith("'") && t.length >= 2 -> t.substring(1, t.length - 1)
-                t.startsWith("\"") && t.endsWith("\"") && t.length >= 2 -> t.substring(1, t.length - 1)
-                else -> null
-            }
-        }
-
-        private fun tryUnquoteBacktick(s: String): String? {
-            val t = s.trim()
-            return if (t.startsWith("`") && t.endsWith("`") && t.length >= 2) t.substring(1, t.length - 1)
-            else null
-        }
+        
     }
 }

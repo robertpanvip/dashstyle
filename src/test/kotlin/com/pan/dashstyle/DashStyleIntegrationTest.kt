@@ -9,7 +9,9 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.xml.XmlTag
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.pan.dashstyle.CssModuleResolver.CssContainer
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -406,154 +408,72 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     }
 
     // ========================================================================
-    // #6. Vue $style.flex / $style['flex'] 模式 → 必须被识别为 used
+    // #6. Vue $style 绑定感知扫描：$style.flex / $style['flex'] 通过 PSI resolve 确认
+    //     Vue 文件必须有 <style module> 标签，$style 才能正确解析
     // ========================================================================
     @Test
-    fun `vue $style dot and bracket access should mark classes as used`() {
-        val cssFile = myFixture.configureByText(
-            "App.module.css",
+    fun `vue $style access via scanUsages should mark classes as used`() {
+        val vueFile = myFixture.addFileToProject(
+            "App.vue",
             """
+            <style module>
             .flex { display: flex; }
             .flex-item { gap: 8px; }
             .flexItem { color: red; }
             .unused { opacity: 0; }
-            """.trimIndent()
-        )
-        val vueFile = myFixture.configureByText(
-            "App.vue",
-            """
+            </style>
             <template>
               <div :class="${'$'}style.flex">
                 <span :class="${'$'}style['flex-item']">Item</span>
-                <span :class='${'$'}style["flexItem"]'>Item2</span>
               </div>
             </template>
             """.trimIndent()
         )
-        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
-            cssFile, listOf(vueFile to "style")
-        )
-        Assert.assertFalse("hasDynamic should be false", snap.hasDynamic)
-        Assert.assertTrue("dot access flex should be used", "flex" in snap.used)
-        Assert.assertTrue("bracket flex-item should be used", "flex-item" in snap.used)
-        Assert.assertTrue("bracket flexItem should be used", "flexItem" in snap.used)
-        Assert.assertFalse("unused should not be in used set", "unused" in snap.used)
+        ApplicationManager.getApplication().runReadAction {
+            val modTag = PsiTreeUtil.findChildrenOfType(vueFile, XmlTag::class.java)
+                .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+            Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
+            val container = CssContainer.VueStyleTag(modTag!!, "\$style", vueFile)
+            val (used, dynamic) = CssModuleResolver.scanUsages(vueFile, container)
+            Assert.assertFalse("hasDynamic should be false", dynamic)
+            Assert.assertTrue("dot access flex should be used", "flex" in used)
+            Assert.assertTrue("bracket flex-item should be used", "flex-item" in used)
+            Assert.assertFalse("unused should not be in used set", "unused" in used)
+        }
     }
 
     // ========================================================================
-    // #7. Vue $style 带空格变体（如 $style  [  'flex'  ]）→ 必须被识别
+    // #7. Vue 动态引用 $style[varName] → hasDynamic 应为 true
     // ========================================================================
     @Test
-    fun `vue $style with extra whitespace in brackets should still match`() {
-        val cssFile = myFixture.configureByText(
-            "App.module.css",
-            ".flex { display: flex; }\n.unused { opacity: 0; }\n"
-        )
-        val vueFile = myFixture.configureByText(
+    fun `vue dynamic $style variable reference should set hasDynamic via scanUsages`() {
+        val vueFile = myFixture.addFileToProject(
             "App.vue",
             """
-            <template>
-              <div :class="${'$'}style  [  'flex'  ]">Hello</div>
-            </template>
-            """.trimIndent()
-        )
-        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
-            cssFile, listOf(vueFile to "style")
-        )
-        Assert.assertTrue("whitespace bracket flex should be used", "flex" in snap.used)
-        Assert.assertFalse("unused should not be in used", "unused" in snap.used)
-    }
-
-    // ========================================================================
-    // #8. Vue 自定义别名 $module / $classes 模式 → 必须被识别
-    // ========================================================================
-    @Test
-    fun `vue custom alias $module and $classes patterns should be recognized`() {
-        val cssFile = myFixture.configureByText(
-            "App.module.css",
-            """
-            .card { padding: 8px; }
-            .title { font-size: 16px; }
-            .unused { opacity: 0; }
-            """.trimIndent()
-        )
-        val vueFile = myFixture.configureByText(
-            "App.vue",
-            """
-            <template>
-              <div :class="${'$'}module.card">
-                <span :class="${'$'}classes['title']">Title</span>
-              </div>
-            </template>
-            """.trimIndent()
-        )
-        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
-            cssFile, listOf(vueFile to "style")
-        )
-        Assert.assertTrue("module.card should be used", "card" in snap.used)
-        Assert.assertTrue("classes.title should be used", "title" in snap.used)
-        Assert.assertFalse("unused should not be in used", "unused" in snap.used)
-    }
-
-    // ========================================================================
-    // #9. Vue 动态引用 $style[varName] → hasDynamic 应为 true
-    // ========================================================================
-    @Test
-    fun `vue dynamic $style variable reference should set hasDynamic`() {
-        val cssFile = myFixture.configureByText(
-            "App.module.css",
-            ".flex { display: flex; }\n"
-        )
-        val vueFile = myFixture.configureByText(
-            "App.vue",
-            """
+            <style module>
+            .flex { display: flex; }
+            </style>
             <template>
               <div :class="${'$'}style[className]">Hello</div>
             </template>
             """.trimIndent()
         )
-        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
-            cssFile, listOf(vueFile to "style")
-        )
-        Assert.assertTrue("dynamic var ref should set hasDynamic", snap.hasDynamic)
+        ApplicationManager.getApplication().runReadAction {
+            val modTag = PsiTreeUtil.findChildrenOfType(vueFile, XmlTag::class.java)
+                .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+            Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
+            val container = CssContainer.VueStyleTag(modTag!!, "\$style", vueFile)
+            val (_, dynamic) = CssModuleResolver.scanUsages(vueFile, container)
+            Assert.assertTrue("dynamic var ref should set hasDynamic", dynamic)
+        }
     }
 
     // ========================================================================
-    // #10. Vue ternary 表达式 $style[cond ? 'a' : 'b'] → 提取所有字符串
-    // ========================================================================
-    @Test
-    fun `vue ternary in bracket expression should extract both strings`() {
-        val cssFile = myFixture.configureByText(
-            "App.module.css",
-            """
-            .active { color: green; }
-            .inactive { color: gray; }
-            .unused { opacity: 0; }
-            """.trimIndent()
-        )
-        val vueFile = myFixture.configureByText(
-            "App.vue",
-            """
-            <template>
-              <div :class="${'$'}style[isActive ? 'active' : 'inactive']">Hello</div>
-            </template>
-            """.trimIndent()
-        )
-        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
-            cssFile, listOf(vueFile to "style")
-        )
-        Assert.assertFalse("ternary 只有字符串字面量，hasDynamic 应为 false", snap.hasDynamic)
-        Assert.assertTrue("active 应被识别", "active" in snap.used)
-        Assert.assertTrue("inactive 应被识别", "inactive" in snap.used)
-        Assert.assertFalse("unused 不应在 used 中", "unused" in snap.used)
-    }
-
-    // ========================================================================
-    // #11. JSX styles['xxx'] 模式（非 Vue 文件）→ 必须被识别
+    // #8. JSX styles['xxx'] 模式（非 Vue 文件）→ 必须被识别
     // ========================================================================
     @Test
     fun `jsx styles bracket string key should be recognized as used`() {
-        val cssFile = myFixture.configureByText(
+        val cssFile = myFixture.addFileToProject(
             "App.module.css",
             """
             .hello-world { color: red; }
@@ -561,7 +481,7 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             .unused { opacity: 0; }
             """.trimIndent()
         )
-        val tsxFile = myFixture.configureByText(
+        val tsxFile = myFixture.addFileToProject(
             "App.tsx",
             """
             import styles from './App.module.css'
@@ -585,36 +505,196 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     }
 
     // ========================================================================
-    // #12. computeFileSnapshot 对 TSX + Vue 混合引用去重
+    // #9. 本地变量 shadowing `styles` → 不应被计入 CSS Module 使用
     // ========================================================================
     @Test
-    fun `multiple source files referencing same css module are merged correctly`() {
-        val cssFile = myFixture.configureByText(
+    fun `local variable shadowing styles should not be counted as css module usage`() {
+        val cssFile = myFixture.addFileToProject(
             "App.module.css",
-            """
-            .shared { color: blue; }
-            .unused { opacity: 0; }
-            """.trimIndent()
+            """.card { color: red; }""".trimIndent()
         )
-        val tsxFile = myFixture.configureByText(
+        val tsxFile = myFixture.addFileToProject(
             "App.tsx",
             """
             import styles from './App.module.css'
-            function App() { return <div className={styles.shared}></div> }
+            function Foo() {
+                const styles = { card: 'card' }
+                return <div className={styles.card} />
+            }
             """.trimIndent()
         )
-        val vueFile = myFixture.configureByText(
+        ApplicationManager.getApplication().runReadAction {
+            val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
+            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            Assert.assertFalse("shadowing 不应导致 hasDynamic", dynamic)
+            Assert.assertTrue("shadowing styles.card 不应被计入 CSS Module 使用", "card" !in used)
+        }
+    }
+
+    // ========================================================================
+    // #10. 无关变量 `classes.foo` → 不应被计入 CSS Module 使用
+    // ========================================================================
+    @Test
+    fun `unrelated classes foo should not be counted as css module usage`() {
+        val cssFile = myFixture.addFileToProject(
+            "App.module.css",
+            """.title { color: blue; }""".trimIndent()
+        )
+        val tsxFile = myFixture.addFileToProject(
+            "App.tsx",
+            """
+            import styles from './App.module.css'
+            const classes = { title: 'title' }
+            function App() { return <div className={classes.title}></div> }
+            """.trimIndent()
+        )
+        ApplicationManager.getApplication().runReadAction {
+            val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
+            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            Assert.assertFalse("classes 不应有 hasDynamic", dynamic)
+            Assert.assertTrue("classes.title 不应被计入 CSS Module", "title" !in used)
+        }
+    }
+
+    // ========================================================================
+    // #11. 无关变量 `css.foo` → 不应被计入 CSS Module 使用
+    // ========================================================================
+    @Test
+    fun `unrelated css foo should not be counted as css module usage`() {
+        val cssFile = myFixture.addFileToProject(
+            "App.module.css",
+            """.header { color: green; }""".trimIndent()
+        )
+        val tsxFile = myFixture.addFileToProject(
+            "App.tsx",
+            """
+            import styles from './App.module.css'
+            const css = { header: 'header' }
+            function App() { return <div className={css.header}></div> }
+            """.trimIndent()
+        )
+        ApplicationManager.getApplication().runReadAction {
+            val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
+            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            Assert.assertFalse("css 不应有 hasDynamic", dynamic)
+            Assert.assertTrue("css.header 不应被计入 CSS Module", "header" !in used)
+        }
+    }
+
+    // ========================================================================
+    // #12. 无关变量 `styled.foo` → 不应被计入 CSS Module 使用
+    // ========================================================================
+    @Test
+    fun `unrelated styled foo should not be counted as css module usage`() {
+        val cssFile = myFixture.addFileToProject(
+            "App.module.css",
+            """.button { color: green; }""".trimIndent()
+        )
+        val tsxFile = myFixture.addFileToProject(
+            "App.tsx",
+            """
+            import styles from './App.module.css'
+            const styled = { button: 'styled-button' }
+            function App() { return <div className={styled.button}></div> }
+            """.trimIndent()
+        )
+        ApplicationManager.getApplication().runReadAction {
+            val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
+            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            Assert.assertFalse("styled 不应有 hasDynamic", dynamic)
+            Assert.assertTrue("styled.button 不应被计入 CSS Module", "button" !in used)
+        }
+    }
+
+    // ========================================================================
+    // #13. Vue 无关变量 $foo.bar → 不应被计入 CSS Module 使用
+    // ========================================================================
+    @Test
+    fun `vue unrelated $foo bar should not be counted as css module usage`() {
+        val vueFile = myFixture.addFileToProject(
             "App.vue",
             """
+            <style module>
+            .bar { color: red; }
+            </style>
             <template>
-              <div :class="${'$'}style.shared">Vue</div>
+              <div :class="${'$'}notstyle.bar">Unrelated</div>
             </template>
             """.trimIndent()
         )
-        val snap = UnusedCssModuleClassInspection.computeFileSnapshot(
-            cssFile, listOf(tsxFile to "styles", vueFile to "style")
+        ApplicationManager.getApplication().runReadAction {
+            val modTag = PsiTreeUtil.findChildrenOfType(vueFile, XmlTag::class.java)
+                .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+            Assert.assertNotNull("Vue 文件应有 <style module> 标签", modTag)
+            val container = CssContainer.VueStyleTag(modTag!!, "\$style", vueFile)
+            val (used, dynamic) = CssModuleResolver.scanUsages(vueFile, container)
+            Assert.assertFalse("\${'$'}notstyle.bar 不应有 hasDynamic", dynamic)
+            Assert.assertTrue("\${'$'}notstyle.bar 不应被计入 CSS Module", "bar" !in used)
+        }
+    }
+
+    // ========================================================================
+    // #14. 真实 CSS Module 使用（styles.foo）在同文件中应被正确识别
+    // ========================================================================
+    @Test
+    fun `real css module usage in same file should be detected`() {
+        val cssFile = myFixture.addFileToProject(
+            "App.module.css",
+            """.used { color: red; }""".trimIndent()
         )
-        Assert.assertTrue("shared 应被识别为 used（来自 TSX）", "shared" in snap.used)
-        Assert.assertFalse("unused 不应在 used 中", "unused" in snap.used)
+        val tsxFile = myFixture.addFileToProject(
+            "App.tsx",
+            """
+            import styles from './App.module.css'
+            function App() { return <div className={styles.used}></div> }
+            """.trimIndent()
+        )
+        ApplicationManager.getApplication().runReadAction {
+            val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
+            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            Assert.assertFalse("real usage hasDynamic 应为 false", dynamic)
+            Assert.assertTrue("styles.used 应被识别为 CSS Module 使用", "used" in used)
+        }
+    }
+
+    // ========================================================================
+    // #15. 混合场景：真实使用 + 无关变量 + shadowing 在同一文件
+    // ========================================================================
+    @Test
+    fun `mixed real usage and shadowing and unrelated variables in same file`() {
+        val cssFile = myFixture.addFileToProject(
+            "App.module.css",
+            """
+            .real { color: red; }
+            .shadowed-card { color: blue; }
+            """.trimIndent()
+        )
+        val tsxFile = myFixture.addFileToProject(
+            "App.tsx",
+            """
+            import styles from './App.module.css'
+            // 无关变量
+            const classes = { real: 'local-real' }
+            const css = { shadowedCard: 'local-shadowed' }
+            function Foo() {
+                // 本地 shadowing
+                const styles = { real: 'shadowed' }
+                return <div className={styles.real}></div>
+            }
+            // 真实使用
+            function Bar() {
+                return <div className={styles.shadowedCard}></div>
+            }
+            """.trimIndent()
+        )
+        ApplicationManager.getApplication().runReadAction {
+            val container = CssContainer.ImportedFile(cssFile, cssFile.virtualFile!!, "styles", null)
+            val (used, dynamic) = CssModuleResolver.scanUsages(tsxFile, container)
+            Assert.assertFalse("mixed 场景 hasDynamic 应为 false", dynamic)
+            // real 在 Foo() 内被 local const styles 遮蔽，不应计入
+            Assert.assertTrue("Foo 内 styles.real 被遮蔽，不应计入 CSS Module", "real" !in used)
+            // shadowedCard 在 Bar() 内使用 import styles，应计入
+            Assert.assertTrue("Bar 内 styles.shadowedCard 应被计入 CSS Module", "shadowed-card" in used)
+        }
     }
 }

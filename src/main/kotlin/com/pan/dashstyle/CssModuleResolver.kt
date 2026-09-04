@@ -36,12 +36,39 @@ object CssModuleResolver {
     )
 
     sealed class CssContainer {
-        data class ImportedFile(
+        /**
+         * 表示一个 CSS Module 文件及其在 JS 中的 import binding。
+         *
+         * 注意：equals/hashCode 仅基于 psiFile + virtualFile + importBindingName，
+         * **不包含** importDeclaration。这是因为 resolveQualifier 在解析引用时
+         * 会找到真实的 ES6ImportDeclaration（非 null），而调用方（如
+         * resolveContainerForUsageScan、测试代码）可能传 null。如果 data class
+         * 自动把 importDeclaration 纳入 equals，就会导致容器比较失败，
+         * 所有 usage 扫描都被过滤掉。
+         */
+        class ImportedFile(
             val psiFile: PsiFile,
             val virtualFile: VirtualFile,
             val importBindingName: String,
             val importDeclaration: ES6ImportDeclaration?
-        ) : CssContainer()
+        ) : CssContainer() {
+            override fun equals(other: Any?): Boolean {
+                if (this === other) return true
+                if (other !is ImportedFile) return false
+                return psiFile == other.psiFile &&
+                        virtualFile == other.virtualFile &&
+                        importBindingName == other.importBindingName
+            }
+            override fun hashCode(): Int {
+                var result = psiFile.hashCode()
+                result = 31 * result + virtualFile.hashCode()
+                result = 31 * result + importBindingName.hashCode()
+                return result
+            }
+            override fun toString(): String {
+                return "ImportedFile(psiFile=$psiFile, vf=$virtualFile, binding=$importBindingName)"
+            }
+        }
 
         data class VueStyleTag(
             val styleTag: XmlTag,
@@ -296,26 +323,20 @@ object CssModuleResolver {
      * 遍历 sourceFile 内所有针对指定 container 绑定名的引用，产出 class 使用集合。
      * 仅处理：styles.fooBar / styles["foo-bar"] / :class="$style.fooBar"。
      * 动态访问 styles[expr] 会被标为 "any usage"，caller 据此决定是否跳过整个置灰。
+     *
+     * 注意：每个 qualifier 都通过 PSI resolve 确认其指向的 CssContainer 与传入的 container
+     * 相同，**不依赖**名称匹配。这避免了本地变量（如 `const styles = { card: 'card' }`）
+     * 与 CSS Module import 同名时产生的误判。
      */
     fun scanUsages(sourceFile: PsiFile, container: CssContainer): Pair<MutableSet<String>, Boolean /* hasDynamic */> {
         val used = mutableSetOf<String>()
         var dynamic = false
 
-        val qualifierNames: Set<String> = when (container) {
-            is CssContainer.ImportedFile -> setOf(container.importBindingName)
-            is CssContainer.VueStyleTag -> setOf(container.moduleAlias, container.moduleAlias.removePrefix("$"))
-            is CssContainer.LocalObjectLiteral -> setOf(container.variableName)
-        }
-
-        // 遍历所有 JSIndexedPropertyAccessExpression
+        // 1. JSIndexedPropertyAccessExpression: styles["foo"]
         PsiTreeUtil.findChildrenOfType(sourceFile, JSIndexedPropertyAccessExpression::class.java).forEach { idx ->
             val q = idx.qualifier ?: return@forEach
-            if (q.text !in qualifierNames) {
-                // 再深入一层：resolve 一下 qualifier 确认绑定名
-                val resolved = (q as? JSReferenceExpression)?.reference?.resolve()
-                val (c, _) = fromResolvedBinding(resolved ?: return@forEach, q.text)
-                if (c == null || c != container) return@forEach
-            }
+            val (c, _) = resolveQualifier(q, sourceFile) ?: return@forEach
+            if (c != container) return@forEach
             val inner = idx.indexExpression
             when {
                 inner is JSLiteralExpression -> {
@@ -327,14 +348,11 @@ object CssModuleResolver {
             }
         }
 
-        // 遍历所有 JSReferenceExpression，且 qualifier.text == 绑定名
+        // 2. JSReferenceExpression with qualifier: styles.foo
         PsiTreeUtil.findChildrenOfType(sourceFile, JSReferenceExpression::class.java).forEach { ref ->
             val q = ref.qualifier ?: return@forEach
-            if (q.text !in qualifierNames) {
-                val resolved = (q as? JSReferenceExpression)?.reference?.resolve() ?: return@forEach
-                val (c, _) = fromResolvedBinding(resolved, q.text)
-                if (c == null || c != container) return@forEach
-            }
+            val (c, _) = resolveQualifier(q, sourceFile) ?: return@forEach
+            if (c != container) return@forEach
             val name = ref.referenceName ?: return@forEach
             if (name == "let" || name == "const" || name == "var") return@forEach
             val kebab = if (name.contains("-")) name else Util.camelToKebab(name)
