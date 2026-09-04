@@ -11,13 +11,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.InputValidatorEx
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
 import com.intellij.psi.css.CssFile
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlTag
-import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.JSObjectLiteralExpression
 import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
 import com.intellij.lang.css.CSSLanguage
@@ -35,7 +33,6 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         private val VALID_JSX_STYLE_RE = Regex("""^\s*style\s*=\s*""")
         private val VALID_VUE_STYLE_RE = Regex("""^\s*(?:v-bind:)?style\s*=\s*""")
         private val CLASS_NAME_RE = Regex("""^[_a-zA-Z][_a-zA-Z0-9-]*$""")
-        private val MODULE_EXTS = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
     }
 
     override fun getText(): String = "Extract inline style to CSS Module..."
@@ -442,73 +439,21 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
 
         // Vue：优先同文件 <style module>，其次任何 <style>
         if (ext == "vue") {
-            val styles = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
-                .filter { it.name.equals("style", true) }
-            val mod = styles.firstOrNull { it.getAttribute("module") != null }
-            if (mod != null) {
-                val modValue = mod.getAttributeValue("module")
-                val alias = if (modValue.isNullOrBlank()) "\$style" else "\$$modValue"
-                return VueStyleModuleTarget(mod, alias)
-            }
-            val any = styles.firstOrNull()
-            if (any != null) return VueStyleModuleTarget(any, "\$style")
+            val (styleTag, alias) = CssModuleResolver.findVueStyleModule(file) ?: return null
+            return VueStyleModuleTarget(styleTag, alias)
         }
 
-        // React/TSX：ES6 import 默认绑定 styles from './xxx.module.css|scss|less|sass'
-        val imports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
-        for (imp in imports) {
-            val moduleText = imp.importModuleText ?: continue
-            val from = moduleText.trim('"', '\'')
-            if (MODULE_EXTS.none { from.endsWith(it, ignoreCase = true) }) continue
-
-            // 取默认绑定：优先 named import 之前的默认 import 部分
-            val named = imp.namedImports
-            val bindings = imp.importedBindings
-            val defaultBinding = bindings.firstOrNull { b ->
-                named == null || !PsiTreeUtil.isAncestor(named, b, false)
-            } ?: bindings.firstOrNull()
-            val alias = defaultBinding?.name
-                ?: imp.importSpecifiers.firstOrNull()?.name
-                ?: "styles"
-
-            val resolvedPsi: PsiFile? = run {
-                // 先通过默认绑定解析
-                val viaRef = defaultBinding?.reference?.resolve()?.containingFile
-                if (viaRef != null) return@run viaRef
-                // 按相对路径解析
-                val parent = vFile?.parent ?: return@run null
-                val normFrom = from.trimStart('/')
-                val candidate = findFileByRelativePath_(parent, normFrom)
-                    ?: parent.findChild(normFrom.substringAfterLast('/'))
-                candidate?.let { PsiManager.getInstance(project).findFile(it) }
-            }
-            if (resolvedPsi?.virtualFile != null) {
-                return FileTarget(resolvedPsi.virtualFile!!.path, alias)
-            }
+        // React/TSX：已有 import 指向 module 文件
+        CssModuleResolver.findExistingModuleImport(file)?.let { (vf, alias) ->
+            return FileTarget(vf.path, alias)
         }
 
-        // 兜底：同目录下有没有 Xxx.module.* 文件（和源文件同名）
-        if (vFile != null) {
-            val parent = vFile.parent
-            val base = vFile.nameWithoutExtension
-            if (parent != null) {
-                for (suf in MODULE_EXTS) {
-                    val c = parent.findChild("$base$suf")
-                    if (c != null && c.isValid) return FileTarget(c.path, "styles")
-                }
-            }
+        // 兜底：同目录下同名 Xxx.module.* 文件
+        CssModuleResolver.findSameNameModuleFile(file)?.let { vf ->
+            return FileTarget(vf.path, "styles")
         }
+
         return null
-    }
-
-    private fun findFileByRelativePath_(base: VirtualFile, rel: String): VirtualFile? {
-        var cur: VirtualFile? = base
-        for (seg in rel.replace('\\', '/').split('/')) {
-            if (seg.isEmpty() || seg == ".") continue
-            if (seg == "..") { cur = cur?.parent; continue }
-            cur = cur?.findChild(seg) ?: return null
-        }
-        return cur
     }
 
     // ================================================================
