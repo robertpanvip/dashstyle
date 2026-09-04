@@ -3,7 +3,6 @@ package com.pan.dashstyle
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.JSLiteralExpression
 import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -12,9 +11,9 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlAttribute
-import com.intellij.lang.css.CSSLanguage
 import java.util.regex.Pattern
 
 /**
@@ -101,7 +100,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
         if (confirm != Messages.YES) return
 
         // 3. 查找或创建 CSS Module 文件
-        val moduleFile = resolveModuleFile(project, file) ?: return
+        val (moduleFile, isNewFile) = resolveModuleFile(project, file) ?: return
 
         // 4. 生成 import（如果缺失）
         val importBinding = ensureImportExists(project, file, moduleFile)
@@ -109,8 +108,10 @@ class ConvertClassNameToCssModuleAction : AnAction(
         // 5. 替换选中区域中的 className 字面量
         replaceClassNames(project, editor, file, selStart, selEnd, uniqueNames, importBinding)
 
-        // 6. 在 CSS Module 文件中追加规则
-        appendCssRules(project, moduleFile, uniqueNames)
+        // 6. 在 CSS Module 文件中追加规则 → 只对新建空文件追加，复制的文件已有内容不需要追加
+        if (isNewFile) {
+            appendCssRules(project, moduleFile, uniqueNames)
+        }
 
         Messages.showInfoMessage(
             project,
@@ -206,7 +207,15 @@ class ConvertClassNameToCssModuleAction : AnAction(
     // 步骤 3：查找或创建 CSS Module 文件
     // ================================================================
 
-    private fun resolveModuleFile(project: Project, sourceFile: PsiFile): VirtualFile? {
+    /**
+     * 流程：
+     * 1. 先查找同目录已有 *.module.* → 直接用
+     * 2. 扫描当前 TSX 文件中的 import './xxx.less' / import './xxx.css'（非 module）
+     *   a. 如果只有当前文件导入这个文件 → 可以重命名它为 *.module.less
+     *   b. 如果有多个文件导入它 → 只能复制一份创建 *.module.less（避免破坏其他文件导入）
+     * 3. 否则让用户选择或创建
+     */
+    private fun resolveModuleFile(project: Project, sourceFile: PsiFile): Pair<VirtualFile, Boolean>? {
         val vf = sourceFile.virtualFile ?: return null
         val parent = vf.parent ?: return null
         val sourceExt = vf.extension?.lowercase()
@@ -218,46 +227,123 @@ class ConvertClassNameToCssModuleAction : AnAction(
 
         when (existingModules.size) {
             0 -> {
-                // 2. 没有已有的 module 文件 → 查找同名的 .less / .css（非 module）
-                val baseName = vf.nameWithoutExtension
-                val plainFiles = parent.children.filter { child ->
-                    PLAIN_EXTS.any { child.name.endsWith(it, ignoreCase = true) } &&
-                            !MODULE_EXTS.any { child.name.endsWith(it, ignoreCase = true) }
-                }
+                // 2. 扫描当前文件中导入的 .css/.less/.scss 文件（非 module）
+                val importedPlainFiles = collectImportedPlainFiles(sourceFile, parent)
 
-                if (plainFiles.isNotEmpty()) {
-                    // 2a. 有同名/其他 .less/.css 文件 → 询问是否重命名为 .module.less
-                    val candidates = plainFiles.map { it.name }
-                    val idx = Messages.showChooseDialog(
-                        project,
-                        "No CSS Module file found. Would you like to rename one to *.module.*?\n" +
-                                "Choose a file to rename:",
-                        "Convert className to CSS Module",
-                        Messages.getQuestionIcon(),
-                        candidates.toTypedArray(),
-                        candidates.firstOrNull() ?: ""
-                    )
-                    if (idx < 0) return null
-                    val chosen = plainFiles[idx]
-                    val newName = renameToModule(chosen.name)
-                    return runCatching {
-                        chosen.rename(null, newName)
-                        chosen
-                    }.getOrElse {
-                        // 重命名失败，直接创建新文件
-                        createModuleFile(project, parent, baseName, sourceExt)
+                when {
+                    importedPlainFiles.size == 1 -> {
+                        val (file, refCount) = importedPlainFiles.first()
+                        val newName = renameToModule(file.name)
+
+                        if (refCount == 1) {
+                            // 只有当前文件导入 → 可以直接重命名
+                            val ans = Messages.showYesNoDialog(
+                                project,
+                                "Found imported file `${file.name}`.\n" +
+                                        "It's only imported in this file. Rename it to `$newName`?",
+                                "Convert className to CSS Module",
+                                Messages.getQuestionIcon()
+                            )
+                            if (ans == Messages.YES) {
+                                val renamed = runCatching {
+                                    file.rename(null, newName)
+                                    file
+                                }.getOrNull()
+                                if (renamed != null) return Pair(renamed, false) // 重命名，已有内容
+                            }
+                            // 用户选 No，或者重命名失败 → 复制一份新建
+                            return copyToModule(project, parent, file, vf.nameWithoutExtension, sourceExt)
+                        } else {
+                            // 多个文件导入 → 只能创建新文件，不能破坏其他文件
+                            val ans = Messages.showYesNoDialog(
+                                project,
+                                "Found imported file `${file.name}`.\n" +
+                                        "It's imported in $refCount files (other than this one), so we can't rename it.\n" +
+                                        "Create a copy `$newName` for CSS Module?",
+                                "Convert className to CSS Module",
+                                Messages.getQuestionIcon()
+                            )
+                            if (ans != Messages.YES) return null
+                            return copyToModule(project, parent, file, vf.nameWithoutExtension, sourceExt)
+                        }
                     }
-                } else {
-                    // 2b. 直接创建新的 module 文件
-                    return createModuleFile(project, parent, baseName, sourceExt)
+                    importedPlainFiles.size > 1 -> {
+                        // 多个导入文件 → 让用户选择
+                        val candidates = importedPlainFiles.map { "${it.first.name} (${it.second} imports)" }.toTypedArray()
+                        val rawFiles = importedPlainFiles.map { it.first }.toList()
+                        val idx = Messages.showChooseDialog(
+                            project,
+                            "Found multiple imported CSS files. Which one to use for CSS Module?",
+                            "Convert className to CSS Module",
+                            Messages.getQuestionIcon(),
+                            candidates,
+                            candidates[0]
+                        )
+                        if (idx < 0) return null
+                        val chosen = rawFiles[idx]
+                        val (_, refCount) = importedPlainFiles[idx]
+                        val newName = renameToModule(chosen.name)
+
+                        if (refCount == 1) {
+                            val ans = Messages.showYesNoDialog(
+                                project,
+                                "`${chosen.name}` is only imported in this file. Rename it to `$newName`?",
+                                "Convert className to CSS Module",
+                                Messages.getQuestionIcon()
+                            )
+                            if (ans == Messages.YES) {
+                                val renamed = runCatching {
+                                    chosen.rename(null, newName)
+                                    chosen
+                                }.getOrNull()
+                                if (renamed != null) return Pair(renamed, false)
+                            }
+                        }
+                        return copyToModule(project, parent, chosen, vf.nameWithoutExtension, sourceExt)
+                    }
+                    else -> {
+                        // 没有找到导入 → 回退到：查找同目录下同名非 module 文件
+                        val baseName = vf.nameWithoutExtension
+                        val plainFiles = parent.children.filter { child ->
+                            PLAIN_EXTS.any { child.name.endsWith(it, ignoreCase = true) } &&
+                                    !MODULE_EXTS.any { child.name.endsWith(it, ignoreCase = true) }
+                        }
+
+                        if (plainFiles.isNotEmpty()) {
+                            val candidates = plainFiles.map { it.name }
+                            val idx = Messages.showChooseDialog(
+                                project,
+                                "No imported CSS found. Would you like to rename one to *.module.*?\n" +
+                                        "Choose a file:",
+                                "Convert className to CSS Module",
+                                Messages.getQuestionIcon(),
+                                candidates.toTypedArray(),
+                                candidates.firstOrNull() ?: ""
+                            )
+                            if (idx < 0) return null
+                            val chosen = plainFiles[idx]
+                            val refCount = countReferences(chosen, project)
+                            val newName = renameToModule(chosen.name)
+
+                            if (refCount <= 1) {
+                                val renamed = runCatching {
+                                    chosen.rename(null, newName)
+                                    chosen
+                                }.getOrNull()
+                                if (renamed != null) return Pair(renamed, false)
+                            }
+                            return copyToModule(project, parent, chosen, baseName, sourceExt)
+                        } else {
+                            val newFile = createModuleFile(project, parent, baseName, sourceExt)
+                            return if (newFile != null) Pair(newFile, true) else null // 新建
+                        }
+                    }
                 }
             }
             1 -> {
-                // 使用已有的 module 文件
-                return existingModules[0]
+                return Pair(existingModules[0], false) // 已有
             }
             else -> {
-                // 多个 module 文件 → 让用户选择
                 val candidates = existingModules.map { it.name }.toTypedArray()
                 val idx = Messages.showChooseDialog(
                     project,
@@ -268,8 +354,95 @@ class ConvertClassNameToCssModuleAction : AnAction(
                     candidates[0]
                 )
                 if (idx < 0) return null
-                return existingModules[idx]
+                return Pair(existingModules[idx], false)
             }
+        }
+    }
+
+    /**
+     * 收集当前 TSX 文件中导入的非 module CSS 文件（import './xxx.less'）。
+     * 返回：(VirtualFile, referenceCount)
+     */
+    private fun collectImportedPlainFiles(
+        sourceFile: PsiFile,
+        parentDir: VirtualFile
+    ): List<Pair<VirtualFile, Int>> {
+        val result = mutableListOf<Pair<VirtualFile, Int>>()
+
+        PsiTreeUtil.findChildrenOfType(sourceFile, ES6ImportDeclaration::class.java).forEach { imp ->
+            val text = imp.importModuleText ?: return@forEach
+            val filePath = text.trim('"', '\'')
+            if (filePath.isEmpty()) return@forEach
+
+            // 只处理相对路径导入（./ 或 ../）
+            if (!filePath.startsWith("./") && !filePath.startsWith("../")) return@forEach
+
+            val ext = filePath.substringAfterLast('.', "")
+            if (ext.lowercase() !in listOf("css", "less", "scss", "sass")) return@forEach
+
+            // 是否已经是 module
+            if (filePath.contains(".module.", ignoreCase = true)) return@forEach
+
+            // 解析文件
+            val resolved = resolveRelativePath(parentDir, filePath) ?: return@forEach
+            if (!resolved.isValid || resolved.isDirectory) return@forEach
+
+            val refCount = countReferences(resolved, sourceFile.project)
+            result.add(resolved to refCount)
+        }
+
+        return result.distinctBy { it.first }
+    }
+
+    /**
+     * 统计这个 CSS 文件在当前项目中有多少个导入引用。
+     * 大于 1 → 不能重命名，只能复制。
+     */
+    private fun countReferences(file: VirtualFile, project: Project): Int {
+        val psiFile = PsiManager.getInstance(project).findFile(file) ?: return 1
+        val scope = GlobalSearchScope.projectScope(project)
+        return ReferencesSearch.search(psiFile, scope).findAll().size
+    }
+
+    /**
+     * 从父目录解析相对路径 './xxx.less' / '../xxx.less' → 得到实际 VirtualFile。
+     */
+    private fun resolveRelativePath(parentDir: VirtualFile, relativePath: String): VirtualFile? {
+        var current = parentDir
+        val segments = relativePath.split('/')
+        for (seg in segments) {
+            when (seg) {
+                "." -> continue
+                ".." -> current = current.parent ?: continue
+                else -> {
+                    current = current.findChild(seg) ?: return null
+                }
+            }
+        }
+        return if (current.isValid && !current.isDirectory) current else null
+    }
+
+    /**
+     * 将已有 plain CSS 文件复制一份为 *.module.*，保留原有内容。
+     */
+    private fun copyToModule(
+        project: Project,
+        parent: VirtualFile,
+        source: VirtualFile,
+        fallbackBaseName: String,
+        sourceExt: String?
+    ): Pair<VirtualFile, Boolean>? {
+        val newName = renameToModule(source.name)
+        val content = source.contentsToByteArray()
+        return runCatching {
+            val newFile = parent.createChildData(this, newName)
+            newFile.setBinaryContent(content)
+            Pair(newFile, false) // 复制，已有内容
+        }.getOrElse {
+            // 复制失败，fallback 创建空文件
+            val baseName = source.nameWithoutExtension
+            val newFile = createModuleFile(project, parent, baseName, source.extension ?: sourceExt)
+            if (newFile != null) Pair(newFile, true) else null
         }
     }
 
@@ -305,71 +478,107 @@ class ConvertClassNameToCssModuleAction : AnAction(
     }
 
     // ================================================================
-    // 步骤 4：确保 import 语句存在
+    // 步骤 4：确保 import 语句存在或更新
     // ================================================================
 
+    /**
+     * 确保 TSX 文件有 `import styles from './xxx.module.less'`。
+     *
+     * 处理三种情况：
+     * 1. 已有 import 指向 module 文件 → 直接返回绑定名
+     * 2. 有 import 指向原始文件（如 `'./index.less'`）→ 更新为 `import xxx from './index.module.less'`
+     * 3. 都没有 → 在文件头部新增
+     */
     private fun ensureImportExists(project: Project, file: PsiFile, moduleVf: VirtualFile): String {
-        // 检查是否已有 import
-        val existingImports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
-        for (imp in existingImports) {
+        val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return "styles"
+
+        // 先收集所有 import 声明
+        val imports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
+        val relativeModulePath = computeRelativeImportPath(file.virtualFile!!, moduleVf)
+        val moduleFileName = moduleVf.name
+        // 原始文件名（去掉 .module. 部分）
+        val originalFileName = moduleFileName.replace(".module.", ".")
+
+        // 1. 检查是否已有 import 指向该 module 文件
+        for (imp in imports) {
             val moduleText = imp.importModuleText ?: continue
             val from = moduleText.trim('"', '\'')
-            if (from.endsWith(moduleVf.name, ignoreCase = true) ||
-                from.contains(moduleVf.nameWithoutExtension)
+            if (from.endsWith(moduleFileName, ignoreCase = true) ||
+                from.contains(moduleFileName.replaceFirst(".module.", ".").replace(".", ""), ignoreCase = true)
             ) {
-                // 已经有 import → 提取绑定名
                 val bindings = imp.importedBindings
                 val defaultBinding = bindings.firstOrNull()
                 return defaultBinding?.name ?: "styles"
             }
         }
 
-        // 没有 import → 生成
-        val relativePath = computeRelativeImportPath(file.virtualFile!!, moduleVf)
-        val importText = "import styles from '$relativePath'"
+        // 2. 查找是否有 import 指向原始文件（如 `import './index.less'`）
+        for (imp in imports) {
+            val moduleText = imp.importModuleText ?: continue
+            val from = moduleText.trim('"', '\'')
+            if (from.endsWith(originalFileName, ignoreCase = true)) {
+                val importStatement = imp.text
+                val newImport = if (importStatement.contains("from")) {
+                    // 已经有绑定：import foo from './index.less'
+                    // → 保持绑定名，只改路径
+                    importStatement.replace(originalFileName, moduleFileName)
+                } else {
+                    // 纯 side-effect import：import './index.less'
+                    // → 改为 import styles from './index.module.less'
+                    val relativePath = computeRelativeImportPath(file.virtualFile!!, moduleVf)
+                    "import styles from '$relativePath'"
+                }
 
-        // 在文件头部插入 import（第一个 import 声明之后，或文件开头）
+                // 用 document 替换
+                WriteCommandAction.writeCommandAction(project, file)
+                    .withName("Update CSS Module import")
+                    .run<Nothing> {
+                        val start = imp.textRange.startOffset
+                        val end = imp.textRange.endOffset
+                        document.replaceString(start, end, newImport)
+                        PsiDocumentManager.getInstance(project).commitDocument(document)
+                    }
+
+                // 提取绑定名
+                if (newImport.startsWith("import styles")) return "styles"
+                val bindingName = newImport.removePrefix("import ").substringBefore(" from").trim()
+                return bindingName.ifEmpty { "styles" }
+            }
+        }
+
+        // 3. 都没有 → 新增 import 语句
         WriteCommandAction.writeCommandAction(project, file)
             .withName("Add CSS Module import")
             .run<Nothing> {
-                val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return@run
-                val firstImport = existingImports.firstOrNull()
+                val firstImport = imports.firstOrNull()
                 val insertOffset = if (firstImport != null) {
-                    // 在最后一个 import 之后插入
-                    val lastImport = existingImports.last()
-                    lastImport.textRange.endOffset
+                    imports.last().textRange.endOffset
                 } else {
-                    // 在文件开头插入
                     0
                 }
                 val prefix = if (insertOffset > 0) "\n" else ""
-                document.insertString(insertOffset, "$prefix$importText\n")
+                val importStmt = "import styles from '$relativeModulePath'"
+                document.insertString(insertOffset, "$prefix$importStmt\n")
                 PsiDocumentManager.getInstance(project).commitDocument(document)
             }
 
         return "styles"
     }
 
-    /**
-     * 计算相对导入路径（从 sourceFile 到 moduleFile）。
-     * 示例：'./Button.module.css'
-     */
     private fun computeRelativeImportPath(source: VirtualFile, target: VirtualFile): String {
         val sourceParent = source.parent ?: return "./${target.name}"
         val sourcePath = sourceParent.path
         val targetPath = target.path
 
-        // 如果 target 在 sourceParent 下
         if (targetPath.startsWith(sourcePath)) {
             val rel = targetPath.substring(sourcePath.length).trimStart('/')
             return "./$rel"
         }
 
-        // 不同目录
+        // 不同目录 → 计算相对路径
         val sourceSegments = sourcePath.split('/').filter { it.isNotBlank() }
         val targetSegments = targetPath.split('/').filter { it.isNotBlank() }
 
-        // 找公共前缀
         var commonLen = 0
         while (commonLen < sourceSegments.size && commonLen < targetSegments.size &&
             sourceSegments[commonLen] == targetSegments[commonLen]
