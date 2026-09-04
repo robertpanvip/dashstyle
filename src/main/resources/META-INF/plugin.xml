@@ -12,17 +12,19 @@
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
     <description><![CDATA[
-<p>Enhances IntelliJ IDEA with better support for CSS Modules, specifically targeting string-key access like <code>styles["foo-bar"]</code>.</p>
+<p>Enhances IntelliJ IDEA / WebStorm with richer support for CSS Modules (React, Vue, or any project using <code>styles["foo-bar"]</code> / <code>styles.fooBar</code>).</p>
 
 <p>Key features:</p>
 <ul>
-  <li><strong>Code completion</strong>: Auto-complete class names from imported CSS Modules inside <code>styles["</code> (in kebab-case), with the corresponding camelCase name shown next to each suggestion.</li>
-  <li><strong>Navigation</strong>: Ctrl+click on <code>"foo-bar"</code> jumps directly to the matching <code>.foo-bar</code> ruleset in the CSS file, or to the <code>fooBar</code> property in a local object definition.</li>
-  <li><strong>Smart quote handling</strong>: After completion, automatically inserts the matching closing quote and places the cursor inside the quotes.</li>
-  <li>Supports both imported CSS/SCSS/LESS files (CSS Modules) and locally defined JS/TS objects.</li>
+  <li><strong>Smart completion &amp; navigation</strong>: auto-complete class names for both <code>styles["foo-bar"]</code> (string key) and <code>styles.fooBar</code> (member access); Ctrl+Click jumps to the matching <code>.foo-bar</code> rule, and hovering shows the expanded full rule with its declarations.</li>
+  <li><strong>Inline style → CSS Module extraction</strong> (Alt+Enter): turns <code>style={{...}}</code> / <code>:style="{...}"</code> into a semantic class name and appends the rule to the matching module file.</li>
+  <li><strong>JSON → CSS copy-paste</strong>: automatically fixes JS style objects pasted into CSS (unitless properties, negatives, transform functions, shorthand arrays).</li>
+  <li><strong>Code inspection</strong>: marks unused CSS Module classes and duplicate declaration blocks, with one-click fixes to delete or extract shared styles.</li>
+  <li><strong>Tailwind support</strong>: completion with a CSS preview inside <code>@apply</code>, and auto-generation of missing atomic classes referenced via <code>styles.xxx</code>.</li>
+  <li><strong>Batch migration</strong>: Refactor → Convert className to CSS Module moves a file or selection onto CSS Modules in one go.</li>
 </ul>
 
-<p>Ideal for React, Vue, or any project using CSS Modules — brings full IDE intelligence to kebab-case class names used in string literals.</p>
+<p>Works with CSS / SCSS / LESS module files, Vue <code>&lt;style module&gt;</code>, and local JS/TS object literals.</p>
 ]]></description>
 
     <change-notes>
@@ -37,7 +39,7 @@
 
         <h3>1.2.7</h3>
         <ul>
-            <li>🗑️ 移除以下功能，插件回归聚焦核心能力：<code>styles.xxx</code> 智能跳转/补全、Inline Style 抽取、JSON→CSS 复制粘贴、代码检查、布局/阴影预览、Tailwind 补全：</li>
+            <li>🗑️ 清理曾规划但未对外暴露的编辑自动化能力，核心功能（<code>styles.xxx</code> / <code>styles["xxx"]</code> 智能跳转/补全、Inline Style 抽取、JSON→CSS 复制粘贴、代码检查、Tailwind 补全、缺失类快速创建、重复声明抽取）均保留：</li>
             <ul>
                 <li>移除 CSS Module 导入自动化（含复制时自动带 import）</li>
                 <li>移除 TSX/Vue 复制 → CSS 规则随动</li>
@@ -244,7 +246,9 @@
             <description><![CDATA[
               When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
               creates <code>.foo-bar { }</code> at the end of the target CSS Module (or Vue
-              <code>&lt;style module&gt;</code>) and places the caret inside the braces.
+              <code>&lt;style module&gt;</code>) and places the caret inside the braces. If the missing
+              name matches a built-in Tailwind utility class, the expanded CSS declaration is generated
+              instead of an empty block (e.g. <code>.flex { display: flex }</code>).
             ]]></description>
             <bindToCode>true</bindToCode>
         </intentionAction>

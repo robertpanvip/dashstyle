@@ -8,16 +8,19 @@
   - `styles["foo-bar"]`（字符串字面量）与 `styles.fooBar`（member access）双形态
   - 支持导入的 CSS/SCSS/LESS 文件、Vue `<style module>`、本地 JS/TS 对象字面量三种容器
   - 补全项右侧显示 kebab-case 对应的 camelCase 名，Enter 后自动闭合引号
+  - 鼠标悬浮 `styles.xxx` 或 CSS 类名，弹窗展示展开后的完整选择器、声明列表与来源位置
 
 - **Inline Style → CSS Module 一键抽取**（Alt+Enter）
   - `style={{...}}` / `:style="{...}"` → 自动语义推断类名 + 重命名输入框 + 追加到 Module 文件
 
-- **Inline Style JSON → CSS 复制粘贴**：自动修复 JS 对象字面量粘贴到 CSS 时的单位问题（unitless、负数、transform 函数区分）
+- **Inline Style JSON → CSS 复制粘贴**：自动修复 JS 对象字面量粘贴到 CSS 时的单位问题（unitless、负数、transform 函数区分、shorthand 数组）
 
 - **代码检查**：未使用 CSS Module class 置灰 + 删除 Fix；单文件重复声明检测 + 抽取公共类 `@extend`
 
 - **Tailwind 类补全 + CSS 预览**：在 CSS 的 `@apply` 指令内自动补全（`Ctrl/Cmd+Space` 手动触发，`Enter` 确认），内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明
 - **缺失类自动生成 Tailwind CSS**：`styles.xxx` 引用的类缺失且 `xxx` 是 Tailwind 原子化类时，`Alt+Enter` 自动生成对应展开 CSS（如 `.flex { display: flex }`）
+
+- **批量迁移**：Refactor → Convert className to CSS Module，一键把整个文件或选区内的 `className="..."` 迁移为 `className={styles.xxx}` 并补 `import` 与 `.module.*` 规则
 
 ### 文档
 

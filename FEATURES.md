@@ -14,6 +14,8 @@
 | 4 | **Inline Style JSON → CSS 复制粘贴**（CopyPastePreProcessor） | 支持 JS 对象字面量（key 无引号/单引号/尾随逗号/注释）、unitless 属性、负数、transform 函数区分 scale/rotate/translate 单位 |
 | 5 | **代码检查 (Inspection)** | 未使用 CSS Module class 置灰 + 删除 Fix；单文件重复 CSS 声明检测 + 抽取公共类（生成 `@extend` 回所有重复点） |
 | 6 | **Tailwind 类补全 + CSS 预览**（`@apply` 内自动补全） | 内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明，按 Enter 直接补全 |
+| 7 | **缺失类快速创建 + Tailwind 展开**（Intention） | `styles.xxx` / `styles["xxx"]` 缺失时 Alt+Enter 创建空类；若名是内置 Tailwind 类则写入展开 CSS 而非空块 |
+| 8 | **className 批量迁移**（Refactor Action） | 一键把文件/选区内 `className="..."` 迁移为 `className={styles.xxx}`，自动创建 `.module.*`、补 `import`、追加 `.foo {}` 规则 |
 
 ---
 
@@ -74,6 +76,8 @@
 | [UnusedCssModuleClassInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/UnusedCssModuleClassInspection.kt) | CSS Module 文件中存在定义但 TSX/Vue 里 `styles.xxx` / `styles["xxx"]` 未引用时类名**置灰**；扫描到动态 `styles[expr]` 自动关闭该文件的检查避免误报 | QuickFix：删除未用 ruleset |
 | [DuplicateCssDeclarationsInspection](file:///workspace/src/main/kotlin/com/pan/dashstyle/DuplicateCssDeclarationsInspection.kt) | 同一 CSS 文件里 ≥2 个 ruleset 声明块完全相同 → **黄色 + 波浪线**（仿 TS 重复代码检查视觉） | QuickFix：抽取为公共类 `.common-name`，重复点删除原声明并按语言替换为合并引用——**LESS** 用 mixin 调用 `.common-name();`（LESS 的 ruleset 本身就是 mixin），**SCSS/Sass** 用 `@extend .common-name;`，纯 **CSS** 无 extend/mixin 只删声明不动选择器 |
 
+> 除 Inspection 的 QuickFix 外，还提供一个独立 Intention：**[ExtractDuplicateDeclarationsAsMixinIntention](file:///workspace/src/main/kotlin/com/pan/dashstyle/ExtractDuplicateDeclarationsAsMixinIntention.kt)**（`Alt+Enter → Extract duplicated CSS blocks into shared Less mixins`）。它支持带选区按选区提取、按"共享声明 ≥3 条"门槛过滤、按首个 ruleset 的声明顺序命名（`shared-padding-color` 等）、保留嵌套/字符串/`linear-gradient()`/`url(...)`，并追加 `%placeholder`/mixin 定义到文件末尾。
+
 ### 2.6 Tailwind 类补全 + CSS 预览
 位置：[TailwindClassCompletionContributor.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassCompletionContributor.kt) / [TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)
 
@@ -84,6 +88,15 @@
 - **数据源**：内置清单开箱即用，无需项目 `tailwind.config.js` / `node_modules`；如需扩展可在此类中追加 `TailwindClass(name, css, group)`
 - **纯逻辑层**：[TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)`search(prefix)` / `find(name)`，可独立单测
 - **缺失类自动生成 Tailwind 原子化 CSS**（新增）：`styles.xxx` 引用的类在 CSS Module 里缺失、而 `xxx` 恰好是内置 Tailwind 类时，**Alt+Enter → Create missing class in CSS Module** 会直接往对应 `.module.css`（或 Vue `<style>`）写入该类的展开声明，而非空块。例：`styles.justifyCenter` 缺失 → 生成 `.justify-center { justify-content: center }`；`styles.flex` 缺失 → 生成 `.flex { display: flex }`
+
+### 2.7 className 批量迁移（Refactor → Convert className to CSS Module）
+位置：[ConvertClassNameToCssModuleAction.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/ConvertClassNameToCssModuleAction.kt)
+
+- 仅对 TSX 文件启用；无选区时扫描整个文件，有选区只处理选区。
+- 收集 `className="foo bar"` / `className={'foo'}` 里的类名（PSI 优先，文本正则兜底）。
+- 定位 `/ 创建` `*.module.css|scss|less|sass`：优先同目录已有 module 文件；否则把当前文件独用的普通 CSS/SCSS/LESS 导入重命名为 `.module.*`（多文件共用时改为复制），都没有时新建。
+- 自动生成/改写 `import styles from './Foo.module.css'`，并把 `className="foo"` 替换为 `className={styles.foo}`，含 kebab 类名（`styles["foo-bar"]`）；多类名合并为 `className={clsx(styles.foo, styles.bar)}`。
+- 新建的空 module 文件会追加每个类名对应的 `.foo { }` 规则。
 
 ---
 
@@ -149,13 +162,15 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 位置：[plugin.xml](file:///workspace/src/main/resources/META-INF/plugin.xml)
 
 - `<extensions defaultExtensionNs="com.intellij">`
-  - `PsiReferenceContributor`（字符串 + member access 双引用提供者）
+  - `PsiReferenceContributor` ×2（字符串 `styles["x"]` + member access `styles.x` 双引用提供者）
   - `documentationProvider`（悬浮展示完整 CSS 规则）
   - `localInspection`（未使用 class / 重复声明）
-  - `annotator` ×3（CSS Module class 置灰 / 重复声明波浪线；Vue/Svelte 内嵌 `<style module>` 场景）
+  - `annotator`（CSS Module class 置灰 / 重复声明波浪线）
   - `completion.contributor` ×3（Tailwind 类补全，CSS/SCSS/LESS）
   - `copyPastePreProcessor`（JSON→CSS 复制粘贴）
   - `intentionAction` ×3（Inline 抽取 / 缺失 class 创建 / 重复声明抽取公共类）
+- `<actions>`
+  - `DashStyle.ConvertClassNameToCssModule`（Refactor → Convert className to CSS Module）
 
 ---
 
@@ -166,8 +181,10 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 | 把 TSX 里的 `style={{...}}` 抽成 CSS 类 | 光标定位到 `style` → **Alt+Enter → DashStyle: Extract inline style to CSS Module** |
 | 写了 `styles.fooBar` 但是 CSS 里没有类 | 光标放 `fooBar` 上 **Alt+Enter → DashStyle: Create missing CSS class** → 光标直接落大括号里 |
 | 两个 CSS class 声明一模一样被标黄 | **Alt+Enter → Extract common class** → 所有重复点自动 `@extend` |
+| 想用 Intention 提取重复块为 Less mixin | **Alt+Enter → Extract duplicated CSS blocks into shared Less mixins**（可选选区） |
 | 在 CSS 里写 Tailwind 工具类 | 光标放进 `@apply ` 后 → 输入前缀（如 `ju`）或按 **Ctrl/Cmd+Space** → 下拉右侧灰字预览 CSS → **Enter** 补全 |
 | `styles.flex` 之类缺失、且是 Tailwind 类 | 光标放 `flex` 上 **Alt+Enter → Create missing class in CSS Module** → 自动生成 `.flex { display: flex }` 等展开 CSS |
+| 把传统 className 迁移到 CSS Module | **Refactor → Convert className to CSS Module**（TSX 文件内，可先框选范围） |
 
 ---
 
