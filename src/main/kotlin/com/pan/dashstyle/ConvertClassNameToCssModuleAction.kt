@@ -18,14 +18,17 @@ import com.intellij.lang.css.CSSLanguage
 import java.util.regex.Pattern
 
 /**
- * 选中 JSX/TSX 代码 → Refactor → Convert className to CSS Module。
+ * 在 TSX 文件中 → Refactor → Convert className to CSS Module.
+ *
+ * 一键迁移传统 CSS 项目到 CSS Modules。
  *
  * 流程：
- * 1. 扫描选中区域，收集所有 className="xxx" / className={'xxx'} 字符串字面量中的类名
- * 2. 查找或创建 CSS Module 文件（*.module.css / .less / .scss）
- * 3. 生成 import styles 语句（如果缺失）
- * 4. 将 className="foo" 替换为 className={styles.foo}
- * 5. 在 CSS Module 文件中生成 .foo { } 规则
+ * 1. 无选区 → 扫描整个文件；有选区 → 只扫描选中区域
+ * 2. 收集所有 className="xxx" / className={'xxx'} 字符串字面量中的类名
+ * 3. 查找或创建 CSS Module 文件（*.module.css / .less / .scss）
+ * 4. 生成 import styles 语句（如果缺失）
+ * 5. 将 className="foo" 替换为 className={styles.foo}
+ * 6. 在 CSS Module 文件中生成 .foo { } 规则
  */
 class ConvertClassNameToCssModuleAction : AnAction(
     "Convert className to CSS Module"
@@ -44,14 +47,12 @@ class ConvertClassNameToCssModuleAction : AnAction(
 
     override fun update(e: AnActionEvent) {
         val project = e.project
-        val editor = e.getData(CommonDataKeys.EDITOR)
         val file = e.getData(CommonDataKeys.PSI_FILE)
 
         val ext = file?.virtualFile?.extension?.lowercase()
         val isTsx = ext == "tsx"
-        val hasSelection = editor?.selectionModel?.hasSelection() == true
 
-        e.presentation.isEnabledAndVisible = project != null && isTsx && hasSelection
+        e.presentation.isEnabledAndVisible = project != null && isTsx
         e.presentation.text = "Convert className to CSS Module"
     }
 
@@ -65,16 +66,21 @@ class ConvertClassNameToCssModuleAction : AnAction(
         val file = e.getData(CommonDataKeys.PSI_FILE) ?: return
 
         val selection = editor.selectionModel
-        val selStart = selection.selectionStart
-        val selEnd = selection.selectionEnd
+        val (selStart, selEnd) = if (selection.hasSelection()) {
+            selection.selectionStart to selection.selectionEnd
+        } else {
+            // 没有选区 → 扫描整个文件
+            0 to file.textRange.endOffset
+        }
 
-        // 1. 扫描选中区域，收集 className 字面量中的类名
+        // 1. 扫描整个选区/文件，收集 className 字面量中的类名
         val rawClassNames = collectClassNameValues(file, selStart, selEnd)
         if (rawClassNames.isEmpty()) {
+            val scope = if (selStart == 0 && selEnd == file.textRange.endOffset) "the whole file" else "selected code"
             Messages.showInfoMessage(
                 project,
-                "No className string literals found in the selected code.\n" +
-                        "Make sure you have selected JSX/TSX code containing className=\"...\" attributes.",
+                "No className string literals found in $scope.\n" +
+                        "Make sure you have JSX with className=\"...\" attributes.",
                 "Convert className to CSS Module"
             )
             return
