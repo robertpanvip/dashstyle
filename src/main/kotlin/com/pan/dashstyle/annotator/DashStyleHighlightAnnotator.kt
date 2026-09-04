@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.annotator
+
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
 
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.Annotator
@@ -55,10 +60,10 @@ class DashStyleHighlightAnnotator : Annotator {
         if (snap.hasDynamic) return
 
         // Step 1: expandSelector 展开所有选择器组合，并剥离 :global(...) / :global {} 内的类（不导出、不参与置灰）
-        val expandedSelector = runCatching { Util.expandSelector(rs) }.getOrNull().orEmpty()
+        val expandedSelector = runCatching { CssSelectorUtil.expandSelector(rs) }.getOrNull().orEmpty()
         if (expandedSelector.isBlank()) return
         val globals = snap.globalClassNames
-        val stripped = Util.stripGlobalBlocks(expandedSelector)
+        val stripped = CssSelectorUtil.stripGlobalBlocks(expandedSelector)
         val expandedClasses = CLASS_NAME_RE.findAll(stripped).mapNotNull { m ->
             val raw = m.groupValues[2]
             raw.trim().takeIf { it.isNotEmpty() }
@@ -130,34 +135,16 @@ class DashStyleHighlightAnnotator : Annotator {
         return null
     }
 
-    private fun normalizeSignature(rs: CssRuleset): String? {
-        val decls = runCatching { PsiTreeUtil.findChildrenOfType(rs.block, CssDeclaration::class.java).toList() }.getOrNull() ?: return null
-        if (decls.isEmpty()) return null
-        val tokens = decls.mapNotNull { d ->
-            val p = d.propertyName?.trim()?.lowercase() ?: return@mapNotNull null
-            val v = normalizeVal(d.value?.text?.trim() ?: return@mapNotNull null)
-            "$p:$v"
-        }.sorted()
-        return tokens.joinToString("|").takeIf { it.isNotBlank() }
-    }
-
-    private fun normalizeVal(raw: String): String {
-        var s = raw
-        val hex3 = Regex("""#([0-9a-fA-F]{3})(?![0-9a-fA-F])""")
-        s = hex3.replace(s) { m ->
-            val c = m.groupValues[1]
-            "#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}"
-        }
-        return s.replace(Regex("""\s+"""), " ").trim().removeSuffix(",").lowercase()
-    }
+    private fun normalizeSignature(rs: CssRuleset): String? =
+        DeclarationSignatureUtil.computeSignature(rs)
 
     private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
         val raw = runCatching { rs.selectorList?.text }.getOrNull().orEmpty().trim()
         if (raw.isEmpty()) return emptyList()
-        val normalized = runCatching { Util.expandSelector(rs) }.getOrNull()
+        val normalized = runCatching { CssSelectorUtil.expandSelector(rs) }.getOrNull()
             ?: raw.replace('&', ' ').replace(Regex("""\s+"""), " ").trim()
         // :global(...) 内的类不导出、无法判断是否使用，先剥离避免误置灰
-        val noGlobal = Util.stripGlobalBlocks(normalized)
+        val noGlobal = CssSelectorUtil.stripGlobalBlocks(normalized)
         val cleaned = noGlobal.replace(Regex(""":+[\w-]+(?:\([^)]*)?"""), "")
         return CLASS_NAME_RE.findAll(cleaned).mapNotNull { m ->
             val name = m.groupValues[2]  // group 2 = class name, group 1 = prefix anchor

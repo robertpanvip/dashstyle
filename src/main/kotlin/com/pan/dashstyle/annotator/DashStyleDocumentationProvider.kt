@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.annotator
+
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
 
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.lang.javascript.psi.JSLiteralExpression
@@ -100,7 +105,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
             }
         if (targetRule != null) {
             return formatRulesetDoc(
-                Util.expandSelector(targetRule),
+                CssSelectorUtil.expandSelector(targetRule),
                 (targetRule.block?.children?.filterIsInstance<CssDeclaration>()) ?: emptyList()
             )
         }

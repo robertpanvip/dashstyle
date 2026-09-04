@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.reference
+
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
 
 import com.intellij.lang.javascript.psi.JSCallExpression
 import com.intellij.lang.javascript.psi.JSIndexedPropertyAccessExpression
@@ -52,7 +57,7 @@ class StyleMemberAccessReference(
         val classes = CssModuleResolver.collectAllClasses(container)
         // member-access 用 camelCase（符合 JS 对象习惯），type text 展示 kebab
         return classes.map { it.kebabName }.distinct().sorted().map { kebab ->
-            val camel = Util.kebabToCamel(kebab)
+            val camel = NamingUtil.kebabToCamel(kebab)
             com.intellij.codeInsight.lookup.LookupElementBuilder.create(camel)
                 .withTypeText(kebab, true)
                 .withTailText(" (DashStyle)", true)

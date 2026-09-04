@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.inspection
+
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
 
 import com.intellij.codeInspection.*
 import com.intellij.lang.annotation.AnnotationHolder
@@ -91,7 +96,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         val entries = rulesets.mapNotNull { rs ->
             val decls = directDeclarations(rs.block)
             if (decls.size < 1) return@mapNotNull null
-            val signature = normalizeSignature(decls)
+            val signature = DeclarationSignatureUtil.computeSignatureFromDeclarations(decls)
             if (signature.isBlank()) return@mapNotNull null
             Entry(rs, decls, signature)
         }
@@ -117,30 +122,12 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         }
     }
 
-    /** 归一化：属性按字母序 + 每个属性值去除多余空格 + 色值#rgb→#rrggbb + 去掉尾随逗号 */
-    private fun normalizeSignature(decls: List<CssDeclaration>): String {
-        val tokens = decls.mapNotNull { d ->
-            val p = d.propertyName?.trim()?.lowercase() ?: return@mapNotNull null
-            val v = normalizeValue(d.value?.text?.trim() ?: return@mapNotNull null)
-            "$p:$v"
-        }.sorted()
-        return tokens.joinToString("|")
-    }
+    /** 归一化签名委托 DeclarationSignatureUtil */
+    private fun normalizeSignature(decls: List<CssDeclaration>): String =
+        DeclarationSignatureUtil.computeSignatureFromDeclarations(decls)
 
-    private fun normalizeValue(raw: String): String {
-        var s = raw
-        // 色值 #rgb → #rrggbb
-        val hex3 = Regex("""#([0-9a-fA-F]{3})(?![0-9a-fA-F])""")
-        s = hex3.replace(s) { m ->
-            val c = m.groupValues[1]
-            "#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}"
-        }
-        // 规范化空格：多余 whitespace / tab → 单空格
-        s = s.replace(Regex("""\s+"""), " ").trim()
-        // 去尾随逗号
-        s = s.removeSuffix(",")
-        return s.lowercase()
-    }
+    private fun normalizeValue(raw: String): String =
+        DeclarationSignatureUtil.normalizeValue(raw)
 
     /**
      * 只取 block 的直接 CssDeclaration 子节点（不递归进嵌套 ruleset）。
@@ -436,29 +423,15 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         }
 
         // ----------------------------------------------------------------
-        // 把 normalizeSignature / normalizeValue 提为 static 方便 Annotator/HighLightVisitor 复用
+        // 委托 DeclarationSignatureUtil（保持 @JvmStatic 兼容性）
         // ----------------------------------------------------------------
         @JvmStatic
-        fun normalizeSignatureStatic(decls: List<CssDeclaration>): String {
-            val tokens = decls.mapNotNull { d ->
-                val p = d.propertyName?.trim()?.lowercase() ?: return@mapNotNull null
-                val v = normalizeValueStatic(d.value?.text?.trim() ?: return@mapNotNull null)
-                "$p:$v"
-            }.sorted()
-            return tokens.joinToString("|")
-        }
+        fun normalizeSignatureStatic(decls: List<CssDeclaration>): String =
+            DeclarationSignatureUtil.computeSignatureFromDeclarations(decls)
 
         @JvmStatic
-        fun normalizeValueStatic(raw: String): String {
-            var s = raw
-            val hex3 = Regex("""#([0-9a-fA-F]{3})(?![0-9a-fA-F])""")
-            s = hex3.replace(s) { m ->
-                val c = m.groupValues[1]
-                "#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}"
-            }
-            s = s.replace(Regex("""\s+"""), " ").trim().removeSuffix(",")
-            return s.lowercase()
-        }
+        fun normalizeValueStatic(raw: String): String =
+            DeclarationSignatureUtil.normalizeValue(raw)
 
         /**
          * 只取 block 的直接 CssDeclaration 子节点（不递归进嵌套 ruleset）。

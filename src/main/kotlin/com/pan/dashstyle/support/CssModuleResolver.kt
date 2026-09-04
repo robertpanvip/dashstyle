@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.support
+
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.annotator.*
 
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.ecmascript6.psi.ES6ImportedBinding
@@ -222,10 +227,10 @@ object CssModuleResolver {
     // ================================================================
     fun resolveClassName(siteElement: PsiElement, requestedName: String): ResolvedClass? {
         val (container, _) = resolveStylesContainer(siteElement) ?: return null
-        val kebabTarget = if (requestedName.contains("-")) requestedName else Util.camelToKebab(requestedName)
+        val kebabTarget = if (requestedName.contains("-")) requestedName else NamingUtil.camelToKebab(requestedName)
         val pattern = Regex("""\.${Regex.escape(kebabTarget)}(?=[^a-zA-Z0-9_-]|$)""")
         forEachRuleset(container) { ruleset ->
-            val expanded = Util.expandSelector(ruleset)
+            val expanded = CssSelectorUtil.expandSelector(ruleset)
             if (pattern.containsMatchIn(expanded)) {
                 return ResolvedClass(ruleset, kebabTarget, expanded, container)
             }
@@ -246,8 +251,8 @@ object CssModuleResolver {
     fun collectAllClasses(container: CssContainer): List<ClassEntry> {
         val out = mutableListOf<ClassEntry>()
         forEachRuleset(container) { ruleset ->
-            val expanded = Util.expandSelector(ruleset)
-            val names = Util.extractClassNames(expanded).distinct()
+            val expanded = CssSelectorUtil.expandSelector(ruleset)
+            val names = CssSelectorUtil.extractClassNames(expanded).distinct()
             val decls = collectDirectDeclarations(ruleset)
             for (name in names) out += ClassEntry(name, ruleset, expanded, decls)
         }
@@ -313,7 +318,7 @@ object CssModuleResolver {
             when {
                 inner is JSLiteralExpression -> {
                     val s = inner.stringValue ?: return@forEach
-                    val kebab = if (s.contains("-")) s else Util.camelToKebab(s)
+                    val kebab = if (s.contains("-")) s else NamingUtil.camelToKebab(s)
                     used += kebab
                 }
                 else -> dynamic = true
@@ -327,7 +332,7 @@ object CssModuleResolver {
             if (c != container) return@forEach
             val name = ref.referenceName ?: return@forEach
             if (name == "let" || name == "const" || name == "var") return@forEach
-            val kebab = if (name.contains("-")) name else Util.camelToKebab(name)
+            val kebab = if (name.contains("-")) name else NamingUtil.camelToKebab(name)
             used += kebab
         }
 
@@ -365,7 +370,7 @@ object CssModuleResolver {
             // 静态字符串成员
             for (m in memberPattern.findAll(value)) {
                 val name = m.groupValues[1]
-                val kebab = if (name.contains("-")) name else Util.camelToKebab(name)
+                val kebab = if (name.contains("-")) name else NamingUtil.camelToKebab(name)
                 used += kebab
             }
             for (m in bracketPattern.findAll(value)) {

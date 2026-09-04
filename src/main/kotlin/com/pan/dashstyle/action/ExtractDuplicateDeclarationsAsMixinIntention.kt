@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.action
+
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
 
 import com.intellij.codeInsight.intention.impl.BaseIntentionAction
 import com.intellij.openapi.command.WriteCommandAction
@@ -176,21 +181,7 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
     }
 
     private fun groupBySignature(rules: List<CssRuleset>): Map<List<String>, List<CssRuleset>> {
-        return rules.groupBy { rs -> signatureOf(rs) }
-    }
-
-    private fun signatureOf(rs: CssRuleset): List<String> {
-        val block = runCatching { rs.block }.getOrNull() ?: return emptyList()
-        val decls = PsiTreeUtil.findChildrenOfType(block, CssDeclaration::class.java).toList()
-        return decls.mapNotNull { d ->
-            val prop = runCatching { d.propertyName }.getOrNull()?.trim()?.lowercase() ?: return@mapNotNull null
-            val value = runCatching { d.value?.text }.getOrNull()?.trim() ?: return@mapNotNull null
-            // 归一化：空格压缩、颜色 #rgb→#rrggbb 可选；这里只做最小化以便重复检测
-            val norm = value.replace(Regex("\\s+"), " ")
-                .replace(" ;", ";")
-                .replace(": ", ":")
-            "$prop:$norm"
-        }.sorted() // 顺序无关（a{b:1;c:2} 和 a{c:2;b:1} 视为同一签名）
+        return rules.groupBy { rs -> DeclarationSignatureUtil.computeSignatureList(rs) }
     }
 
     private fun readTagInnerTextViaReflection(styleTag: PsiElement): String = runCatching {
@@ -338,9 +329,9 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         }.filter { it.isNotEmpty() }.distinct()
 
         val base = if (props.isEmpty()) "shared-block" else {
-            val tail = props.drop(1).take(2).joinToString("-") { Util.kebabToCamel(it.replace('/', '-')) }
-            val first = Util.kebabToCamel(props.first())
-            if (tail.isEmpty()) "shared-${Util.camelToKebab(first)}" else "shared-${Util.camelToKebab(first)}-${Util.camelToKebab(tail)}"
+            val tail = props.drop(1).take(2).joinToString("-") { NamingUtil.kebabToCamel(it.replace('/', '-')) }
+            val first = NamingUtil.kebabToCamel(props.first())
+            if (tail.isEmpty()) "shared-${NamingUtil.camelToKebab(first)}" else "shared-${NamingUtil.camelToKebab(first)}-${NamingUtil.camelToKebab(tail)}"
         }.trimEnd('-').ifBlank { "shared-block" }
 
         if (base !in used) return base
@@ -536,7 +527,7 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
             if (colon in start until i) {
                 val prop = clean.substring(start, colon).trim().lowercase()
                 val rawVal = clean.substring(colon + 1, i).trim()
-                val valueNorm = rawVal.replace(Regex("\\s+"), " ").trim().trimEnd(';').trim()
+                val valueNorm = DeclarationSignatureUtil.normalizeValue(rawVal)
                 if (prop.isNotEmpty() && valueNorm.isNotEmpty()) {
                     sign.add("$prop:$valueNorm")
                     pretty.add("$prop: $valueNorm") // 统一 1 空格，视觉一致

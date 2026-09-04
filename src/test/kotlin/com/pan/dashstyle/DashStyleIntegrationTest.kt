@@ -1,5 +1,11 @@
 package com.pan.dashstyle
 
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
+
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.openapi.application.ApplicationManager
@@ -12,7 +18,7 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import com.pan.dashstyle.CssModuleResolver.CssContainer
+import com.pan.dashstyle.support.CssModuleResolver.CssContainer
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -370,11 +376,11 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
 
         // ---- B) 关键类能不能被沙箱 ClassLoader 实例化（你之前报的 Cannot create class 就是这一关过不去） ----
         val mustLoad = listOf(
-            "com.pan.dashstyle.DashStyleHighlightAnnotator",
-            "com.pan.dashstyle.UnusedCssModuleClassInspection",
-            "com.pan.dashstyle.DuplicateCssDeclarationsInspection",
-            "com.pan.dashstyle.DashStyleDocumentationProvider",
-            "com.pan.dashstyle.InlineStyleToCssModuleIntention"
+            "com.pan.dashstyle.annotator.DashStyleHighlightAnnotator",
+            "com.pan.dashstyle.inspection.UnusedCssModuleClassInspection",
+            "com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection",
+            "com.pan.dashstyle.annotator.DashStyleDocumentationProvider",
+            "com.pan.dashstyle.action.InlineStyleToCssModuleIntention"
         )
         val cl = Thread.currentThread().contextClassLoader ?: javaClass.classLoader
         for (cn in mustLoad) {

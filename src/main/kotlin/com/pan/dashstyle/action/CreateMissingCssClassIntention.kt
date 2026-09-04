@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.action
+
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
 
 import com.intellij.codeInsight.intention.impl.BaseIntentionAction
 import com.intellij.lang.css.CSSLanguage
@@ -44,7 +49,7 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
         val (site, requestedName, existingContainer, _) = locateContext(editor, file) ?: return
-        val kebab = if (requestedName.contains("-")) requestedName else Util.camelToKebab(requestedName)
+        val kebab = if (requestedName.contains("-")) requestedName else NamingUtil.camelToKebab(requestedName)
 
         // 若缺失类名命中内置 Tailwind 原子化类，则生成的 CSS 块用其展开声明替代空块
         val tailwindCss = TailwindClassResolver.find(kebab)?.css

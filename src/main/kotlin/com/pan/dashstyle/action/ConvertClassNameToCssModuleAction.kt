@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.action
+
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
 
 import com.intellij.lang.javascript.psi.JSLiteralExpression
 import com.intellij.openapi.actionSystem.*
@@ -435,7 +440,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
                     if (matched.size == 1) {
                         // className="foo" → className={styles.foo}
                         val name = matched.first()
-                        val kebab = Util.camelToKebab(name)
+                        val kebab = NamingUtil.camelToKebab(name)
                         val access = if (kebab.contains("-")) {
                             "$importBinding[\"$kebab\"]"
                         } else {
@@ -455,7 +460,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
                     } else {
                         // 多个 class：className="foo bar" → className={clsx(styles.foo, styles.bar)}
                         val accessParts = matched.map { name ->
-                            val kebab = Util.camelToKebab(name)
+                            val kebab = NamingUtil.camelToKebab(name)
                             if (kebab.contains("-")) {
                                 "$importBinding[\"$kebab\"]"
                             } else {
@@ -527,7 +532,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
                 }
 
                 for (name in classNames) {
-                    val kebab = if (name.contains("-")) name else Util.camelToKebab(name)
+                    val kebab = if (name.contains("-")) name else NamingUtil.camelToKebab(name)
                     sb.append("\n.$kebab {\n\n}\n")
                 }
 

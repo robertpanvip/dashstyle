@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.reference
+
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
 import com.intellij.lang.javascript.psi.JSIndexedPropertyAccessExpression
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiReference

@@ -1,5 +1,11 @@
 package com.pan.dashstyle
 
+import com.pan.dashstyle.reference.*
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
+
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -18,36 +24,36 @@ import org.junit.jupiter.api.Test
 class DashStyleSmokeJunit5Test {
 
     @Test
-    @DisplayName("Util.camelToKebab / kebabToCamel 往返正确")
+    @DisplayName("NamingUtil.camelToKebab / kebabToCamel 往返正确")
     fun `camel kebab roundtrip`() {
         // camel → kebab
-        assertEquals("hello-world", Util.camelToKebab("helloWorld"))
-        assertEquals("my-class-name", Util.camelToKebab("myClassName"))
-        assertEquals("all-lower-no-op", Util.camelToKebab("all-lower-no-op"))
+        assertEquals("hello-world", NamingUtil.camelToKebab("helloWorld"))
+        assertEquals("my-class-name", NamingUtil.camelToKebab("myClassName"))
+        assertEquals("all-lower-no-op", NamingUtil.camelToKebab("all-lower-no-op"))
 
         // kebab → camel
-        assertEquals("helloWorld", Util.kebabToCamel("hello-world"))
-        assertEquals("myClassName", Util.kebabToCamel("my-class-name"))
-        assertEquals("allLowerNoOp", Util.kebabToCamel("all-lower-no-op"))
+        assertEquals("helloWorld", NamingUtil.kebabToCamel("hello-world"))
+        assertEquals("myClassName", NamingUtil.kebabToCamel("my-class-name"))
+        assertEquals("allLowerNoOp", NamingUtil.kebabToCamel("all-lower-no-op"))
     }
 
     @Test
-    @DisplayName("Util.normalizeColor 把常见颜色格式统一归一化成 #rrggbb / rgb(...) / 命名色")
+    @DisplayName("ColorUtil.normalizeColor 把常见颜色格式统一归一化成 #rrggbb / rgb(...) / 命名色")
     fun `normalize color formats`() {
         // 命名颜色：normalizeColor 会 lower() 后原样返回（"red" → "red"），真正的命名转 hex6 是
         // NAMED_TO_HEX6 + suggestColorVarName 路径负责的，不要在 smoke 里对命名色断言 #rrggbb。
-        assertEquals("red", Util.normalizeColor("red"))
-        assertEquals("red", Util.normalizeColor(" Red "))
-        assertEquals("#ff0000", Util.normalizeColor("#f00"))
-        assertEquals("#123456", Util.normalizeColor("#123456"))
+        assertEquals("red", ColorUtil.normalizeColor("red"))
+        assertEquals("red", ColorUtil.normalizeColor(" Red "))
+        assertEquals("#ff0000", ColorUtil.normalizeColor("#f00"))
+        assertEquals("#123456", ColorUtil.normalizeColor("#123456"))
         // rgb() → 规范化为不带空格的 rgb(r,g,b)
-        val normRgb = Util.normalizeColor("rgb(255, 0, 0)")
+        val normRgb = ColorUtil.normalizeColor("rgb(255, 0, 0)")
         assertTrue(
             normRgb == "rgb(255,0,0)" || normRgb?.startsWith("rgb(") == true,
             "rgb 归一化失败: $normRgb"
         )
         // rgba() 百分比 alpha 会被转成小数 0.5，或保留为 rgba 格式（不纠结精确小数，只要以 rgba( 开头就行）
-        val normRgba = Util.normalizeColor("rgba(255,0,0,50%)")
+        val normRgba = ColorUtil.normalizeColor("rgba(255,0,0,50%)")
         assertTrue(
             normRgba?.startsWith("rgba(") == true,
             "rgba 百分比必须保留为 rgba(...) 格式，实际=$normRgba"
@@ -92,7 +98,7 @@ class DashStyleSmokeJunit5Test {
             "Util.expandSelector(...) 必须存在（直接或在 Util.Companion 中），实际=$allMethods"
         )
         // 基础层保持稳定：camel/kebab 互转
-        assertEquals("foo-bar", Util.camelToKebab("fooBar"))
+        assertEquals("foo-bar", NamingUtil.camelToKebab("fooBar"))
     }
 
     @Test

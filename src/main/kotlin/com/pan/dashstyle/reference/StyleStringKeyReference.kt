@@ -1,4 +1,9 @@
-package com.pan.dashstyle
+package com.pan.dashstyle.reference
+
+import com.pan.dashstyle.inspection.*
+import com.pan.dashstyle.action.*
+import com.pan.dashstyle.support.*
+import com.pan.dashstyle.annotator.*
 
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.lang.ecmascript6.psi.ES6ImportedBinding
@@ -28,9 +33,9 @@ class StyleStringKeyReference(
         }
         val originName = kebabName;
 
-        val kebabName = if (kebabName.contains("-")) kebabName else Util.camelToKebab(kebabName)
+        val kebabName = if (kebabName.contains("-")) kebabName else NamingUtil.camelToKebab(kebabName)
         // 统一转为 camelCase 用于匹配属性名
-        val camelName = if (kebabName.contains("-")) Util.kebabToCamel(kebabName) else kebabName
+        val camelName = if (kebabName.contains("-")) NamingUtil.kebabToCamel(kebabName) else kebabName
 
         val pattern =
             Regex("""\.${Regex.escape(kebabName)}(?=[^a-zA-Z0-9_-]|$)""")
@@ -39,7 +44,7 @@ class StyleStringKeyReference(
             collectStyleMembers(stylesObj) { item ->
                 when (item) {
                     is CssRuleset -> {
-                        val selectorText = Util.expandSelector(item)
+                        val selectorText = CssSelectorUtil.expandSelector(item)
                         if (pattern.containsMatchIn(selectorText)) {
                             listOf(item)
                         } else {
@@ -168,7 +173,7 @@ class StyleStringKeyReference(
         val kebabOptions = this.collectStyleMembers<String>(stylesObj, { item ->
             when (item) {
                 is CssRuleset -> {
-                    val text = Util.stripGlobalBlocks(Util.expandSelector(item))
+                    val text = CssSelectorUtil.stripGlobalBlocks(CssSelectorUtil.expandSelector(item))
                     //val text = item.selectorList?.text ?: ""
                     Regex("""\.([a-zA-Z0-9_-]+)""")
                         .findAll(text)
@@ -185,7 +190,7 @@ class StyleStringKeyReference(
 
         // 排序后生成补全项
         return kebabOptions.sorted().map { kebab ->
-            val camel = Util.kebabToCamel(kebab)
+            val camel = NamingUtil.kebabToCamel(kebab)
             LookupElementBuilder.create(kebab)
                 .withTypeText(camel, true)                    // 右侧灰字显示 camelCase
                 .withIcon(ICON)             // CSS 图标
