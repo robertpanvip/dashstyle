@@ -20,7 +20,7 @@
 - **Tailwind 类补全 + CSS 预览**：在 CSS 的 `@apply` 指令内自动补全（`Ctrl/Cmd+Space` 手动触发，`Enter` 确认），内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明
 - **缺失类自动生成 Tailwind CSS**：`styles.xxx` 引用的类缺失且 `xxx` 是 Tailwind 原子化类时，`Alt+Enter` 自动生成对应展开 CSS（如 `.flex { display: flex }`）
 
-- **批量迁移**：Refactor → Convert className to CSS Module，一键把整个文件或选区内的 `className="..."` 迁移为 `className={styles.xxx}` 并补 `import` 与 `.module.*` 规则
+- **批量迁移**：Refactor → 将 className 转换为 CSS Module，一键把整个文件或选区内的 `className="..."` 迁移为 `className={styles.xxx}` 并补 `import` 与 `.module.*` 规则
 
 ### 文档
 

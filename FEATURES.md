@@ -89,7 +89,7 @@
 - **纯逻辑层**：[TailwindClassResolver.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/TailwindClassResolver.kt)`search(prefix)` / `find(name)`，可独立单测
 - **缺失类自动生成 Tailwind 原子化 CSS**（新增）：`styles.xxx` 引用的类在 CSS Module 里缺失、而 `xxx` 恰好是内置 Tailwind 类时，**Alt+Enter → Create missing class in CSS Module** 会直接往对应 `.module.css`（或 Vue `<style>`）写入该类的展开声明，而非空块。例：`styles.justifyCenter` 缺失 → 生成 `.justify-center { justify-content: center }`；`styles.flex` 缺失 → 生成 `.flex { display: flex }`
 
-### 2.7 className 批量迁移（Refactor → Convert className to CSS Module）
+### 2.7 className 批量迁移（Refactor → 将 className 转换为 CSS Module）
 位置：[ConvertClassNameToCssModuleAction.kt](file:///workspace/src/main/kotlin/com/pan/dashstyle/ConvertClassNameToCssModuleAction.kt)
 
 - 仅对 TSX 文件启用；无选区时扫描整个文件，有选区只处理选区。
@@ -170,7 +170,7 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
   - `copyPastePreProcessor`（JSON→CSS 复制粘贴）
   - `intentionAction` ×3（Inline 抽取 / 缺失 class 创建 / 重复声明抽取公共类）
 - `<actions>`
-  - `DashStyle.ConvertClassNameToCssModule`（Refactor → Convert className to CSS Module）
+  - `DashStyle.ConvertClassNameToCssModule`（Refactor → 将 className 转换为 CSS Module）
 
 ---
 
@@ -184,7 +184,7 @@ gradle --init-script _local_init.gradle.kts compileKotlin compileTestKotlin buil
 | 想用 Intention 提取重复块为 Less mixin | **Alt+Enter → Extract duplicated CSS blocks into shared Less mixins**（可选选区） |
 | 在 CSS 里写 Tailwind 工具类 | 光标放进 `@apply ` 后 → 输入前缀（如 `ju`）或按 **Ctrl/Cmd+Space** → 下拉右侧灰字预览 CSS → **Enter** 补全 |
 | `styles.flex` 之类缺失、且是 Tailwind 类 | 光标放 `flex` 上 **Alt+Enter → Create missing class in CSS Module** → 自动生成 `.flex { display: flex }` 等展开 CSS |
-| 把传统 className 迁移到 CSS Module | **Refactor → Convert className to CSS Module**（TSX 文件内，可先框选范围） |
+| 把传统 className 迁移到 CSS Module | **Refactor → 将 className 转换为 CSS Module**（TSX 文件内，可先框选范围） |
 
 ---
 

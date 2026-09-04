@@ -281,8 +281,8 @@
     <actions>
         <action id="DashStyle.ConvertClassNameToCssModule"
                 class="com.pan.dashstyle.action.ConvertClassNameToCssModuleAction"
-                text="Convert className to CSS Module"
-                description="Convert className string literals to CSS Module references">
+                text="将 className 转换为 CSS Module"
+                description="将 className 字符串字面量转换为 CSS Module 引用">
             <add-to-group group-id="RefactoringMenu" anchor="last"/>
             <!-- 编辑器右键直接可见，方便 TSX/JSX 下快速触发。
                  注意：不要引用 "RefactoringPopup" group——该 group id 在 WebStorm 平台未注册，

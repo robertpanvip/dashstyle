@@ -20,7 +20,7 @@ import com.intellij.psi.xml.XmlAttribute
 import java.util.regex.Pattern
 
 /**
- * 在 TSX 文件中 → Refactor → Convert className to CSS Module.
+ * 在 TSX 文件中 → Refactor → 将 className 转换为 CSS Module。
  *
  * 一键迁移传统 CSS 项目到 CSS Modules。
  *
@@ -33,7 +33,7 @@ import java.util.regex.Pattern
  * 6. 在 CSS Module 文件中生成 .foo { } 规则
  */
 class ConvertClassNameToCssModuleAction : AnAction(
-    "Convert className to CSS Module"
+    "将 className 转换为 CSS Module"
 ) {
 
     companion object {
@@ -67,7 +67,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
             e.presentation.isEnabled = enabled
             e.presentation.isVisible = true
         }
-        e.presentation.text = "Convert className to CSS Module..."
+        e.presentation.text = "将 className 转换为 CSS Module..."
         if (!enabled && hasContext) {
             e.presentation.description = when (ext) {
                 "ts", "js" -> "This action requires JSX markup — switch to a .tsx / .jsx file"
