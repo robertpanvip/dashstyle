@@ -196,13 +196,6 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         // 注意不能用 `\b\.`：CSS 里类名前面通常是空白/{/(/逗号这类非单词字符，`\b` 无边界，会漏匹配。
         // 用与 MODULE_CLASS_RE 一致的前缀锚点 `(?:^|[^\w-])`。
         private val INLINE_CLASS_RE = Regex("""(?:^|[^\w-])\.-?([_a-zA-Z][_a-zA-Z0-9-]*)""")
-        // className="a b-c" / :class="'a b-c'" / :class="`a b-c`"
-        // 注：正则用 3 组 capture group（第 2/3/4 组分别对应 双引号 / 单引号 / 反引号）；
-        //     下游读取 tokens 时从 groupValues.drop(1).first { it.isNotBlank() } 取值。
-        private val STRING_CLASSNAME_RE = Regex(
-            "(?:className|class)\\s*=\\s*(?:\\(\\s*)?(?:\"([^\"]*)\"|'([^']*)'|`([^`]*)`)",
-            RegexOption.IGNORE_CASE
-        )
 
         // ================================================================
         // 性能优化：computeFileSnapshot 里会遍历多个候选绑定名（styles/css/classes/...），
@@ -394,15 +387,10 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                     }
                 }
 
-                // --- className="xxx" 或 :class="['a','b']" 如果是字符串字面量直接引用 kebab class 也当 used ---
-                for (mm in STRING_CLASSNAME_RE.findAll(srcText)) {
-                    val captured = mm.groupValues.drop(1).firstOrNull { it.isNotBlank() }.orEmpty()
-                    val tokens = captured.split(Regex("""\s+""")).filter { it.isNotBlank() }
-                    for (t in tokens) {
-                        used += t
-                        used += Util.kebabToCamel(t)
-                    }
-                }
+                // 注意：只统计 binding 成员访问（styles.foo / styles["foo"]）与 Vue $style 引用。
+                // 普通字符串 className="foo" / class="foo" 是全局 CSS 类名，与 CSS Module 导出无关，
+                // 绝不能计入 used（否则 <div className="foo"/> 会误判 .foo 已使用）。
+                // clsx(styles.foo, cond && styles.bar) 已由上面的 memberRe/idxRe 文本扫描覆盖。
             }
 
             if (hasDynamic) return Snapshot(used, true, emptyMap(), emptySet())
