@@ -139,10 +139,10 @@ object CssModuleResolver {
             }
         }
 
-        // 再兜底：本地变量
+        // 再兜底：本地变量（scope-aware，不全局扫描文件）
+        // 先找最近的作用域（函数/块），再从内向外逐层查找
         if (contextFile != null) {
-            val variable = PsiTreeUtil.findChildrenOfType(contextFile, JSVariable::class.java)
-                .firstOrNull { it.name == qualifierName }
+            val variable = findVariableInScope(qualifierExpr, qualifierName, contextFile)
             if (variable != null) {
                 val init = variable.initializer
                 if (init is JSObjectLiteralExpression) return CssContainer.LocalObjectLiteral(init, contextFile, qualifierName) to qualifierName
@@ -151,6 +151,31 @@ object CssModuleResolver {
                     if (container != null) return container to name
                 }
             }
+        }
+        return null
+    }
+
+    /**
+     * 从 qualifierExpr 开始，向外逐层查找名为 [name] 的 JSVariable 声明。
+     * 优先找当前作用域内的变量，避免在整个文件里按文本名匹配到错误变量。
+     */
+    private fun findVariableInScope(qualifierExpr: PsiElement, name: String, contextFile: PsiFile): JSVariable? {
+        // 从 qualifierExpr 开始，逐层向外找 enclosing 函数/文件
+        var scope: PsiElement? = PsiTreeUtil.getParentOfType(qualifierExpr, JSFunction::class.java, JSBlockStatement::class.java)
+        // 如果 qualifierExpr 本身就是顶级表达式（不在任何函数内），scope 会设为 null
+        val seen = mutableSetOf<PsiElement>()
+        while (scope != null) {
+            if (!seen.add(scope)) break
+            val found = PsiTreeUtil.findChildrenOfType(scope, JSVariable::class.java)
+                .firstOrNull { it.name == name }
+            if (found != null) return found
+            scope = PsiTreeUtil.getParentOfType(scope, JSFunction::class.java, JSBlockStatement::class.java)
+        }
+        // 兜底：文件级变量（import binding / 顶级声明）
+        for (child in contextFile.children) {
+            val v = PsiTreeUtil.findChildrenOfType(child, JSVariable::class.java)
+                .firstOrNull { it.name == name }
+            if (v != null) return v
         }
         return null
     }
@@ -224,8 +249,24 @@ object CssModuleResolver {
         forEachRuleset(container) { ruleset ->
             val expanded = Util.expandSelector(ruleset)
             val names = Util.extractClassNames(expanded).distinct()
-            val decls = PsiTreeUtil.findChildrenOfType(ruleset.block, CssDeclaration::class.java).toList()
+            val decls = collectDirectDeclarations(ruleset)
             for (name in names) out += ClassEntry(name, ruleset, expanded, decls)
+        }
+        return out
+    }
+
+    /**
+     * 只收集当前 ruleset.block 的**直接子节点**中的 CssDeclaration，
+     * 避免把嵌套在子选择器（如 .text:hover）里的声明也合并进来。
+     * 悬浮预览只展示当前选择器直接声明的样式，不是所有后代。
+     */
+    private fun collectDirectDeclarations(ruleset: CssRuleset): List<CssDeclaration> {
+        val block = ruleset.block ?: return emptyList()
+        val out = mutableListOf<CssDeclaration>()
+        for (child in block.children) {
+            if (child is CssDeclaration) {
+                out += child
+            }
         }
         return out
     }

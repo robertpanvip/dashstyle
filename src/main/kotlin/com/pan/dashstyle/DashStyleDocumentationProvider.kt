@@ -101,7 +101,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
         if (targetRule != null) {
             return formatRulesetDoc(
                 Util.expandSelector(targetRule),
-                PsiTreeUtil.findChildrenOfType(targetRule.block, CssDeclaration::class.java).toList()
+                (targetRule.block?.children?.filterIsInstance<CssDeclaration>()) ?: emptyList()
             )
         }
 
@@ -109,7 +109,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
         val site = originalElement ?: element
         val resolved = resolveFromSite(site)
         if (resolved != null) {
-            val decls = PsiTreeUtil.findChildrenOfType(resolved.ruleset.block, CssDeclaration::class.java).toList()
+            val decls = resolved.ruleset.block?.children?.filterIsInstance<CssDeclaration>() ?: emptyList()
             val locationInfo = when (resolved.container) {
                 is CssModuleResolver.CssContainer.ImportedFile ->
                     "in ${resolved.container.virtualFile.path}"

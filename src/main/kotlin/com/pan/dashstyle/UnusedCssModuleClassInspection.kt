@@ -204,9 +204,9 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         // ================================================================
         private val FIXED_BINDINGS = setOf("styles", "css", "classes", "styled", "style", "moduleStyles")
         private class BindingPatterns(val binding: String) {
-            val dynRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[\s*([^\s\]])""")
             val memberRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)""")
             val idxRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[\s*(['"`])([^'"`]+)\1\s*\]""")
+            val bracketOpenRe: Regex = Regex("""\b${Regex.escape(binding)}\s*\[""")
         }
         private val FIXED_BINDING_PATTERNS: List<BindingPatterns> = FIXED_BINDINGS.map { BindingPatterns(it) }
         // Vue $style.member / $style["key"]（不依赖绑定名，可直接预编译）
@@ -341,15 +341,18 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 val srcText = runCatching { srcPsi.text }.getOrNull().orEmpty()
                 if (srcText.isEmpty()) continue
 
-                // --- 快速 hasDynamic 检测：
-                //     文本里出现 bindingName[xxx] 中括号引用，且 [ 之后第一个非空字符不是 ' 或 "，则视为动态索引
-                dynLoop@ for (bp in patterns) {
-                    val m = bp.dynRe.find(srcText) ?: continue
-                    val firstChar = m.groupValues[1].firstOrNull() ?: continue
-                    if (firstChar != '\'' && firstChar != '"' && firstChar != '`') {
+                // --- 分析 bindingName[expr] 括号内表达式，提取已知字符串 + 判断是否动态 ---
+                // 替代旧版 dynRe 的"只检查首字符是否引号"的粗粒度判断。
+                // 新逻辑：配平括号，提取 [expr] 内容，尝试从 ternaries / template literals 中提取字符串字面量。
+                // 只有完全无法解析时才算动态。
+                val bracketStrings = mutableListOf<String>()
+                for (bp in patterns) {
+                    val (extracted, isDynamic) = analyzeBracketExpressions(srcText, bp)
+                    if (isDynamic) {
                         hasDynamic = true
-                        break@dynLoop
+                        break
                     }
+                    bracketStrings += extracted
                 }
                 if (hasDynamic) break
 
@@ -363,12 +366,19 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                         used += Util.camelToKebab(name)
                     }
                     // styles["foo-bar"] / styles['foo-bar'] / styles[`fooBar`]
+                    // 注意：idxRe 只匹配完全用引号包裹的字符串字面量，不匹配 ternaries / template literals
                     for (mm in bp.idxRe.findAll(srcText)) {
                         val name = mm.groupValues[2]
                         used += name
                         used += Util.camelToKebab(name)
                         used += Util.kebabToCamel(name)
                     }
+                }
+                // 把从 bracket 表达式（ternary / template literal）中提取的字符串也加入 used
+                for (s in bracketStrings) {
+                    used += s
+                    used += Util.kebabToCamel(s)
+                    used += Util.camelToKebab(s)
                 }
 
                 // --- Vue 场景 :class="$style.xxx" 或 :class="xxx in $style" ---
@@ -488,6 +498,182 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             return imp.importedBindings.firstOrNull { b ->
                 named == null || !com.intellij.psi.util.PsiTreeUtil.isAncestor(named, b, false)
             }?.name ?: imp.importedBindings.firstOrNull()?.name ?: "styles"
+        }
+
+        // ================================================================
+        // 括号表达式分析：styles[expr] 中 expr 的静态分析
+        // 替代旧版"只看首字符是否引号"的粗粒度判断，尝试从表达式提取已知字符串。
+        // ================================================================
+
+        /**
+         * 分析 [binding] 后紧跟的 `[expr]` 形式的括号表达式，
+         * 返回 (提取到的字符串列表, 是否有完全动态的引用)。
+         *
+         * 对于 styles[cond ? "a" : "b"] 会提取 ["a", "b"] 且 isDynamic=false。
+         * 对于 styles[unknownVar] 会返回 ([], true)。
+         * 对于纯字符串索引 styles["foo"] 不会匹配这里（idxRe 已处理）。
+         */
+        private fun analyzeBracketExpressions(text: String, bp: BindingPatterns): Pair<List<String>, Boolean> {
+            val extracted = mutableListOf<String>()
+            var searchFrom = 0
+            while (true) {
+                val m = bp.bracketOpenRe.find(text, searchFrom) ?: break
+                val openPos = m.range.last  // '[' 的位置
+                // 配平括号找到匹配的 ']'，跳过字符串和模板字面量
+                val closePos = findMatchingCloseBracket(text, openPos) ?: break
+                val content = text.substring(openPos + 1, closePos).trim()
+                if (content.isEmpty()) {
+                    searchFrom = closePos + 1
+                    continue
+                }
+
+                // 跳过纯字符串字面量（已被 idxRe 处理）
+                if (isStringLiteral(content)) {
+                    searchFrom = closePos + 1
+                    continue
+                }
+
+                // 尝试从表达式提取字符串字面量
+                val strings = extractStringsFromExpr(content, text, openPos + 1)
+                if (strings.isEmpty()) {
+                    // 完全无法提取 → 真正的动态引用
+                    return emptyList<String>() to true
+                }
+                extracted += strings
+                searchFrom = closePos + 1
+            }
+            return extracted to false
+        }
+
+        /** 从 openPos 开始配平方括号，返回匹配的 ']' 位置，跳过字符串/模板字面量内的括号。 */
+        private fun findMatchingCloseBracket(text: String, openPos: Int): Int? {
+            if (openPos >= text.length || text[openPos] != '[') return null
+            var depth = 0
+            var i = openPos
+            while (i < text.length) {
+                val c = text[i]
+                when {
+                    c == '[' && depth >= 0 -> depth++
+                    c == ']' -> { depth--; if (depth == 0) return i }
+                    c == '"' -> { i = skipToEndOfString(text, i, '"'); if (i < 0) return null }
+                    c == '\'' -> { i = skipToEndOfString(text, i, '\''); if (i < 0) return null }
+                    c == '`' -> { i = skipToEndOfTemplate(text, i); if (i < 0) return null }
+                }
+                i++
+            }
+            return null
+        }
+
+        private fun skipToEndOfString(text: String, from: Int, quote: Char): Int {
+            var i = from + 1
+            while (i < text.length) {
+                val c = text[i]
+                if (c == '\\') { i += 2; continue }
+                if (c == quote) return i
+                i++
+            }
+            return -1
+        }
+
+        private fun skipToEndOfTemplate(text: String, from: Int): Int {
+            var i = from + 1
+            while (i < text.length) {
+                val c = text[i]
+                if (c == '\\') { i += 2; continue }
+                if (c == '`') return i
+                if (c == '$' && i + 1 < text.length && text[i + 1] == '{') {
+                    val close = findMatchingCloseBrace(text, i + 1) ?: return -1
+                    i = close + 1
+                    continue
+                }
+                i++
+            }
+            return -1
+        }
+
+        private fun findMatchingCloseBrace(text: String, openPos: Int): Int? {
+            var depth = 0
+            var i = openPos
+            while (i < text.length) {
+                when (text[i]) {
+                    '{' -> depth++
+                    '}' -> { depth--; if (depth == 0) return i }
+                    '"' -> { i = skipToEndOfString(text, i, '"'); if (i < 0) return null }
+                    '\'' -> { i = skipToEndOfString(text, i, '\''); if (i < 0) return null }
+                    '`' -> { i = skipToEndOfTemplate(text, i); if (i < 0) return null }
+                }
+                i++
+            }
+            return null
+        }
+
+        private fun isStringLiteral(s: String): Boolean {
+            val t = s.trim()
+            return (t.startsWith("'") && t.endsWith("'")) ||
+                (t.startsWith("\"") && t.endsWith("\"")) ||
+                (t.startsWith("`") && t.endsWith("`"))
+        }
+
+        /**
+         * 尝试从 [expr] 内容中提取字符串字面量。
+         * content 是 styles[ 和 ] 之间的文本（不含括号本身）。
+         * openPos 是 content 在 text 中的起始位置（用于跨多字符模式匹配）。
+         */
+        private fun extractStringsFromExpr(content: String, text: String, openPos: Int): List<String> {
+            val results = mutableListOf<String>()
+
+            // Case 1: ternary — cond ? "a" : "b" 或 cond ? 'a' : 'b'
+            // 用更健壮的方式：找到 ? 和 : 的位置，然后提取两侧的字符串
+            val qIdx = content.indexOf('?')
+            val cIdx = content.indexOf(':')
+            if (qIdx >= 0 && cIdx > qIdx) {
+                val thenPart = content.substring(qIdx + 1, cIdx).trim()
+                val elsePart = content.substring(cIdx + 1).trim()
+                for (part in listOf(thenPart, elsePart)) {
+                    val str = tryUnquote(part)
+                    if (str != null) results += str
+                }
+                // 如果 ternary 的两边都能提取到字符串，就算成功
+                if (results.size == 2) return results.distinct()
+                results.clear()
+            }
+
+            // Case 2: template literal — `prefix-${var}-suffix`
+            val tmpl = tryUnquoteBacktick(content.trim())
+            if (tmpl != null) {
+                // 按 ${...} 拆分，保留静态部分（非空）
+                val parts = tmpl.split(Regex("""\$\{[^}]*\}"""))
+                results.addAll(parts.filter { it.isNotEmpty() })
+                if (results.isNotEmpty()) return results.distinct()
+            }
+
+            // Case 3: string concatenation — "a" + "b" 或 'a' + 'b'
+            if (content.contains("+")) {
+                val parts = content.split("+").map { it.trim() }
+                val allStrings = parts.all { tryUnquote(it) != null }
+                if (allStrings) {
+                    val combined = parts.joinToString("") { tryUnquote(it)!! }
+                    if (combined.isNotEmpty()) return listOf(combined)
+                }
+            }
+
+            // 无法提取任何字符串
+            return emptyList()
+        }
+
+        private fun tryUnquote(s: String): String? {
+            val t = s.trim()
+            return when {
+                t.startsWith("'") && t.endsWith("'") && t.length >= 2 -> t.substring(1, t.length - 1)
+                t.startsWith("\"") && t.endsWith("\"") && t.length >= 2 -> t.substring(1, t.length - 1)
+                else -> null
+            }
+        }
+
+        private fun tryUnquoteBacktick(s: String): String? {
+            val t = s.trim()
+            return if (t.startsWith("`") && t.endsWith("`") && t.length >= 2) t.substring(1, t.length - 1)
+            else null
         }
     }
 }
