@@ -1,0 +1,36 @@
+# Kotlin stdlib 不随插件二次打包进 distribution，运行时由 IDE(WebStorm) 自身提供的 stdlib 提供。
+# 之前设为 true 会强制 KGP 把 kotlin-stdlib-2.1.0.jar 打进插件 zip（约 1.7MB），
+# 而 IDE 平台本身已带 Kotlin 2.2 stdlib，插件按 2.1.0 编译的字节码在 2.2 运行时上完全兼容，
+# 故设置为 false 可以瘦身，packaging 交给 intellij-platform-gradle-plugin 的 bundling.mode 约束。
+kotlin.stdlib.default.dependency=false
+org.jetbrains.intellij.platform.kotlin.stdlib.bundling.mode=skip
+# Enable Gradle Configuration Cache -> https://docs.gradle.org/current/userguide/configuration_cache.html
+org.gradle.configuration-cache=false
+# Enable Gradle Build Cache -> https://docs.gradle.org/current/userguide/build_cache.html
+org.gradle.caching=false
+# gradle.properties
+kotlin.code.style=official
+kotlin.incremental=true
+kotlin.dsl.source.download=false
+# 禁用 JDK 自动探测，避免 Kotlin DSL 解析 Java 25+ 版本号时崩溃
+# 注意：auto-detect=false 只禁止「自动探测系统里所有散落在 /usr/lib/jvm 之类的 JDK」，
+#       但不会禁用 actions/setup-java 注入的 JAVA_HOME，也不会禁用 org.gradle.java.home
+#       显式指定的 JDK，所以 CI 上仍然能正常找到 JDK 17。
+org.gradle.java.installations.auto-detect=false
+org.gradle.java.installations.auto-download=false
+# 让 Gradle JVM（compileKotlin / Kotlin DSL）强制用 JDK 17：
+#   - 本地 Trae：mise 里 17.0.2 路径固定（已和你本地环境保持一致）
+#   - GitHub Actions：CI 的「Patch gradle.properties java.home」step 会把这一行
+#     原地 sed 替换成 actions/setup-java 实际安装的 temurin-17 路径。
+# 为什么一定要写死在仓库里：Kotlin 2.1.0 编译器自带的 JavaVersion.parse 解析
+# java.version 字符串时不识别 Java 25 的 "25.0.2"，直接
+# IllegalArgumentException("25.0.2") 崩溃。Gradle 8.14 跑在 Java 25 上就会在
+# Kotlin DSL 编译阶段炸掉。所以必须从 org.gradle.java.home 维度锁死成 17。
+org.gradle.java.home=/root/.local/share/mise/installs/java/25.0.2
+# 网络：强制 IPv4。代理（proxyHost 127.0.0.1:18080）只在本地开发需要时，
+# 由用户自己通过 GRADLE_OPTS 或 ~/.gradle/gradle.properties 叠加注入，
+# 不要提交到仓库，否则 GitHub Actions 海外机器也会被代理拖死。
+org.gradle.jvmargs=\
+  -Djava.net.preferIPv4Stack=true \
+  -Djava.net.preferIPv6Addresses=false \
+  -Xmx3g -XX:MaxMetaspaceSize=512m
