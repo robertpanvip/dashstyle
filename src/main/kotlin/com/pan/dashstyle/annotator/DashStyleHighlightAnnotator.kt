@@ -63,11 +63,8 @@ class DashStyleHighlightAnnotator : Annotator {
         val expandedSelector = runCatching { CssSelectorUtil.expandSelector(rs) }.getOrNull().orEmpty()
         if (expandedSelector.isBlank()) return
         val globals = snap.globalClassNames
-        val stripped = CssSelectorUtil.stripGlobalBlocks(expandedSelector)
-        val expandedClasses = CLASS_NAME_RE.findAll(stripped).mapNotNull { m ->
-            val raw = m.groupValues[2]
-            raw.trim().takeIf { it.isNotEmpty() }
-        }.distinct().filter { it !in globals }.toList()
+        val expandedClasses = CssSelectorUtil.extractClassNames(expandedSelector)
+            .distinct().filter { it !in globals }.toList()
         if (expandedClasses.isEmpty()) return
 
         // Step 2: 只有当展开后得到的所有类名 全部都不在 used 集合里，才认为整个 ruleset 未被使用。
@@ -145,9 +142,6 @@ class DashStyleHighlightAnnotator : Annotator {
 
     companion object {
         private val MODULE_EXTS = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
-        // 公开：给 StaticGlobalHighlightVisitor（独立类）、DuplicateCssDeclarationsInspection Companion 直接复用
-        @JvmStatic
-        val CLASS_NAME_RE: Regex = Regex("""(^|[^\w-])\.([_a-zA-Z][_a-zA-Z0-9-]*)(?=[^\w-]|${'$'})""")
 
         // 未使用：跟随主题的灰（Darcula=浅灰，Light=中灰）
         val UNUSED_CSS_CLASS_KEY: TextAttributesKey = run {

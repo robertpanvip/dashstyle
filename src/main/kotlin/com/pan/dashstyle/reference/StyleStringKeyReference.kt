@@ -173,12 +173,8 @@ class StyleStringKeyReference(
         val kebabOptions = this.collectStyleMembers<String>(stylesObj, { item ->
             when (item) {
                 is CssRuleset -> {
-                    val text = CssSelectorUtil.stripGlobalBlocks(CssSelectorUtil.expandSelector(item))
-                    //val text = item.selectorList?.text ?: ""
-                    Regex("""\.([a-zA-Z0-9_-]+)""")
-                        .findAll(text)
-                        .map { it.groupValues[1] }
-                        .toList()
+                    val text = CssSelectorUtil.expandSelector(item)
+                    CssSelectorUtil.extractClassNames(text)
                 }
 
                 is JSProperty ->

@@ -116,47 +116,13 @@ class CssModuleImportCopyPasteProcessor : CopyPastePreProcessor {
 
     /**
      * 在目标 TSX/JSX 文件的 module-scope（不是 JSX 内部！）插入一行 import。
-     * 规则：
-     *  - 如果已有 ES6ImportDeclaration 列表非空 → 插到最后一条的紧后面；
-     *  - 否则 → 插到文件最开头（prepend，加个换行与后续代码分离）；
-     *  - 写完后立刻 commit，让 PSI/文档同步。
+     * 纯 PSI 写入：委托 [CssModuleFileResolver.appendImportDeclaration]，
+     * 通过 PsiFileFactory 创建节点 + `addAfter`/`addBefore` 修改 PSI 树，
+     * 不经过 Document API（由外层 WriteCommandAction 提供写动作）。
      */
     private fun injectImportAtModuleScope(project: Project, file: PsiFile, meta: ImportMeta) {
-        val importText = "import ${meta.binding} from '${meta.from}'\n"
-        val doc = PsiDocumentManager.getInstance(project).getDocument(file)
-        if (doc != null) {
-            val imports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java).toList()
-            if (imports.isEmpty()) {
-                // 插到最开头。如果开头是 shebang / @ts-nocheck 之类，也放在最前面（import 本来就要在前面）。
-                doc.insertString(0, importText)
-            } else {
-                val last = imports.maxByOrNull { it.textRange.endOffset } ?: return
-                // 最后一条 import 的末尾，换行之后再加新的 import（保持空行风格，和 formatter 一致）
-                val end = last.textRange.endOffset
-                val suffix = "\n" + importText
-                doc.insertString(end, suffix)
-            }
-            PsiDocumentManager.getInstance(project).commitDocument(doc)
-        } else {
-            // 罕见 fallback：走 PSI AST 插入（没有 Document 时，比如内嵌块）。
-            val imports = PsiTreeUtil.findChildrenOfType(file, ES6ImportDeclaration::class.java)
-            val factory = PsiFileFactory.getInstance(project)
-            val dummy = factory.createFileFromText(
-                "__dashstyle_import__.js",
-                com.intellij.lang.Language.findInstance(JavascriptLanguage::class.java),
-                importText + "export {}"
-            )
-            val newImport = PsiTreeUtil.findChildrenOfType(dummy, ES6ImportDeclaration::class.java)
-                .firstOrNull() ?: return
-            val first = file.firstChild
-            if (imports.isEmpty()) {
-                if (first != null) file.addBefore(newImport, first)
-                else file.add(newImport)
-            } else {
-                val last = imports.last()
-                last.parent.addAfter(newImport, last)
-            }
-        }
+        val importText = "import ${meta.binding} from '${meta.from}'"
+        CssModuleFileResolver.appendImportDeclaration(project, file, importText)
     }
 
     // ================================================================

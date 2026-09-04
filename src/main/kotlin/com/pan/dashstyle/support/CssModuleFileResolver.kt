@@ -215,24 +215,47 @@ object CssModuleFileResolver {
             WriteCommandAction.writeCommandAction(project, sourceFile)
                 .withName("Add CSS Module import")
                 .run<Nothing> {
-                    val lastImport = imports.lastOrNull()
-                    if (lastImport != null) {
-                        sourceFile.addAfter(newImportPsi, lastImport)
-                    } else if (sourceFile.firstChild != null) {
-                        sourceFile.addBefore(newImportPsi, sourceFile.firstChild)
-                    } else {
-                        sourceFile.add(newImportPsi)
-                    }
+                    appendImportDeclaration(project, sourceFile, newImportPsi)
                 }
         }
         return "styles"
     }
 
     /**
+     * 纯 PSI 追加一条 import 声明到 sourceFile 的 module-scope：
+     *  - 已有 import → 插到最后一条 import 之后；
+     *  - 没有 import → 插到文件最顶部（shebang / @ts-nocheck 之前，import 本来就应在最前）；
+     *  - 空文件 → 直接 add。
+     * 调用方必须已持有写动作（WriteCommandAction 内）。
+     * 返回插入后的 import 节点；失败返回 null。
+     */
+    fun appendImportDeclaration(
+        project: Project,
+        sourceFile: PsiFile,
+        newImportPsi: ES6ImportDeclaration
+    ): PsiElement? {
+        val imports = PsiTreeUtil.findChildrenOfType(sourceFile, ES6ImportDeclaration::class.java).toList()
+        return when {
+            imports.isNotEmpty() -> {
+                val last = imports.maxByOrNull { it.textRange.endOffset } ?: return null
+                last.parent.addAfter(newImportPsi, last)
+            }
+            sourceFile.firstChild != null -> sourceFile.addBefore(newImportPsi, sourceFile.firstChild)
+            else -> sourceFile.add(newImportPsi)
+        }
+    }
+
+    /** 便捷重载：从 import 文本创建 PSI 节点并追加（调用方须持有写动作）。 */
+    fun appendImportDeclaration(project: Project, sourceFile: PsiFile, importText: String): PsiElement? {
+        val newImportPsi = createImportPsi(project, sourceFile, importText) ?: return null
+        return appendImportDeclaration(project, sourceFile, newImportPsi)
+    }
+
+    /**
      * 从文本创建 [ES6ImportDeclaration] PSI 节点（用于 PSI 原子写入）。
      * 使用与 sourceFile 相同的 language，保证 TSX/JSX/Vue 等文件的 import 语法兼容。
      */
-    private fun createImportPsi(project: Project, sourceFile: PsiFile, importText: String): ES6ImportDeclaration? {
+    internal fun createImportPsi(project: Project, sourceFile: PsiFile, importText: String): ES6ImportDeclaration? {
         val ext = sourceFile.virtualFile?.extension ?: "js"
         val dummyFile = PsiFileFactory.getInstance(project)
             .createFileFromText("_dummy.$ext", sourceFile.language, "$importText\n")

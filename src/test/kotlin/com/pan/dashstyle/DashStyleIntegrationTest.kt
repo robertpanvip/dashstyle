@@ -705,4 +705,37 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             Assert.assertTrue("Bar 内 styles.shadowedCard 应被计入 CSS Module", "shadowed-card" in used)
         }
     }
+
+    // ========================================================================
+    // #16. PSI import 插入格式验证：ensureImportExists 追加 import 后，
+    //      新 import 必须与已有 import / 后续代码之间有换行分隔（不能粘连成
+    //      "import areactimport styles" 这样的坏语法）。
+    // ========================================================================
+    @Test
+    fun `PSI import insertion keeps newline separators`() {
+        val cssVf = myFixture.addFileToProject("Other.module.css", ".foo { color: red; }\n").virtualFile!!
+        val tsx = myFixture.addFileToProject(
+            "App16.tsx",
+            """
+            import react from 'react'
+            const x = 1
+            """.trimIndent() + "\n"
+        )
+        val binding = CssModuleFileResolver.ensureImportExists(project, tsx, cssVf)
+        Assert.assertEquals("styles", binding)
+        val text = tsx.text
+        println("=== #16 resulting App16.tsx ===")
+        println(text)
+        Assert.assertFalse(
+            "新 import 与已有 import 粘连（缺少换行分隔）: ${text.replace("\n", "\\n")}",
+            text.contains("reactimport") || text.contains("import stylesfrom")
+        )
+        Assert.assertTrue(
+            "新 import 应出现在独立一行: ${text.replace("\n", "\\n")}",
+            Regex("""^import styles from ['"].*['"]$""", RegexOption.MULTILINE).containsMatchIn(text)
+        )
+        // 原有代码不能被破坏
+        Assert.assertTrue("原有 const x = 1 应保留", text.contains("const x = 1"))
+        Assert.assertTrue("原有 react import 应保留", text.contains("import react from 'react'"))
+    }
 }
