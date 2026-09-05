@@ -2,6 +2,11 @@
 //  - pluginManagement / allprojects.repositories 的 mavenCentral 与 GPP URL 自动改写成腾讯镜像
 //  - 追加 JetBrains releases/snapshots 专用仓（专用于 bundledPlugin 与 webstorm SDK）
 // 因此 build.gradle.kts 里只写常规的 repositories 占位（mavenCentral + intellijPlatform.defaultRepositories）
+// 注：Gradle Kotlin DSL 里 `java` 会解析成 JavaPluginExtension 访问器，遮蔽 java.* 包名，
+//     所以文件顶部必须显式 import 需要的 JDK 类。
+import java.io.IOException
+import java.nio.file.Files
+
 plugins {
     id("java")
     // WebStorm-2025.3 自身是 Kotlin 2.2 metadata。plugin 端使用 2.1.0 编译器，
@@ -137,3 +142,52 @@ tasks {
         enabled = false
     }
 }
+
+// ============ Vue LSP 单测布局补丁（幂等，test 前自动执行） ============
+// 背景：沙箱装上 vue 插件后，VFS 监听器/意图查询会触发 VueServicesKt.<clinit>：
+//   PackageVersion.bundled(VueLspServerPackageDescriptor, "2.2.10",
+//       pluginPath = "vuejs/vuejs-backend",                 ← JetBrains 源码仓布局名
+//       localPath = "vue-language-tools/language-server/2.2.10")
+// 单测模式下 JSPluginPathManager 会先拼 <ideaHome>/plugins/vuejs/vuejs-backend/...
+// （存在即成功）；但发行版目录叫 plugins/vuejs-plugin，没有 plugins/vuejs/ 这层别名，
+// 路径不存在时回退到 PluginManagerCoreKt.getPluginDistDirByClass()，后者要求 jar
+// 直接位于 <plugin>/lib/ 下，而 intellij.vuejs.backend.jar 在 lib/modules/ 下 →
+//   IllegalStateException: ".../vuejs-plugin/lib/modules should be lib directory"
+// 该异常在 <clinit> 里发生：要么裸传播进测试方法（ExceptionInInitializerError），
+// 要么在 EDT 被 TestLoggerFactory 记录并在 tearDown 补抛（TestLoggerAssertionError），
+// LoggedErrorProcessor 过滤器拦不住后者 —— 唯一治本方案是让路径解析成功。
+// 方案：在本地发行版里创建源码布局别名 plugins/vuejs/vuejs-backend -> plugins/vuejs-plugin
+//（发行版里真实存在 vue-language-tools/language-server/2.2.10/bin/vue-language-server.js，
+//  别名命中后 clinit 正常返回 BundledVersion，不再走抛 ISE 的回退分支）。
+val patchVueLspPluginLayout by tasks.registering {
+    doLast {
+        val distDir = tasks
+            .named<Test>("test").get()
+            .classpath
+            .mapNotNull { file ->
+                val f = file.canonicalFile
+                // app.jar（平台核心）位于 <dist>/lib/ 下，由它反推发行版根目录
+                if (f.isFile && f.name == "app.jar" && f.parentFile?.name == "lib") f.parentFile?.parentFile else null
+            }
+            .firstOrNull()
+            ?: error("无法从 test classpath 定位 IDE 发行版（lib/app.jar）")
+        val alias = distDir.resolve("plugins/vuejs/vuejs-backend")
+        if (alias.exists()) {
+            logger.lifecycle("Vue LSP 源码布局别名已存在，跳过: $alias")
+            return@doLast
+        }
+        val target = distDir.resolve("plugins/vuejs-plugin")
+        require(target.isDirectory) { "发行版里找不到 plugins/vuejs-plugin: $target" }
+        distDir.resolve("plugins/vuejs").mkdirs()
+        try {
+            Files.createSymbolicLink(alias.toPath(), target.toPath())
+            logger.lifecycle("已创建 Vue LSP 源码布局别名(软链): $alias -> $target")
+        } catch (e: IOException) {
+            // Windows 无符号链接权限等场景：退化为只建空目录 —— 对 clinit 而言
+            // Files.exists(...) 为真即可通过（BundledVersion 仅记录路径字符串）
+            alias.mkdirs()
+            logger.lifecycle("符号链接创建失败(${e.message})，已退化为空目录: $alias")
+        }
+    }
+}
+tasks.named("test") { dependsOn(patchVueLspPluginLayout) }

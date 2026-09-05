@@ -20,6 +20,22 @@ import org.junit.runners.JUnit4
 @Suppress("UnstableApiUsage", "UNUSED_PARAMETER")
 class FrameworkCssResolverTest : BasePlatformTestCase() {
 
+    private var errorProcessorToken: com.intellij.openapi.application.AccessToken? = null
+
+    override fun setUp() {
+        super.setUp()
+        // VueLsp 沙箱噪音过滤，见 [VueSandboxNoiseFilter]
+        errorProcessorToken = VueSandboxNoiseFilter.install()
+    }
+
+    override fun tearDown() {
+        try {
+            errorProcessorToken?.finish()
+        } finally {
+            super.tearDown()
+        }
+    }
+
     @Test
     fun `computeSignature - 声明顺序不影响签名`() {
         val c1 = myFixture.configureByText("a.css", ".a { padding: 0; margin: 0; }")

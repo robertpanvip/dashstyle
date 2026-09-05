@@ -144,8 +144,10 @@ object CssModuleResolver {
                         styles.firstOrNull { it.getAttributeValue("module") == alias }
                     }
                     if (mod != null) return CssContainer.VueStyleTag(mod, qualifierName, contextFile) to qualifierName
-                    val any = styles.firstOrNull()
-                    if (any != null) return CssContainer.VueStyleTag(any, "\$style", contextFile) to qualifierName
+                    // 别名对不上任何 module style 标签（如 $typo.bar）→ 不解析。
+                    // 不做"任意 style 标签"兜底：那会把无关 $xxx 引用错误计入第一个
+                    // module（甚至非 module 的 style 标签），导致未使用类检查漏报
+                    // ——该行为与 DashStyleIntegrationTest #13（$notstyle.bar 不计入）的意图相悖。
                 }
             }
         }

@@ -54,8 +54,14 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     override fun getTestDataPath(): String =
         Path.of("src/test/testData").toAbsolutePath().toString()
 
+    private var errorProcessorToken: com.intellij.openapi.application.AccessToken? = null
+
     override fun setUp() {
         super.setUp()
+        // 沙箱装入 Vue 插件后，addFileToProject 写 .ts/.tsx 物理文件会触发 VFS 监听器
+        // 初始化 VueLsp 服务，其在测试沙箱布局下必然失败并被记为错误日志，
+        // 测试框架会把该日志 rethrow 成 TestLoggerAssertionError —— 统一过滤，见 [VueSandboxNoiseFilter]。
+        errorProcessorToken = VueSandboxNoiseFilter.install()
         // 提前激活 Kotlin/JS/TS/CSS/SCSS/LESS 插件在沙箱里的 Component（可选，通常 BasePlatformTestCase 会自动做）
         runCatching {
             myFixture.allowTreeAccessForAllFiles()
@@ -71,6 +77,14 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             )
         } catch (t: Throwable) {
             throw IllegalStateException("enableInspections(instance) 抛异常", t)
+        }
+    }
+
+    override fun tearDown() {
+        try {
+            errorProcessorToken?.finish()
+        } finally {
+            super.tearDown()
         }
     }
 
@@ -422,7 +436,9 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     // ========================================================================
     @Test
     fun `vue $style access via scanUsages should mark classes as used`() {
-        // 整个 Vue SFC 内容放在 .xml 文件中，保证沙箱能正确解析 <style module> 和 <template>
+        // .xml 替身：覆盖 scanUsages 的模板属性值正则 fallback（.vue.xml 无 JS PSI，
+        // 文件名也不是 .vue 结尾，不走 resolveQualifier 的 Vue fallback）；
+        // 真实 .vue 的 PSI 路径见 RealVueFileIntegrationTest。
         val xmlFile = myFixture.configureByText(
             "App.vue.xml",
             """
@@ -838,17 +854,14 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
 
     // ========================================================================
     // #19. XmlAttribute PSI 替换机制（Inline Style Intention Vue 分支同款）：
-    //      沙箱里 .vue 不解析为 XmlFile（真实 WS 有 Vue 插件支持），因此用
-    //      .xml 文件验证 XmlAttribute 的 dummy 工厂 + replace 机制。
+    //      沙箱现已装 Vue 插件（.vue → VueFileImpl），真实 .vue 上的整链路
+    //      （handleVueTemplateReplacement）见 RealVueFileIntegrationTest；
+    //      本用例保留 .xml fixture，验证 XmlAttribute dummy 工厂 + replace
+    //      的底层机制（与文件语言无关）。
     //      :style="{...}" --replace--> :class="$style.card"
     // ========================================================================
     @Test
     fun `xml style attribute replaced via xml attribute psi`() {
-        // 沙箱里 .vue 解析为 PsiPlainTextFileImpl（无 Vue 插件），故用 .xml 验证机制
-        myFixture.addFileToProject(
-            "App19.vue",
-            "<template>\n  <div :style=\"{ color: 'red' }\">hi</div>\n</template>\n"
-        )
         val xml = myFixture.addFileToProject(
             "data19.xml",
             "<root><div :style=\"{ color: 'red' }\">hi</div></root>"
@@ -1248,11 +1261,12 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     }
 
     // ========================================================================
-    // #27. Vue 模板 :class 合并（B1 修复；.xml fixture 模拟 .vue 模板，
-    //      沙箱无 Vue 插件时 .vue 会解析为 PsiPlainTextFileImpl）——
+    // #27. Vue 模板 :class 合并（B1 修复）——
     //      已有 :class="dyn" → 合并为 [dyn, $style.card]，绝不产生第二个 :class
     //      （重复 :class 是 Vue 编译错误）；对象绑定 → 数组混排；已是数组 → 平铺；
     //      只有静态 class → 新 :class 与之共存（Vue 自动合并静态+动态）。
+    //      .xml fixture 覆盖机制矩阵（与语言无关的合并逻辑）；
+    //      真实 .vue 上的同链路见 RealVueFileIntegrationTest。
     // ========================================================================
     @Test
     fun `vue template merges into existing class binding without duplication`() {

@@ -20,6 +20,22 @@ import org.junit.runners.JUnit4
 @Suppress("UnstableApiUsage")
 class LessMixinExpansionTest : BasePlatformTestCase() {
 
+    private var errorProcessorToken: com.intellij.openapi.application.AccessToken? = null
+
+    override fun setUp() {
+        super.setUp()
+        // VueLsp 沙箱噪音过滤，见 [VueSandboxNoiseFilter]
+        errorProcessorToken = VueSandboxNoiseFilter.install()
+    }
+
+    override fun tearDown() {
+        try {
+            errorProcessorToken?.finish()
+        } finally {
+            super.tearDown()
+        }
+    }
+
     private fun rulesetNamed(file: com.intellij.psi.PsiFile, selector: String): CssRuleset =
         PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
             .firstOrNull { it.selectorList?.text?.trim() == selector }

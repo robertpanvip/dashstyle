@@ -1,6 +1,5 @@
 package com.pan.dashstyle
 
-import com.intellij.testFramework.LoggedErrorProcessor
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert
 import org.junit.Test
@@ -10,13 +9,8 @@ import org.junit.runners.JUnit4
 /**
  * 探针：验证测试沙箱里 Vue / Angular 插件（build.gradle.kts 的 bundledPlugin）的 PSI 能力。
  *
- * 背景坑：Gradle 下载的 WebStorm 发行版里，语言服务资源位于 plugins/javascript-plugin/
- * jsLanguageServicesImpl，而 JSPluginPathManager 按 "plugins/JavaScriptLanguage/resources/"
- * 布局查找（安装器版布局），找不到 → VueLspServerPackageDescriptor 构造抛
- * ExceptionInInitializerError → "Cannot create extension VueLspServerSupportProvider" ERROR
- * 由后台线程异步落到任意正在运行的测试头上（TestLoggerAssertionError）。
- * LSP 服务对 headless 测试无意义（启动外部 vue-tsc 进程），因此 setUp 里安装
- * LoggedErrorProcessor 精准吞掉 VueLsp 相关错误，避免误伤随机测试。
+ * 背景坑与噪音过滤见 [VueSandboxNoiseFilter]。
+ * 生产路径的正式测试见 [RealVueFileIntegrationTest]，本类只做能力验证。
  */
 @RunWith(JUnit4::class)
 class ProbeVueAngularSandboxTest : BasePlatformTestCase() {
@@ -25,35 +19,7 @@ class ProbeVueAngularSandboxTest : BasePlatformTestCase() {
 
     override fun setUp() {
         super.setUp()
-        errorProcessorToken = LoggedErrorProcessor.executeWith(object : LoggedErrorProcessor() {
-            override fun processError(
-                message: String,
-                detailMessage: String,
-                details: Array<out String>,
-                t: Throwable?
-            ): Set<LoggedErrorProcessor.Action> {
-                val text = "$message $detailMessage " +
-                    (t?.let { "${it.javaClass.name}: ${it.message}" } ?: "") + " " +
-                    (t?.cause?.let { "${it.javaClass.name}: ${it.message}" } ?: "")
-                // 结构性判断：异常链任一层的调用栈经过 org.jetbrains.vuejs /
-                // JSPluginPathManager，即视为 Vue 插件语言服务在下载版布局下的已知噪音
-                val fromVueServices = generateSequence(t) { it.cause }.any { th ->
-                    th.stackTrace.any {
-                        it.className.startsWith("org.jetbrains.vuejs") ||
-                            it.className == "com.intellij.lang.javascript.psi.util.JSPluginPathManager"
-                    }
-                }
-                if (fromVueServices ||
-                    text.contains("VueLsp") ||
-                    text.contains("vuejs.lang.typescript.service") ||
-                    text.contains("should be lib directory") ||
-                    text.contains("jsLanguageServicesImpl")
-                ) {
-                    return emptySet()
-                }
-                return super.processError(message, detailMessage, details, t)
-            }
-        })
+        errorProcessorToken = VueSandboxNoiseFilter.install()
     }
 
     override fun tearDown() {
