@@ -274,6 +274,9 @@ internal object JsonToCssConversionTables {
     private fun formatPrimitiveValueInternal(origKey: String, kebabKey: String, v: String): String? {
         var value = v
         if (value.isBlank()) return null
+        // Gson lenient 会把 JS 的 undefined 读成字符串 "undefined"（先于 jsLiteralToStrictJson
+        // 的 \bundefined\b→null 替换路径），这里兜底当作 null 跳过该行，避免产出非法 CSS
+        if (value == "undefined") return null
         if (kebabKey == "font-family" && value.contains(' ') && !value.startsWith('\'') && !value.startsWith('"')) {
             value = "\"$value\""
         }
