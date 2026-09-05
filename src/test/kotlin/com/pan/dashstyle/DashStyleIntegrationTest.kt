@@ -10,6 +10,7 @@ import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.codeInspection.InspectionProfileEntry
 import com.intellij.lang.Language
+import com.intellij.lang.javascript.psi.JSReferenceExpression
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.extensions.ExtensionPointName
@@ -1564,5 +1565,95 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             "styles.existing 已有对应类时仍出现 Create missing class 意图（误报）；当前可用=${myFixture.availableIntentions.map { it.text }}",
             intentions.isEmpty()
         )
+    }
+
+    // ========================================================================
+    // ConvertClassNameToCssModuleAction（批量迁移）——类名收集纯逻辑。
+    //     全流程依赖 Messages.showYesNoDialog 弹框 + editor，无法在 headless
+    //     沙箱直接驱动；此处通过反射调用私有 collectClassNameValues，守护
+    //     最核心的"从 className="foo bar" 提取类名"逻辑（PSI + 文本双路径）。
+    // ========================================================================
+    @Test
+    fun `migrate action collects className names from tsx`() {
+        val file = myFixture.configureByText(
+            "Migrate.tsx",
+            """
+            import React from 'react'
+            export function MigrateCard() {
+              return (
+                <div className="btn primary active">
+                  <span className='badge pill'>t</span>
+                </div>
+              )
+            }
+            """.trimIndent()
+        )
+        val m = ConvertClassNameToCssModuleAction::class.java
+            .getDeclaredMethod("collectClassNameValues", PsiFile::class.java, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+        m.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val names = m.invoke(ConvertClassNameToCssModuleAction(), file, 0, file.textRange.endOffset) as Set<String>
+        Assert.assertEquals(
+            "collectClassNameValues 应从 className 字符串提取全部类名（去重）",
+            setOf("btn", "primary", "active", "badge", "pill"),
+            names
+        )
+    }
+
+    // ========================================================================
+    // TailwindClassCompletionContributor —— 规则体内多声明展开的格式化纯逻辑。
+    //     补全整合层（doComplete）需 completion 环境，headless 覆盖不了；
+    //     此处反射守护 formatCssDeclarations：单条声明 / 多声明换行+缩进 / 空输入。
+    // ========================================================================
+    @Test
+    fun `tailwind contributor formats multi-declaration expansion with indent`() {
+        val m = TailwindClassCompletionContributor::class.java
+            .getDeclaredMethod("formatCssDeclarations", String::class.java, String::class.java)
+        m.isAccessible = true
+        val fmt = { css: String, indent: String -> m.invoke(TailwindClassCompletionContributor(), css, indent) as String }
+
+        Assert.assertEquals(
+            "单条声明应为 一行 + 分号",
+            "display: flex;",
+            fmt("display: flex", "")
+        )
+        Assert.assertEquals(
+            "多条声明应 首行 + 换行缩进后续行",
+            "margin-left: 1rem;\n  margin-right: 1rem;",
+            fmt("margin-left: 1rem; margin-right: 1rem", "  ")
+        )
+        Assert.assertEquals(
+            "空/无效输入应返回空串（不抛异常）",
+            "",
+            fmt("", "  ")
+        )
+    }
+
+    // ========================================================================
+    // DashStyleDocumentationProvider —— 主打卖点：styles.xxx CSS Module 悬浮展开。
+    //     此前只覆盖了 LESS mixin 分支，CSS Module 主路径（styles.card）无直接测试。
+    //     member access 由 resolveFromSite → CssSelectorResolver.resolveClassName 链接。
+    // ========================================================================
+    @Test
+    fun `hover doc on styles-member-access expands css module ruleset`() {
+        myFixture.addFileToProject(
+            "hoverDoc.module.css",
+            ".card {\n  color: red;\n  padding: 4px;\n}\n"
+        )
+        val tsx = myFixture.addFileToProject(
+            "HoverDoc.tsx",
+            "import styles from './hoverDoc.module.css'\nconst card = styles.card\n"
+        )
+        val ref = PsiTreeUtil.findChildrenOfType(tsx, JSReferenceExpression::class.java)
+            .firstOrNull { it.text == "styles.card" }
+        Assert.assertNotNull("应找到 styles.card 引用", ref)
+
+        val doc = DashStyleDocumentationProvider().generateDoc(ref, ref)
+        Assert.assertNotNull("styles.card 悬浮应产出文档", doc)
+        val html = doc!!
+        Assert.assertTrue("文档应含展开后的选择器 .card", html.contains(".card"))
+        Assert.assertTrue("文档应含属性名 color", html.contains(">color<"))
+        Assert.assertTrue("文档应含属性值 red", html.contains(">red<"))
+        Assert.assertFalse("不应显示 empty 占位", html.contains("/* empty */"))
     }
 }
