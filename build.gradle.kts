@@ -56,6 +56,12 @@ dependencies {
         // LESS：主代码只按文件扩展名/语言 ID 字符串识别 .less（零类引用，编译不需要）；
         // 但 LessMixinExpansionTest 等测试需要沙箱有 LESS 语言支持，否则 .less 解析为纯文本。
         bundledPlugin("org.jetbrains.plugins.less")
+        // SCSS：同理 —— 主代码零类引用（DuplicateCssDeclarationsInspection 对 ScssFile
+        // 只做反射/字符串级识别），编译不需要；沙箱不装则 Language.findLanguageByID("SCSS")
+        // 为 null、.scss 解析为纯文本，DashStyleIntegrationTest #29/#30 对 plugin.xml
+        // language="SCSS" 注册路径的验证（EP language 解析 + EP 实例化工具触发）将无法执行。
+        // 用户安装层 WebStorm 发行版自带 sass 插件，无需在 plugin.xml 声明 depends。
+        bundledPlugin("org.jetbrains.plugins.sass")
     }
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")

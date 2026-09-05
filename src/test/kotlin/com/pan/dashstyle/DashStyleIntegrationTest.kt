@@ -8,8 +8,11 @@ import com.pan.dashstyle.annotator.*
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.intention.IntentionAction
+import com.intellij.codeInspection.InspectionProfileEntry
+import com.intellij.lang.Language
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
@@ -1366,5 +1369,129 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             "className 恰好 2 次（div 新增 + span 原有）",
             2, Regex("className=").findAll(text).count()
         )
+    }
+
+    // ===================== #29/#30 plugin.xml 注册路径（EP 真实链路）公共小工具 =====================
+
+    /** 反射读字段（EP bean 的 shortName/language 等是 public 字段；反射失败返回 null） */
+    private fun reflectField(target: Any, name: String): Any? =
+        runCatching { target.javaClass.getField(name).get(target) }.getOrNull()
+
+    /** 枚举 plugin.xml <localInspection> 真正落进去的扩展点（EP 全名 = XML 标签名 + defaultExtensionNs） */
+    private fun localInspectionEps(): List<Any> =
+        runCatching {
+            ExtensionPointName.create<Any>("com.intellij.localInspection").extensionList
+        }.getOrDefault(emptyList())
+
+    private fun findInspectionEp(shortName: String): Any? =
+        localInspectionEps().firstOrNull { reflectField(it, "shortName") == shortName }
+
+    /** 经 EP 的 instantiateTool() 实例化（与插件加载完全同路径；直接 new 实例不走注册） */
+    private fun instantiateFromEp(shortName: String): InspectionProfileEntry? {
+        val ep = findInspectionEp(shortName) ?: return null
+        return runCatching { ep.javaClass.getMethod("instantiateTool").invoke(ep) }.getOrNull() as? InspectionProfileEntry
+    }
+
+    private fun countUnusedReports(infos: List<HighlightInfo>): Int =
+        infos.count { it.description?.contains("is not used anywhere") == true }
+
+    // ========================================================================
+    // #29. plugin.xml localInspection 注册表完整性 ——
+    //      a) 6 个具体语言注册（UnusedCssClass / DuplicateCss × Css/Scss/Less）必须全部
+    //         在 com.intellij.localInspection EP 在册，language 字段与 plugin.xml 声明一致，
+    //         且能经 EP 的 instantiateTool() 实例化出正确的 Inspection 实现；
+    //      b) 两个 language="ANY" 兜底 shortName 必须不在册（防回归）：探针实证 ANY 注册
+    //         惰性（EP 实例化后单独启用，css/less 上均 0 报告），已从 plugin.xml 移除，
+    //         若被误加回来本用例直接失败；
+    //      c) 三个语言 id 在沙箱真实可解析（SCSS/LESS 分别依赖 build.gradle.kts 装进
+    //         沙箱的 sass / less 插件 —— 缺插件时 EP 的 language 解析会落空）。
+    // ========================================================================
+    @Test
+    fun `pluginDescriptor localInspection registrations are complete and ANY fallbacks removed`() {
+        val expected = listOf(
+            Triple("DashStyle.UnusedCssClass.Css", "CSS", "Unused"),
+            Triple("DashStyle.UnusedCssClass.Scss", "SCSS", "Unused"),
+            Triple("DashStyle.UnusedCssClass.Less", "LESS", "Unused"),
+            Triple("DashStyle.DuplicateCss.Css", "CSS", "Duplicate"),
+            Triple("DashStyle.DuplicateCss.Scss", "SCSS", "Duplicate"),
+            Triple("DashStyle.DuplicateCss.Less", "LESS", "Duplicate")
+        )
+        val registered = localInspectionEps()
+            .mapNotNull { reflectField(it, "shortName")?.toString() }
+            .toSet()
+        val dashStyleRegistered = registered.filter { it.startsWith("DashStyle.") }.sorted()
+        for ((shortName, langId, implKind) in expected) {
+            val ep = findInspectionEp(shortName)
+            Assert.assertNotNull(
+                "plugin.xml 声明的 <$shortName> 未注册进 com.intellij.localInspection EP（当前 DashStyle shortNames=$dashStyleRegistered）",
+                ep
+            )
+            val langField = reflectField(ep!!, "language")?.toString() ?: "<null>"
+            Assert.assertTrue(
+                "<$shortName> EP language 字段（$langField）与 plugin.xml 声明（$langId）不一致",
+                langField.contains(langId)
+            )
+            val tool = instantiateFromEp(shortName)
+            Assert.assertNotNull("<$shortName> 经 EP instantiateTool() 实例化失败", tool)
+            val toolClass = tool!!.javaClass.simpleName
+            Assert.assertTrue(
+                "<$shortName> 实例化出的 $toolClass 不是预期的 ${implKind}Css*Inspection",
+                toolClass.contains(implKind)
+            )
+        }
+        for (langId in listOf("CSS", "SCSS", "LESS")) {
+            Assert.assertNotNull("沙箱缺少语言 id=$langId（对应插件未装进沙箱？）", Language.findLanguageByID(langId))
+        }
+        for (gone in listOf("DashStyle.UnusedCssClass.Any", "DashStyle.DuplicateCss.Any")) {
+            Assert.assertFalse(
+                "ANY 兜底注册 <$gone> 又出现在 EP 里（实证惰性，应保持移除；当前=$dashStyleRegistered）",
+                registered.contains(gone)
+            )
+        }
+        Assert.assertEquals(
+            "DashStyle 的 localInspection 注册数应为 6（实际=$dashStyleRegistered）",
+            6,
+            dashStyleRegistered.size
+        )
+    }
+
+    // ========================================================================
+    // #30. localInspection 注册路径按语言真实触发 ——
+    //      EP 的 instantiateTool() 实例化（与 plugin.xml 加载同路径）→
+    //      enableInspections(tool) → doHighlighting：.Css / .Less / .Scss 三个具体
+    //      语言注册必须各自在对应 module 文件上产出 "is not used anywhere" 报告。
+    //      SCSS 分支依赖沙箱新装的 sass 插件（此前 .scss 解析为纯文本，
+    //      本用例是该沙箱依赖的活体守护）。
+    // ========================================================================
+    @Test
+    fun `EP-instantiated inspections fire per language on module files`() {
+        val cases = listOf(
+            "DashStyle.UnusedCssClass.Css" to "p.module.css",
+            "DashStyle.UnusedCssClass.Less" to "p.module.less",
+            "DashStyle.UnusedCssClass.Scss" to "p.module.scss"
+        )
+        for ((shortName, fileName) in cases) {
+            val tool = instantiateFromEp(shortName)
+            Assert.assertNotNull("<$shortName> 无法经 EP 实例化", tool)
+            myFixture.configureByText(fileName, ".epUnused { color: red; }\n")
+            // 守护：module 文件必须真的解析出 CssRuleset（语言插件缺失时会静默变纯文本，
+            // 否则「报告数 0」无法与「注册不触发」区分开）
+            val rulesetCount = ApplicationManager.getApplication().runReadAction<Int> {
+                PsiTreeUtil.findChildrenOfType(myFixture.file, CssRuleset::class.java).size
+            }
+            Assert.assertEquals(
+                "$fileName 应解析出恰好 1 个 CssRuleset（实际 PSI=${myFixture.file.javaClass.simpleName}）",
+                1, rulesetCount
+            )
+            myFixture.enableInspections(tool!!)
+            val infos = myFixture.doHighlighting()
+            val unused = countUnusedReports(infos)
+            Assert.assertTrue(
+                "<$shortName>（EP 注册路径）在 $fileName 上未产生 unused 报告；全部高亮=${infos.map { it.description }}",
+                unused >= 1
+            )
+            // 恢复 setUp 的默认启用状态，隔离后续 case
+            myFixture.enableInspections(UnusedCssModuleClassInspection(), DuplicateCssDeclarationsInspection())
+        }
     }
 }

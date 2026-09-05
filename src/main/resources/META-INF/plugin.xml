@@ -176,14 +176,6 @@
                 level="WEAK WARNING"
                 implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
-                language="ANY"
-                displayName="Unused CSS Module class (fallback)"
-                groupName="DashStyle"
-                shortName="DashStyle.UnusedCssClass.Any"
-                enabledByDefault="true"
-                level="WEAK WARNING"
-                implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
-        <localInspection
                 language="CSS"
                 displayName="Duplicate CSS declarations (single file)"
                 groupName="DashStyle"
@@ -204,14 +196,6 @@
                 displayName="Duplicate CSS declarations (single file)"
                 groupName="DashStyle"
                 shortName="DashStyle.DuplicateCss.Less"
-                enabledByDefault="true"
-                level="WARNING"
-                implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
-        <localInspection
-                language="ANY"
-                displayName="Duplicate CSS declarations (single file, fallback)"
-                groupName="DashStyle"
-                shortName="DashStyle.DuplicateCss.Any"
                 enabledByDefault="true"
                 level="WARNING"
                 implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
