@@ -101,6 +101,49 @@ intellijPlatform {
     }
 }
 
+// ============ 本地低内存沙箱开关 DASHSTYLE_LOW_MEM（仅本地携带；线上/CI 默认不带，零影响） ============
+// 用法：DASHSTYLE_LOW_MEM=1 gradle test
+// 背景：本地沙箱 ~6Gi cgroup 无 swap，完整默认配置（3g daemon + 独立 Kotlin daemon + 全量并行任务）
+// 叠加测试执行器后可能触发 cgroup OOM killer（daemon 进程被杀，报 "daemon disappeared"）。
+// 开关生效内容（不落盘、不进 CI）：
+//   1) max-workers 降为 2：限制并行任务数，削平编译+测试叠加的内存峰值；
+//   2) Kotlin 编译改为 in-process（Gradle 属性 kotlin.compiler.execution.strategy=in-process）：
+//      不再拉起独立 Kotlin daemon（实测常驻 ~800MB+），编译直接在 Gradle daemon 进程内完成
+//     （本项目体量小，daemon 堆足够；已实证注入后 compileKotlin 全程无 KotlinCompileDaemon）。
+//      注入方式是向 project.ext 写属性 —— KGP 的 PropertiesBuildService 解析该属性时 ext 优先
+//      于 gradle 属性，且策略 Provider 惰性求值（任务配置期），build 脚本阶段注入即可生效。
+//     （settings 阶段的 startParameter.setProjectProperties 不会流入 project properties，勿走那条路）
+//   3) daemon 堆体检：org.gradle.jvmargs（daemon 堆）只能在 daemon 启动前生效（GRADLE_OPTS /
+//      命令行 -D / gradle.properties），build 脚本无法热改 —— 若检测到当前 daemon 仍是大堆，
+//      给出可选的降堆重启指引（见 gradle.properties 顶部注释）。
+val lowMem = providers
+    .environmentVariable("DASHSTYLE_LOW_MEM")
+    .map { it.isNotBlank() }
+    .getOrElse(false)
+if (lowMem) {
+    // KGP 的 PropertiesBuildService 解析属性时 project.ext 优先于 gradle 属性，
+    // 且策略 Provider 是惰性求值（任务配置期），此处（tasks{} 之前）注入仍然来得及。
+    // 注意：ExtraPropertiesExtension.get() 在属性不存在时抛异常，必须先用 has() 判断。
+    if (!project.extra.has("kotlin.compiler.execution.strategy")) {
+        project.extra["kotlin.compiler.execution.strategy"] = "in-process"
+        logger.lifecycle("DASHSTYLE_LOW_MEM: Kotlin 编译策略已注入 ext 属性 = in-process（不拉起独立 Kotlin daemon）")
+    }
+    if (gradle.startParameter.maxWorkerCount > 2) {
+        gradle.startParameter.maxWorkerCount = 2
+        logger.lifecycle("DASHSTYLE_LOW_MEM: max-workers 已降为 2")
+    }
+    val daemonMaxMb = Runtime.getRuntime().maxMemory() / 1024L / 1024L
+    if (daemonMaxMb > 1536) {
+        logger.warn(
+            "DASHSTYLE_LOW_MEM=1，但当前 Gradle daemon 堆上限 ${daemonMaxMb}MB（>1536MB）。" +
+                "通常限制 workers + in-process 编译后已可跑通；若仍遇 daemon 被 OOM killer 杀掉，" +
+                "可再降 daemon 堆重启：GRADLE_OPTS='-Dorg.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m' gradle --stop 后重跑"
+        )
+    } else {
+        logger.lifecycle("DASHSTYLE_LOW_MEM: daemon 堆上限 ${daemonMaxMb}MB，符合低内存预期")
+    }
+}
+
 tasks {
     withType<JavaCompile> {
         // 本机/Gradle 用 JDK 17（见 gradle.properties 的 org.gradle.java.home），
@@ -120,6 +163,9 @@ tasks {
                 "-Xsuppress-version-warnings"
             )
         }
+        // 注意：KGP 2.x 已移除任务级 executionStrategy 属性。低内存时的 "Kotlin 编译 in-process"
+        // 开关（不拉独立 Kotlin daemon）由上方 DASHSTYLE_LOW_MEM 块向 project.ext 注入
+        // Gradle 属性 kotlin.compiler.execution.strategy=in-process 实现，此处无需任何配置。
     }
 
     publishPlugin {
