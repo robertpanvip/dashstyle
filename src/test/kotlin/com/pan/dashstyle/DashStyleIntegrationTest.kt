@@ -1494,4 +1494,75 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
             myFixture.enableInspections(UnusedCssModuleClassInspection(), DuplicateCssDeclarationsInspection())
         }
     }
+
+    // ========================================================================
+    // CreateMissingCssClassIntention —— styles.xxx / styles["xxx"] 缺失类的 Alt+Enter 意图。
+    //     曾无任何测试守护此入口（"styles.test 没有对应类时不出现意图"为用户反馈痛点），
+    //     现固化三向守护：member access 缺失 / string index 缺失 → 菜单必须出现；
+    //     对应类已存在 → 菜单必须不出现（防误报）。
+    // ========================================================================
+    @Test
+    fun `missing class member access styles-fooBar shows create-missing intention`() {
+        myFixture.configureByText(
+            "CreateMember.module.css",
+            ".existing { color: blue; }\n"
+        )
+        myFixture.configureByText(
+            "CreateMember.tsx",
+            """
+            import styles from './CreateMember.module.css'
+            function CreateMember() { return <div className={styles.foo<caret>Bar}></div> }
+            """.trimIndent()
+        )
+        val available = myFixture.availableIntentions
+        val intentions: List<IntentionAction> =
+            myFixture.filterAvailableIntentions("Create missing class in CSS Module")
+        Assert.assertTrue(
+            "styles.fooBar 缺失类时 Alt+Enter 未出现 Create missing class 意图；当前可用=${available.map { it.text }}",
+            intentions.isNotEmpty()
+        )
+    }
+
+    @Test
+    fun `missing class string index styles-bracket-fooBar shows create-missing intention`() {
+        myFixture.configureByText(
+            "CreateString.module.css",
+            ".existing { color: blue; }\n"
+        )
+        myFixture.configureByText(
+            "CreateString.tsx",
+            """
+            import styles from './CreateString.module.css'
+            function CreateString() { return <div className={styles["foo-<caret>bar"]}></div> }
+            """.trimIndent()
+        )
+        val available = myFixture.availableIntentions
+        val intentions: List<IntentionAction> =
+            myFixture.filterAvailableIntentions("Create missing class in CSS Module")
+        Assert.assertTrue(
+            "styles[\"foo-bar\"] 缺失类时 Alt+Enter 未出现 Create missing class 意图；当前可用=${available.map { it.text }}",
+            intentions.isNotEmpty()
+        )
+    }
+
+    @Test
+    fun `existing css class suppresses create-missing intention on member access`() {
+        myFixture.configureByText(
+            "Exists.module.css",
+            ".existing { color: blue; }\n"
+        )
+        myFixture.configureByText(
+            "Exists.tsx",
+            """
+            import styles from './Exists.module.css'
+            function Exists() { return <div className={styles.exi<caret>sting}></div> }
+            """.trimIndent()
+        )
+        val intentions: List<IntentionAction> =
+            myFixture.filterAvailableIntentions("Create missing class in CSS Module")
+        Assert.assertTrue(
+            "styles.existing 已有对应类时仍出现 Create missing class 意图（误报）；当前可用=${myFixture.availableIntentions.map { it.text }}",
+            intentions.isEmpty()
+        )
+    }
 }
