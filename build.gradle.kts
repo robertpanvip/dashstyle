@@ -30,7 +30,18 @@ dependencies {
         // 既保证编译 classpath 里有 CssRuleset / Vue SFC 等类，
         // 也保证 buildPlugin 阶段把 plugin.xml 里写的模块 ID 校验通过（不会提示缺模块）。
         bundledPlugin("com.intellij.css")
+        // Vue：plugin.xml 里是 <depends optional="true">，但测试沙箱必须真实装上，
+        // 否则 .vue 解析为 PsiPlainTextFileImpl，VueFile/模板表达式等 PSI 全部不可用。
         bundledPlugin("org.jetbrains.plugins.vue")
+        // PostCSS：Vue 插件的 intellij.vuejs.backend 模块（VueFileType/VueParserDefinition 所在 jar）
+        // 依赖 org.intellij.plugins.postcss，缺了它该模块被禁用，.vue 仍会解析为纯文本
+        //（沙箱日志证据："Module intellij.vuejs.backend is not enabled because dependency
+        //  org.intellij.plugins.postcss is not available"）。
+        bundledPlugin("org.intellij.plugins.postcss")
+        // Angular：发行版目录 plugins/angular，插件 ID 历史上一直叫 "AngularJS"。
+        // 它对 css/tslint 的 depends 都是 optional，引入干净；测试沙箱带上后
+        // @Component 装饰器、Angular 模板 PSI（AngularHtmlFile 等）能力可用。
+        bundledPlugin("AngularJS")
         // LESS：DashStyleDocumentationProvider 对 LESS 语言注册了悬停文档（CSS Module 的 .module.less
         // 里 mixin 调用展开等），测试沙箱必须带上 LESS 语言支持，否则 .less 解析为纯文本。
         bundledPlugin("org.jetbrains.plugins.less")

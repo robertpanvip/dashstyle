@@ -89,6 +89,10 @@
     <depends>com.intellij.css</depends>
     <depends>JavaScript</depends>
     <depends optional="true">org.jetbrains.plugins.vue</depends>
+    <!-- Angular（发行版插件 ID 为 "AngularJS"，目录 plugins/angular）。
+         optional：未装 Angular 插件的 WebStorm 上 DashStyle 仍可安装；
+         装了则可利用其模板/组件 PSI 能力做更精确的框架识别。-->
+    <depends optional="true">AngularJS</depends>
 
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
