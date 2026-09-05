@@ -31,6 +31,9 @@ dependencies {
         // 也保证 buildPlugin 阶段把 plugin.xml 里写的模块 ID 校验通过（不会提示缺模块）。
         bundledPlugin("com.intellij.css")
         bundledPlugin("org.jetbrains.plugins.vue")
+        // LESS：DashStyleDocumentationProvider 对 LESS 语言注册了悬停文档（CSS Module 的 .module.less
+        // 里 mixin 调用展开等），测试沙箱必须带上 LESS 语言支持，否则 .less 解析为纯文本。
+        bundledPlugin("org.jetbrains.plugins.less")
     }
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.2")

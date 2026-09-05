@@ -106,7 +106,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
         if (targetRule != null) {
             return formatRulesetDoc(
                 CssSelectorUtil.expandSelector(targetRule),
-                (targetRule.block?.children?.filterIsInstance<CssDeclaration>()) ?: emptyList()
+                CssSelectorUtil.collectEffectiveDeclarations(targetRule)
             )
         }
 
@@ -114,7 +114,8 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
         val site = originalElement ?: element
         val resolved = resolveFromSite(site)
         if (resolved != null) {
-            val decls = resolved.ruleset.block?.children?.filterIsInstance<CssDeclaration>() ?: emptyList()
+            // mixin 调用（.foo(); / @include foo;）也展开进预览，与 Case 1 语义一致
+            val decls = CssSelectorUtil.collectEffectiveDeclarations(resolved.ruleset)
             val locationInfo = when (resolved.container) {
                 is CssModuleResolver.CssContainer.ImportedFile ->
                     "in ${resolved.container.virtualFile.path}"
