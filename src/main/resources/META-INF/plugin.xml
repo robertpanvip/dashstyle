@@ -148,8 +148,10 @@
         <!-- 注意：<localInspection> 的 shortName 在整个插件里必须唯一（哪怕 implementationClass / language 不同）。
              下面按语言维度分别赋予唯一 shortName；Kotlin 侧 Inspection 类不再 override getShortName()，
              直接继承 LocalInspectionTool 默认返回 XML 声明的 shortName，避免代码与 XML 漂移。
-             另：SCSS/LESS 的官方 language id 在不同发行版里常出现 id 不匹配（如 SCSS 插件没启用、LESS id 变成 Less），
-             因此增加 language="ANY" 兜底注册 → 所有文件的 PSI 遍历都会激活我们的 inspection，
+             历史上曾因 SCSS/LESS 的官方 language id 在不同发行版里 id 不匹配（如 SCSS 插件没启用、LESS id 变成 Less）
+             额外加了 language="ANY" 兜底注册，但经沙箱探针实证：localInspection EP 对这两个类按 language 精确分发，
+             .css/.scss/.less 会各自触发对应注册，ANY 从未被实际用到——故已删除（8 → 6 注册）并新增常驻测试防回归
+             （见 DashStyleIntegrationTest 中 "pluginDescriptor localInspection registrations are complete and ANY fallbacks removed"）。
              具体要不要处理，Kotlin 代码里会通过 CssRuleset / file suffix 判断，不影响其他语言。-->
         <localInspection
                 language="CSS"
