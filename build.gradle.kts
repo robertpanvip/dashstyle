@@ -30,25 +30,31 @@ dependencies {
     intellijPlatform {
         webstorm("2025.3")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
+        // ===== 第一类：编译 classpath 必需（主代码直接 import 了它们的类，缺了编译直接失败） =====
+        // JavaScript：主代码 10+ 文件 import com.intellij.lang.javascript.psi.*（JSReferenceExpression 等），
+        // plugin.xml 也是硬 <depends>JavaScript</depends>。
         bundledPlugin("JavaScript")
-        // CSS / Vue bundled plugins：与 plugin.xml 的 <depends> 对齐，
-        // 既保证编译 classpath 里有 CssRuleset / Vue SFC 等类，
-        // 也保证 buildPlugin 阶段把 plugin.xml 里写的模块 ID 校验通过（不会提示缺模块）。
+        // CSS：主代码 12+ 文件 import com.intellij.psi.css.*（CssRuleset / StylesheetFile 等），
+        // plugin.xml 是硬 <depends>com.intellij.css</depends>。
         bundledPlugin("com.intellij.css")
-        // Vue：plugin.xml 里是 <depends optional="true">，但测试沙箱必须真实装上，
-        // 否则 .vue 解析为 PsiPlainTextFileImpl，VueFile/模板表达式等 PSI 全部不可用。
+
+        // ===== 第二类：仅测试沙箱需要（主/测试代码都不直接引用它们的类，编译不需要；
+        // 只为沙箱具备对应语言/框架的解析能力。用户安装层面的"可选"由 plugin.xml 的
+        // <depends optional="true"> 声明，与这里无关；Gradle 依赖无法按 source set 拆分，
+        // "仅测试需要"也只能声明在此） =====
+        // Vue：沙箱不装则 .vue 解析为 PsiPlainTextFileImpl，RealVueFileIntegrationTest 与
+        //      DashStyleIntegrationTest 的 vue 场景全部失效。plugin.xml 里声明为 optional。
         bundledPlugin("org.jetbrains.plugins.vue")
-        // PostCSS：Vue 插件的 intellij.vuejs.backend 模块（VueFileType/VueParserDefinition 所在 jar）
-        // 依赖 org.intellij.plugins.postcss，缺了它该模块被禁用，.vue 仍会解析为纯文本
+        // PostCSS：Vue 插件 intellij.vuejs.backend 模块（VueFileType/VueParserDefinition 所在 jar）
+        // 的依赖，缺了它该模块被禁用，.vue 仍会解析为纯文本
         //（沙箱日志证据："Module intellij.vuejs.backend is not enabled because dependency
         //  org.intellij.plugins.postcss is not available"）。
         bundledPlugin("org.intellij.plugins.postcss")
-        // Angular：发行版目录 plugins/angular，插件 ID 历史上一直叫 "AngularJS"。
-        // 它对 css/tslint 的 depends 都是 optional，引入干净；测试沙箱带上后
-        // @Component 装饰器、Angular 模板 PSI（AngularHtmlFile 等）能力可用。
+        // Angular：纯沙箱能力探针（ProbeVueAngularSandboxTest 的 @Component / Angular 模板 PSI）。
+        // plugin.xml 里声明为 optional；主代码对 Angular 零引用。
         bundledPlugin("AngularJS")
-        // LESS：DashStyleDocumentationProvider 对 LESS 语言注册了悬停文档（CSS Module 的 .module.less
-        // 里 mixin 调用展开等），测试沙箱必须带上 LESS 语言支持，否则 .less 解析为纯文本。
+        // LESS：主代码只按文件扩展名/语言 ID 字符串识别 .less（零类引用，编译不需要）；
+        // 但 LessMixinExpansionTest 等测试需要沙箱有 LESS 语言支持，否则 .less 解析为纯文本。
         bundledPlugin("org.jetbrains.plugins.less")
     }
 
