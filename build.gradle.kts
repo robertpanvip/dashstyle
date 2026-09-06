@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.5"
+version = "1.3.6"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,12 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.6</h3>
+<ul>
+    <li>🔧 修复 React style JSON / JS 字面量里 <code>gap: 8</code> 这类纯数字间距值转换后没有补 <code>px</code> 的问题：gap / grid-gap / row-gap / column-gap / flex-basis 之前被误放进「无单位属性」名单，而纯数字 gap 在 CSS 里是非法值（复制粘贴与「提取为 CSS Module」两条路径一并修复）</li>
+    <li>✅ 无单位属性名单整体对齐 react-dom 官方 <code>isUnitlessNumber</code>：补齐 <code>border-image-slice/width</code>、<code>box-flex</code> 系列、<code>flex-positive/negative/order</code>、<code>line-clamp</code>、<code>scale</code>、<code>zoom</code> 及 SVG 的 <code>stroke-width</code> / <code>fill-opacity</code> 等；<code>flex</code> / <code>z-index</code> / <code>opacity</code> / <code>line-height</code> 等原有行为不变</li>
+    <li>🧪 新增 9 个回归测试：gap 数字 / 字符串数字 / 数组逐项补 px、gridGap / rowGap / columnGap、flexBasis 补 px，以及 strokeWidth / scale / zoom 保持无单位</li>
+</ul>
 <h3>1.3.5</h3>
 <ul>
     <li>✨ 提取 inline style / 批量迁移找不到目标 CSS Module 时不再报错终止，按项目样式风格自动创建：探测级联为「同目录已有 <code>*.module.*</code> → 全项目样式文件统计 → package.json 依赖（sass/node-sass → SCSS、less → LESS）→ 原生 CSS」，新建 <code>Xxx.module.(css|scss|sass|less)</code> 并自动生成 import</li>
