@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.3"
+version = "1.3.4"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像

@@ -21,5 +21,5 @@ object DashStyleBundle {
 
     @JvmStatic
     fun message(@PropertyKey(resourceBundle = BUNDLE) key: String, vararg params: Any): String =
-        INSTANCE.getMessage(key, params)
+        INSTANCE.getMessage(key, *params)
 }

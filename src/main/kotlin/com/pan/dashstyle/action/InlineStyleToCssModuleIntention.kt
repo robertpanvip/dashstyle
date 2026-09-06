@@ -251,11 +251,9 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             contextFileElement = file
         )
         val defaultName = SemanticClassNameInferrer.topCandidate(candidates)
-        val hint = candidates.take(5).joinToString("\n  - ", prefix = "  - ") { c ->
-            message("intention.extract.candidate.line", c.name, c.score, c.source)
-        }
+        val suggestions = candidates.take(5).map { it.name }.toTypedArray()
 
-        val chosenName = askRenameDialog(project, defaultName, hint) ?: return
+        val chosenName = askRenameDialog(suggestions, defaultName) ?: return
 
         val target = locateTargetCssModule(project, file, loc) ?: run {
             Messages.showErrorDialog(project,
@@ -460,14 +458,15 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     }
 
     // ================================================================
-    // Rename 对话框
+    // Rename 对话框：可编辑下拉框 —— 候选名作为下拉项，默认填 Top 候选，
+    // 也允许直接输入自定义类名（校验规则不变）。
     // ================================================================
-    private fun askRenameDialog(project: Project, default: String, hint: String): String? {
-        return Messages.showInputDialog(
-            project,
-            message("intention.extract.rename.dialog.message", hint),
+    private fun askRenameDialog(suggestions: Array<String>, default: String): String? {
+        return Messages.showEditableChooseDialog(
+            message("intention.extract.rename.dialog.message"),
             message("intention.extract.rename.dialog.title"),
             Messages.getQuestionIcon(),
+            suggestions,
             default,
             object : InputValidatorEx {
                 override fun checkInput(input: String): Boolean = canClose(input)
