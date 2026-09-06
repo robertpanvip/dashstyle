@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.4"
+version = "1.3.5"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,20 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.5</h3>
+<ul>
+    <li>✨ 提取 inline style / 批量迁移找不到目标 CSS Module 时不再报错终止，按项目样式风格自动创建：探测级联为「同目录已有 <code>*.module.*</code> → 全项目样式文件统计 → package.json 依赖（sass/node-sass → SCSS、less → LESS）→ 原生 CSS」，新建 <code>Xxx.module.(css|scss|sass|less)</code> 并自动生成 import</li>
+    <li>🔧 修复批量迁移（将 className 转换为 CSS Module）在目标文件缺失时静默失败：VFS 变更（新建 / 重命名 / 复制）全部包进写命令执行，真正失败时弹出明确的错误提示；复用同名 module 文件时顺带补上缺失的 import</li>
+    <li>🇻 Vue SFC 没有 <code>&lt;style module&gt;</code> 块时按项目风格自动追加（scss / sass / less 自动带 <code>lang</code> 属性）</li>
+    <li>💅 SASS 缩进语法适配：<code>.module.sass</code> 目标生成的类规则不再带大括号（选择器 + 缩进声明）</li>
+    <li>🧪 新增 CssModuleDialectTest 13 个用例：方言映射、四级探测级联、写动作包装回归、按方言自动创建 + import 生成</li>
+</ul>
+<h3>1.3.4</h3>
+<ul>
+    <li>🔧 修复带参数文案渲染为 <code>[Ljava.lang.Object;@…</code> 的回归：bundle 消息转发补上 vararg 展开符，带占位符的文案（检查描述、快速修复名、悬浮文档、成功提示、对话框等）恢复正常格式化</li>
+    <li>✨ 「重命名提取的 CSS 类」对话框升级为可编辑下拉框：Top 5 语义化候选作为下拉项并默认选中最佳候选，同时支持直接输入自定义类名（kebab-case 校验规则不变）</li>
+    <li>🧪 新增 bundle 消息格式化回归测试：锁定无参 / 单参 / 多参替换与防数组 toString 泄漏行为</li>
+</ul>
 <h3>1.3.3</h3>
 <ul>
     <li>🌍 多语言支持：全部用户可见文案（Action / Intention / Inspection / 悬浮文档 / 对话框 / 撤销命令名）迁移至 resource bundle，默认英文，新增简体中文（zh_CN）完整翻译，跟随 IDE 界面语言自动切换、无需重启</li>
