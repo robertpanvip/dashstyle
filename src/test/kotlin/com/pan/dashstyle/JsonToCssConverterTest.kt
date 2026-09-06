@@ -272,6 +272,79 @@ class JsonToCssConverterTest {
         assert(out.contains("z-index: 99;")) { "zIndex 要转 kebab" }
     }
 
+    // ====================================================================
+    // 1.3.6：unitless 名单对齐 react-dom isUnitlessNumber
+    // gap / grid-gap / row-gap 系列 / flex-basis 不在 React 的 unitless 名单里，
+    // React 渲染 style={{ gap: 8 }} 输出的是 gap: 8px，纯数字 gap: 8 是非法 CSS。
+    // ====================================================================
+
+    @Test
+    fun `convert - gap 数字补 px（回归：之前被错误放进 unitless 名单）`() {
+        val result = convertJsonToCss("""{"gap": 8}""")
+        assertEquals("  gap: 8px;\n", result)
+    }
+
+    @Test
+    fun `convert - gap 字符串数字也补 px`() {
+        val result = convertJsonToCss("""{"gap": "8"}""")
+        assertEquals("  gap: 8px;\n", result)
+    }
+
+    @Test
+    fun `convert - rowGap columnGap 数字补 px`() {
+        val out = convertJsonToCss("""{"rowGap": 4, "columnGap": 12}""")
+        assert(out.contains("row-gap: 4px;")) { "rowGap 要补 px，实际：$out" }
+        assert(out.contains("column-gap: 12px;")) { "columnGap 要补 px，实际：$out" }
+    }
+
+    @Test
+    fun `convert - gridGap 数字补 px 并转 kebab`() {
+        val result = convertJsonToCss("""{"gridGap": 8}""")
+        assertEquals("  grid-gap: 8px;\n", result)
+    }
+
+    @Test
+    fun `convert - gap 数组逐项补 px`() {
+        val out = convertJsonToCss("""{"gap": [8, 12]}""")
+        assert(out.contains("gap: 8px 12px;")) { "shorthand 数组应逐项补 px，实际：$out" }
+    }
+
+    @Test
+    fun `convert - flexBasis 数字补 px（React unitless 名单里没有 flex-basis）`() {
+        val result = convertJsonToCss("""{"flexBasis": 2}""")
+        assertEquals("  flex-basis: 2px;\n", result)
+    }
+
+    @Test
+    fun `convert - 新增 unitless 属性 strokeWidth 不加 px`() {
+        val result = convertJsonToCss("""{"strokeWidth": 2}""")
+        assertEquals("  stroke-width: 2;\n", result)
+    }
+
+    @Test
+    fun `convert - 新增 unitless 属性 scale zoom 不加 px`() {
+        val out = convertJsonToCss("""{"scale": 1.5, "zoom": 2}""")
+        assert(out.contains("scale: 1.5;")) { "scale 不要 px，实际：$out" }
+        assert(out.contains("zoom: 2;")) { "zoom 不要 px，实际：$out" }
+    }
+
+    @Test
+    fun `convert - React 常见布局组合里 gap 补 px 其他 unitless 不变`() {
+        val json = """
+            {
+              "display": "grid",
+              "gridTemplateColumns": "repeat(3, 1fr)",
+              "gap": 8,
+              "zIndex": 10,
+              "opacity": 1
+            }
+        """.trimIndent()
+        val out = convertJsonToCss(json)
+        assert(out.contains("gap: 8px;")) { "gap 必须补 px，实际：$out" }
+        assert(out.contains("z-index: 10;")) { "z-index 保持 unitless，实际：$out" }
+        assert(out.contains("opacity: 1;")) { "opacity 保持 unitless，实际：$out" }
+    }
+
     @Test
     fun `convert - 支持 JS 对象字面量（key 无引号 + 尾随逗号）`() {
         val js = """

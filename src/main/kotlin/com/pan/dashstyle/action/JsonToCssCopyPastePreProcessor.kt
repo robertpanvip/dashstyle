@@ -34,22 +34,33 @@ import org.jetbrains.annotations.NotNull
  * 不管 IDE 怎么重写扩展类字节码，这里都不会受影响。
  */
 internal object JsonToCssConversionTables {
-    /** 不需要加 px 单位的 CSS 属性（camelCase 和 kebab-case 两份） */
+    /**
+     * 不需要加 px 单位的 CSS 属性（camelCase 和 kebab-case 两份）。
+     *
+     * 与 React 官方 react-dom 的 `isUnitlessNumber`（CSSProperty.js）保持一致：
+     * 之前错误地把 gap / grid-gap / grid-row-gap / grid-column-gap / flex-basis 放进了
+     * unitless 名单 —— React 渲染 `style={{ gap: 8 }}` 时输出的是 `gap: 8px`，
+     * 纯数字的 `gap: 8` 在 CSS 里是非法值，复制/提取到 CSS Module 时必须补 px。
+     */
     private val UNITLESS = setOf(
-        "flex", "flex-grow", "flex-grow-shrink", "flex-shrink", "flex-basis",
-        "order", "z-index", "opacity", "font-weight", "line-height",
-        "column-count", "columns", "grid-row-start", "grid-row-end",
-        "grid-column-start", "grid-column-end", "grid-row", "grid-column",
-        "grid-area", "grid-row-gap", "grid-column-gap", "grid-gap", "gap",
-        "aspect-ratio", "animation-iteration-count", "orphans", "widows", "tab-size"
+        "animation-iteration-count", "aspect-ratio", "border-image-outset", "border-image-slice",
+        "border-image-width", "box-flex", "box-flex-group", "box-ordinal-group", "column-count",
+        "columns", "flex", "flex-grow", "flex-positive", "flex-shrink", "flex-negative", "flex-order",
+        "grid-area", "grid-row", "grid-row-start", "grid-row-end", "grid-column", "grid-column-start",
+        "grid-column-end", "font-weight", "line-clamp", "line-height", "opacity", "order", "orphans",
+        "scale", "tab-size", "widows", "z-index", "zoom",
+        "fill-opacity", "flood-opacity", "stop-opacity", "stroke-dasharray", "stroke-dashoffset",
+        "stroke-miterlimit", "stroke-opacity", "stroke-width"
     )
     private val UNITLESS_CAMEL = setOf(
-        "flex", "flexGrow", "flexShrink", "flexBasis",
-        "order", "zIndex", "opacity", "fontWeight", "lineHeight",
-        "columnCount", "columns", "gridRowStart", "gridRowEnd",
-        "gridColumnStart", "gridColumnEnd", "gridRow", "gridColumn",
-        "gridArea", "gridRowGap", "gridColumnGap", "gridGap", "gap",
-        "aspectRatio", "animationIterationCount", "orphans", "widows", "tabSize"
+        "animationIterationCount", "aspectRatio", "borderImageOutset", "borderImageSlice",
+        "borderImageWidth", "boxFlex", "boxFlexGroup", "boxOrdinalGroup", "columnCount",
+        "columns", "flex", "flexGrow", "flexPositive", "flexShrink", "flexNegative", "flexOrder",
+        "gridArea", "gridRow", "gridRowStart", "gridRowEnd", "gridColumn", "gridColumnStart",
+        "gridColumnEnd", "fontWeight", "lineClamp", "lineHeight", "opacity", "order", "orphans",
+        "scale", "tabSize", "widows", "zIndex", "zoom",
+        "fillOpacity", "floodOpacity", "stopOpacity", "strokeDasharray", "strokeDashoffset",
+        "strokeMiterlimit", "strokeOpacity", "strokeWidth"
     )
 
     fun isUnitless(key: String, kebabKey: String): Boolean =
