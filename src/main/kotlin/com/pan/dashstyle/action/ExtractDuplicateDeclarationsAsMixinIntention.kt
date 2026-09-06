@@ -1,5 +1,6 @@
 package com.pan.dashstyle.action
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.pan.dashstyle.reference.*
 import com.pan.dashstyle.inspection.*
 import com.pan.dashstyle.support.*
@@ -49,8 +50,8 @@ private const val MIN_SHARED_DECLARATIONS = 3
 @Suppress("UnstableApiUsage", "DEPRECATION")
 class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
 
-    override fun getText(): String = "Extract duplicated CSS blocks into shared Less mixins"
-    override fun getFamilyName(): String = "DashStyle: Extract duplicate CSS"
+    override fun getText(): String = message("intention.extract.mixin.text")
+    override fun getFamilyName(): String = message("intention.extract.mixin.family")
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean = runCatching {
         val scope = resolveScope(file, editor.caretModel.offset) ?: return@runCatching false
@@ -78,14 +79,14 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
         }.getOrNull() ?: return
         runCatching {
             WriteCommandAction.writeCommandAction(project)
-                .withName("Extract duplicate CSS as mixin")
+                .withName(message("command.extract.duplicate.css.mixin"))
                 .run<Nothing> { scopeReplace(scope, resultText) }
         }
         runCatching {
             Messages.showInfoMessage(
                 project,
-                "Replaced duplicates with shared mixin calls in current scope.",
-                "Extract Duplicate CSS OK"
+                message("intention.extract.mixin.success.message"),
+                message("intention.extract.mixin.success.title")
             )
         }
     }

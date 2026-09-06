@@ -1,5 +1,6 @@
 package com.pan.dashstyle.action
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.pan.dashstyle.reference.*
 import com.pan.dashstyle.inspection.*
 import com.pan.dashstyle.support.*
@@ -180,8 +181,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             spec.alias?.name?.takeIf { it.isNotBlank() } ?: spec.name
     }
 
-    override fun getText(): String = "Extract inline style to CSS Module..."
-    override fun getFamilyName(): String = "DashStyle: Inline Style → CSS Module"
+    override fun getText(): String = message("intention.extract.inline.style.text")
+    override fun getFamilyName(): String = message("intention.extract.inline.style.family")
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean {
         val offset = editor.caretModel.offset
@@ -213,12 +214,13 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             .asSequence().mapNotNull { file.findElementAt(it) }
             .firstNotNullOfOrNull { locateStyleAttribute(it, file, offset) }
             ?: run { Messages.showWarningDialog(project,
-                "No style attribute found under cursor.", "Extract to CSS Module"); return }
+                message("intention.extract.no.style.attribute.warning"),
+                message("intention.extract.dialog.title")); return }
 
         val styleObjText = extractObjectLiteral(loc) ?: run {
             Messages.showWarningDialog(project,
-                "Cannot extract: the cursor must be on a plain object style attribute (`style={{...}}` or `:style=\"{...}\"`).",
-                "Extract to CSS Module")
+                message("intention.extract.not.object.warning"),
+                message("intention.extract.dialog.title"))
             return
         }
 
@@ -236,8 +238,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             else {
                 LOG.warn("convertJsonToCss failed", t)
                 Messages.showErrorDialog(project,
-                    "Failed to convert style object to CSS: ${t.message}",
-                    "Extract to CSS Module")
+                    message("intention.extract.convert.failed.error", t.message ?: ""),
+                    message("intention.extract.dialog.title"))
                 return
             }
         }
@@ -250,22 +252,20 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         )
         val defaultName = SemanticClassNameInferrer.topCandidate(candidates)
         val hint = candidates.take(5).joinToString("\n  - ", prefix = "  - ") { c ->
-            "${c.name}  (${c.score} pts, from ${c.source})"
+            message("intention.extract.candidate.line", c.name, c.score, c.source)
         }
 
         val chosenName = askRenameDialog(project, defaultName, hint) ?: return
 
         val target = locateTargetCssModule(project, file, loc) ?: run {
             Messages.showErrorDialog(project,
-                "Cannot find target CSS Module location.\n" +
-                        "Vue: add a `<style module>` block to the SFC.\n" +
-                        "React/TSX: add `import styles from './Xxx.module.(css|scss|less)'` to the file.",
-                "Extract to CSS Module")
+                message("intention.extract.no.target.error"),
+                message("intention.extract.dialog.title"))
             return
         }
 
         WriteCommandAction.writeCommandAction(project)
-            .withName("Extract inline style to CSS Module")
+            .withName(message("command.extract.inline.style"))
             .run<Nothing> {
                 val ruleText = formatRule(chosenName, cssDeclarations)
                 target.appendRule(project, chosenName, ruleText)
@@ -285,8 +285,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         val declCount = cssDeclarations.lineSequence().filter { it.contains(':') }.count()
         Messages.showInfoMessage(
             project,
-            "Extracted `.${chosenName}` ($declCount declarations) to $target.\n\n${cssDeclarations.trim()}",
-            "Extract to CSS Module OK"
+            message("intention.extract.success.message", chosenName, declCount, target.toString(), cssDeclarations.trim()),
+            message("intention.extract.success.title")
         )
     }
 
@@ -465,8 +465,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     private fun askRenameDialog(project: Project, default: String, hint: String): String? {
         return Messages.showInputDialog(
             project,
-            "Choose a CSS class name (kebab-case recommended).\n\nSemantic candidates:\n$hint",
-            "Rename extracted CSS class",
+            message("intention.extract.rename.dialog.message", hint),
+            message("intention.extract.rename.dialog.title"),
             Messages.getQuestionIcon(),
             default,
             object : InputValidatorEx {
@@ -475,9 +475,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                     !input.isNullOrBlank() && CLASS_NAME_RE.matches(input)
                 override fun getErrorText(input: String?): String? =
                     when {
-                        input.isNullOrBlank() -> "Class name cannot be empty."
-                        !CLASS_NAME_RE.matches(input) ->
-                            "Invalid class name (use letters/digits/-/_; must start with letter/_)."
+                        input.isNullOrBlank() -> message("intention.extract.class.name.empty.error")
+                        !CLASS_NAME_RE.matches(input) -> message("intention.extract.class.name.invalid.error")
                         else -> null
                     }
             }
@@ -516,7 +515,7 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 "$importVariableName.$className"
             else
                 "$importVariableName[\"$className\"]"
-        override fun toString(): String = "file $absolutePath (via $importVariableName)"
+        override fun toString(): String = message("target.file.description", absolutePath, importVariableName)
     }
 
     inner class VueStyleModuleTarget(
@@ -543,7 +542,7 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 "$styleVar.$className"
             else
                 "$styleVar['$className']"
-        override fun toString(): String = "Vue <style module> ($styleVar)"
+        override fun toString(): String = message("target.vue.style.module.description", styleVar)
     }
 
     private fun locateTargetCssModule(project: Project, file: PsiFile, loc: StyleAttrLoc): CssModuleTarget? {

@@ -1,5 +1,6 @@
 package com.pan.dashstyle.support
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
 import com.intellij.lang.xml.XMLLanguage
@@ -201,7 +202,7 @@ object CssModuleFileResolver {
                 val newImportPsi = createImportPsi(project, sourceFile, newImportText)
                 if (newImportPsi != null) {
                     WriteCommandAction.writeCommandAction(project, sourceFile)
-                        .withName("Update CSS Module import")
+                        .withName(message("command.update.css.module.import"))
                         .run<Nothing> {
                             imp.replace(newImportPsi)
                         }
@@ -217,7 +218,7 @@ object CssModuleFileResolver {
         val newImportPsi = createImportPsi(project, sourceFile, importText)
         if (newImportPsi != null) {
             WriteCommandAction.writeCommandAction(project, sourceFile)
-                .withName("Add CSS Module import")
+                .withName(message("command.add.css.module.import"))
                 .run<Nothing> {
                     appendImportDeclaration(project, sourceFile, newImportPsi)
                 }

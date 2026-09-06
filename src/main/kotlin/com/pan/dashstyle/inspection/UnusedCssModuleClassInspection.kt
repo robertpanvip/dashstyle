@@ -1,5 +1,6 @@
 package com.pan.dashstyle.inspection
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.pan.dashstyle.reference.*
 import com.pan.dashstyle.action.*
 import com.pan.dashstyle.support.*
@@ -34,8 +35,8 @@ import com.intellij.psi.xml.XmlTag
  */
 class UnusedCssModuleClassInspection : LocalInspectionTool() {
 
-    override fun getGroupDisplayName(): String = "DashStyle"
-    override fun getDisplayName(): String = "Unused CSS Module class"
+    override fun getGroupDisplayName(): String = message("inspection.group.name")
+    override fun getDisplayName(): String = message("inspection.unused.css.module.class.display.name")
     override fun isEnabledByDefault(): Boolean = true
 
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor {
@@ -70,7 +71,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                     if (!selector.isPhysical || selector.containingFile !== cssFile) continue
                     holder.registerProblem(
                         selector,
-                        "CSS class `.$kebab` is not used anywhere",
+                        message("inspection.unused.class.problem.description", kebab),
                         ProblemHighlightType.LIKE_UNUSED_SYMBOL,
                         RemoveRuleQuickFix(kebab)
                     )
@@ -132,7 +133,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             for (kebab in unusedKebabs) {
                 val pd: ProblemDescriptor = mgr.createProblemDescriptor(
                     selector,
-                    "CSS class `.$kebab` is not used anywhere",
+                    message("inspection.unused.class.problem.description", kebab),
                     RemoveRuleQuickFix(kebab),
                     ProblemHighlightType.LIKE_UNUSED_SYMBOL,
                     /* isOnTheFly */ true
@@ -164,8 +165,8 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
     // QuickFix
     // ================================================================
     class RemoveRuleQuickFix(private val className: String) : LocalQuickFix {
-        override fun getName(): String = "Remove unused `.$className` rule"
-        override fun getFamilyName(): String = "DashStyle: Remove unused CSS class"
+        override fun getName(): String = message("quickfix.remove.unused.rule.name", className)
+        override fun getFamilyName(): String = message("quickfix.remove.unused.rule.family")
 
         override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
             val rule = descriptor.psiElement.parent as? CssRuleset ?: return

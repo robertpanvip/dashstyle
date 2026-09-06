@@ -1,5 +1,6 @@
 package com.pan.dashstyle.action
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.pan.dashstyle.reference.*
 import com.pan.dashstyle.inspection.*
 import com.pan.dashstyle.support.*
@@ -30,8 +31,8 @@ import com.intellij.psi.xml.XmlTag
 @Suppress("UnstableApiUsage")
 class CreateMissingCssClassIntention : BaseIntentionAction() {
 
-    override fun getText(): String = "Create missing class in CSS Module"
-    override fun getFamilyName(): String = "DashStyle: Create missing CSS class"
+    override fun getText(): String = message("intention.create.missing.class.text")
+    override fun getFamilyName(): String = message("intention.create.missing.class.family")
 
     /**
      * 让 IntelliJ 框架在 write action 中调用 invoke()。
@@ -61,16 +62,16 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
             val chosen = when (candidates.size) {
                 0 -> {
                     Messages.showErrorDialog(project,
-                        "No imported CSS Module and no *.module.{css,scss,less} file found next to ${file.name}.\nAdd an `import styles from './Foo.module.css'` to the file first.",
-                        "Create missing class")
+                        message("intention.create.missing.class.no.module.error", file.name),
+                        message("intention.create.missing.class.dialog.title"))
                     return
                 }
                 1 -> candidates[0]
                 else -> {
                     val idx = Messages.showChooseDialog(
                         project,
-                        "More than one candidate CSS Module file found in the folder. Choose a target:",
-                        "Create missing class",
+                        message("intention.create.missing.class.choose.target"),
+                        message("intention.create.missing.class.dialog.title"),
                         Messages.getQuestionIcon(),
                         candidates.map { it.first.name }.toTypedArray(),
                         candidates[0].first.name
@@ -80,7 +81,11 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
                 }
             }
             val psi = PsiManager.getInstance(project).findFile(chosen.first) ?: run {
-                Messages.showErrorDialog(project, "Cannot open ${chosen.first.name} as PSI.", "Create missing class")
+                Messages.showErrorDialog(
+                    project,
+                    message("intention.create.missing.class.cannot.open.psi", chosen.first.name),
+                    message("intention.create.missing.class.dialog.title")
+                )
                 return
             }
             CssModuleResolver.CssContainer.ImportedFile(psi, chosen.first, chosen.second, null)
@@ -91,8 +96,8 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
             is CssModuleResolver.CssContainer.VueStyleTag -> container.containingFile.virtualFile
             is CssModuleResolver.CssContainer.LocalObjectLiteral -> {
                 Messages.showWarningDialog(project,
-                    "`${container.variableName}` is a local JS object literal (not a CSS module file). DashStyle only supports appending to CSS/SCSS/LESS module files or Vue `<style module>`.",
-                    "Create missing class")
+                    message("intention.create.missing.class.local.object.warning", container.variableName),
+                    message("intention.create.missing.class.dialog.title"))
                 return
             }
         }

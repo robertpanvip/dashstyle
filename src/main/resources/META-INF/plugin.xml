@@ -9,6 +9,8 @@
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
     <vendor url="https://github.com/robertpanvip/dashstyle">pan</vendor>
+    <!-- i18n：plugin.xml 中的 %key% 从该 bundle 解析；代码侧经 DashStyleBundle（DynamicBundle）按 IDE 语言动态解析 -->
+    <resource-bundle>messages.DashStyleBundle</resource-bundle>
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
     <description><![CDATA[
@@ -162,7 +164,7 @@
              具体要不要处理，Kotlin 代码里会通过 CssRuleset / file suffix 判断，不影响其他语言。-->
         <localInspection
                 language="CSS"
-                displayName="Unused CSS Module class"
+                displayName="%inspection.unused.css.module.class.display.name%"
                 groupName="DashStyle"
                 shortName="DashStyle.UnusedCssClass.Css"
                 enabledByDefault="true"
@@ -170,7 +172,7 @@
                 implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
                 language="SCSS"
-                displayName="Unused CSS Module class"
+                displayName="%inspection.unused.css.module.class.display.name%"
                 groupName="DashStyle"
                 shortName="DashStyle.UnusedCssClass.Scss"
                 enabledByDefault="true"
@@ -178,7 +180,7 @@
                 implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
                 language="LESS"
-                displayName="Unused CSS Module class"
+                displayName="%inspection.unused.css.module.class.display.name%"
                 groupName="DashStyle"
                 shortName="DashStyle.UnusedCssClass.Less"
                 enabledByDefault="true"
@@ -186,7 +188,7 @@
                 implementationClass="com.pan.dashstyle.inspection.UnusedCssModuleClassInspection"/>
         <localInspection
                 language="CSS"
-                displayName="Duplicate CSS declarations (single file)"
+                displayName="%inspection.duplicate.css.declarations.display.name%"
                 groupName="DashStyle"
                 shortName="DashStyle.DuplicateCss.Css"
                 enabledByDefault="true"
@@ -194,7 +196,7 @@
                 implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
         <localInspection
                 language="SCSS"
-                displayName="Duplicate CSS declarations (single file)"
+                displayName="%inspection.duplicate.css.declarations.display.name%"
                 groupName="DashStyle"
                 shortName="DashStyle.DuplicateCss.Scss"
                 enabledByDefault="true"
@@ -202,7 +204,7 @@
                 implementationClass="com.pan.dashstyle.inspection.DuplicateCssDeclarationsInspection"/>
         <localInspection
                 language="LESS"
-                displayName="Duplicate CSS declarations (single file)"
+                displayName="%inspection.duplicate.css.declarations.display.name%"
                 groupName="DashStyle"
                 shortName="DashStyle.DuplicateCss.Less"
                 enabledByDefault="true"
@@ -278,8 +280,8 @@
     <actions>
         <action id="DashStyle.ConvertClassNameToCssModule"
                 class="com.pan.dashstyle.action.ConvertClassNameToCssModuleAction"
-                text="将 className 转换为 CSS Module"
-                description="将 className 字符串字面量转换为 CSS Module 引用">
+                text="%action.DashStyle.ConvertClassNameToCssModule.text%"
+                description="%action.DashStyle.ConvertClassNameToCssModule.description%">
             <add-to-group group-id="RefactoringMenu" anchor="last"/>
             <!-- 编辑器右键直接可见，方便 TSX/JSX 下快速触发。
                  注意：不要引用 "RefactoringPopup" group——该 group id 在 WebStorm 平台未注册，

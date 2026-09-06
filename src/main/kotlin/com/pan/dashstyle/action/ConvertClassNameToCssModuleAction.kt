@@ -1,5 +1,6 @@
 package com.pan.dashstyle.action
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.pan.dashstyle.reference.*
 import com.pan.dashstyle.inspection.*
 import com.pan.dashstyle.support.*
@@ -32,9 +33,7 @@ import java.util.regex.Pattern
  * 5. 将 className="foo" 替换为 className={styles.foo}
  * 6. 在 CSS Module 文件中生成 .foo { } 规则
  */
-class ConvertClassNameToCssModuleAction : AnAction(
-    "将 className 转换为 CSS Module"
-) {
+class ConvertClassNameToCssModuleAction : AnAction() {
 
     companion object {
         // 匹配 className="..." 或 className='...' 中的类名
@@ -67,13 +66,13 @@ class ConvertClassNameToCssModuleAction : AnAction(
             e.presentation.isEnabled = enabled
             e.presentation.isVisible = true
         }
-        e.presentation.text = "将 className 转换为 CSS Module..."
+        e.presentation.text = message("action.convert.text")
         if (!enabled && hasContext) {
             e.presentation.description = when (ext) {
-                "ts", "js" -> "This action requires JSX markup — switch to a .tsx / .jsx file"
-                "vue" -> "Vue SFCs are supported experimentally; only JSX-style `className=\"...\"` attributes inside `<script setup lang=\"tsx\">` or JSX blocks will be converted"
-                null -> "Open a .tsx / .jsx file first"
-                else -> "Unsupported file type: $ext (expected .tsx / .jsx / .vue)"
+                "ts", "js" -> message("action.convert.disabled.requires.jsx")
+                "vue" -> message("action.convert.disabled.vue.experimental")
+                null -> message("action.convert.disabled.open.file.first")
+                else -> message("action.convert.disabled.unsupported.file.type", ext)
             }
         }
     }
@@ -98,12 +97,15 @@ class ConvertClassNameToCssModuleAction : AnAction(
         // 1. 扫描整个选区/文件，收集 className 字面量中的类名
         val rawClassNames = collectClassNameValues(file, selStart, selEnd)
         if (rawClassNames.isEmpty()) {
-            val scope = if (selStart == 0 && selEnd == file.textRange.endOffset) "the whole file" else "selected code"
+            val scope = if (selStart == 0 && selEnd == file.textRange.endOffset) {
+                message("scope.whole.file")
+            } else {
+                message("scope.selected.code")
+            }
             Messages.showInfoMessage(
                 project,
-                "No className string literals found in $scope.\n" +
-                        "Make sure you have JSX with className=\"...\" attributes.",
-                "Convert className to CSS Module"
+                message("action.convert.nothing.found.message", scope),
+                message("action.convert.dialog.title")
             )
             return
         }
@@ -115,9 +117,8 @@ class ConvertClassNameToCssModuleAction : AnAction(
         val preview = uniqueNames.joinToString("\n  ", prefix = "  ")
         val confirm = Messages.showYesNoDialog(
             project,
-            "Found ${uniqueNames.size} class name(s) to convert:\n$preview\n\n" +
-                    "Do you want to proceed?",
-            "Convert className to CSS Module",
+            message("action.convert.confirm.message", uniqueNames.size, preview),
+            message("action.convert.dialog.title"),
             Messages.getQuestionIcon()
         )
         if (confirm != Messages.YES) return
@@ -138,10 +139,11 @@ class ConvertClassNameToCssModuleAction : AnAction(
 
         Messages.showInfoMessage(
             project,
-            "Converted ${uniqueNames.size} class name(s) to CSS Module.\n" +
-                    "Import: `import $importBinding from './${moduleFile.name}'`\n" +
-                    "Target: ${moduleFile.path}",
-            "Convert className to CSS Module"
+            message(
+                "action.convert.success.message",
+                uniqueNames.size, importBinding, moduleFile.name, moduleFile.path
+            ),
+            message("action.convert.dialog.title")
         )
     }
 
@@ -257,8 +259,8 @@ class ConvertClassNameToCssModuleAction : AnAction(
             val candidates = existingModules.map { it.name }.toTypedArray()
             val idx = Messages.showChooseDialog(
                 project,
-                "Multiple CSS Module files found. Choose one:",
-                "Convert className to CSS Module",
+                message("action.convert.choose.module.message"),
+                message("action.convert.dialog.title"),
                 Messages.getQuestionIcon(),
                 candidates,
                 candidates.firstOrNull() ?: ""
@@ -276,9 +278,8 @@ class ConvertClassNameToCssModuleAction : AnAction(
                 if (refCount == 1) {
                     val ans = Messages.showYesNoDialog(
                         project,
-                        "Found imported file `${file.name}`.\n" +
-                                "It's only imported in this file. Rename it to `$newName`?",
-                        "Convert className to CSS Module",
+                        message("action.convert.rename.imported.single.message", file.name, newName),
+                        message("action.convert.dialog.title"),
                         Messages.getQuestionIcon()
                     )
                     if (ans == Messages.YES) {
@@ -289,10 +290,8 @@ class ConvertClassNameToCssModuleAction : AnAction(
                 } else {
                     val ans = Messages.showYesNoDialog(
                         project,
-                        "Found imported file `${file.name}`.\n" +
-                                "It's imported in $refCount files (other than this one), so we can't rename it.\n" +
-                                "Create a copy `$newName` for CSS Module?",
-                        "Convert className to CSS Module",
+                        message("action.convert.rename.imported.multiple.message", file.name, refCount, newName),
+                        message("action.convert.dialog.title"),
                         Messages.getQuestionIcon()
                     )
                     if (ans != Messages.YES) return null
@@ -304,8 +303,8 @@ class ConvertClassNameToCssModuleAction : AnAction(
                 val rawFiles = importedPlainFiles.map { it.first }.toList()
                 val idx = Messages.showChooseDialog(
                     project,
-                    "Found multiple imported CSS files. Which one to use for CSS Module?",
-                    "Convert className to CSS Module",
+                    message("action.convert.choose.imported.css.message"),
+                    message("action.convert.dialog.title"),
                     Messages.getQuestionIcon(),
                     candidates,
                     candidates[0]
@@ -317,8 +316,8 @@ class ConvertClassNameToCssModuleAction : AnAction(
                 if (refCount == 1) {
                     val ans = Messages.showYesNoDialog(
                         project,
-                        "`${chosen.name}` is only imported in this file. Rename it to `$newName`?",
-                        "Convert className to CSS Module",
+                        message("action.convert.rename.chosen.single.message", chosen.name, newName),
+                        message("action.convert.dialog.title"),
                         Messages.getQuestionIcon()
                     )
                     if (ans == Messages.YES) {
@@ -339,9 +338,8 @@ class ConvertClassNameToCssModuleAction : AnAction(
             val candidates = plainFiles.map { it.name }
             val idx = Messages.showChooseDialog(
                 project,
-                "No imported CSS found. Would you like to rename one to *.module.*?\n" +
-                        "Choose a file:",
-                "Convert className to CSS Module",
+                message("action.convert.rename.plain.message"),
+                message("action.convert.dialog.title"),
                 Messages.getQuestionIcon(),
                 candidates.toTypedArray(),
                 candidates.firstOrNull() ?: ""
@@ -429,7 +427,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
         if (sites.isEmpty()) return
 
         WriteCommandAction.writeCommandAction(project, file)
-            .withName("Convert className to CSS Module")
+            .withName(message("command.convert.class.names"))
             .run<Nothing> {
                 // 从后往前替换，避免 offset 漂移
                 val sortedSites = sites.sortedByDescending { it.startOffset }
@@ -552,7 +550,7 @@ class ConvertClassNameToCssModuleAction : AnAction(
 
     private fun appendCssRules(project: Project, moduleVf: VirtualFile, classNames: Set<String>) {
         WriteCommandAction.writeCommandAction(project)
-            .withName("Add CSS Module rules")
+            .withName(message("command.add.css.module.rules"))
             .run<Nothing> {
                 val psiFile = PsiManager.getInstance(project).findFile(moduleVf) ?: return@run
 

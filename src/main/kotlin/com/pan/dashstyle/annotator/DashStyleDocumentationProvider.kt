@@ -1,5 +1,6 @@
 package com.pan.dashstyle.annotator
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.pan.dashstyle.reference.*
 import com.pan.dashstyle.inspection.*
 import com.pan.dashstyle.action.*
@@ -118,11 +119,14 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
             val decls = CssSelectorUtil.collectEffectiveDeclarations(resolved.ruleset)
             val locationInfo = when (resolved.container) {
                 is CssModuleResolver.CssContainer.ImportedFile ->
-                    "in ${resolved.container.virtualFile.path}"
+                    message("doc.location.imported.file", resolved.container.virtualFile.path)
                 is CssModuleResolver.CssContainer.VueStyleTag ->
-                    "in Vue <style${if (resolved.container.moduleAlias != "\$style") " module=\"${resolved.container.moduleAlias.drop(1)}\"" else " module"}>"
+                    if (resolved.container.moduleAlias != "\$style")
+                        message("doc.location.vue.style.alias", resolved.container.moduleAlias.drop(1))
+                    else
+                        message("doc.location.vue.style")
                 is CssModuleResolver.CssContainer.LocalObjectLiteral ->
-                    "in local object `${resolved.container.variableName}`"
+                    message("doc.location.local.object", resolved.container.variableName)
             }
             return formatRulesetDoc(resolved.expandedSelector, decls, locationInfo)
         }
@@ -185,7 +189,7 @@ class DashStyleDocumentationProvider : AbstractDocumentationProvider() {
                 append(" {</div>")
             }
             if (declarations.isEmpty()) {
-                append("<div style=\"$emptyCss\">/* empty */</div>")
+                append("<div style=\"$emptyCss\">${htmlEscape(message("doc.empty.rule.comment"))}</div>")
             } else {
                 for (d in declarations) {
                     val prop = d.propertyName ?: continue

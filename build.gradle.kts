@@ -185,6 +185,10 @@ tasks {
 
     test {
         useJUnitPlatform()
+        // 固定英文 locale：测试断言了大量用户可见文案（intention 名称、inspection 描述等），
+        // 引入 resource bundle 后文案随 JVM locale 变化，强制英文保证断言稳定。
+        systemProperty("user.language", "en")
+        systemProperty("user.country", "US")
         testLogging {
             events("passed", "skipped", "failed")
             showStandardStreams = true

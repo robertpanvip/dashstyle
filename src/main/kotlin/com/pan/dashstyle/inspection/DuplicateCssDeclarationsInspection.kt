@@ -1,5 +1,6 @@
 package com.pan.dashstyle.inspection
 
+import com.pan.dashstyle.DashStyleBundle.message
 import com.pan.dashstyle.reference.*
 import com.pan.dashstyle.action.*
 import com.pan.dashstyle.support.*
@@ -33,8 +34,8 @@ import com.intellij.psi.xml.XmlTag
  */
 class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
 
-    override fun getGroupDisplayName(): String = "DashStyle"
-    override fun getDisplayName(): String = "Duplicate CSS declarations (single file)"
+    override fun getGroupDisplayName(): String = message("inspection.group.name")
+    override fun getDisplayName(): String = message("inspection.duplicate.css.declarations.display.name")
     // 同 UnusedCssModuleClassInspection：shortName 完全由 plugin.xml 提供，
     // 保证 CSS / SCSS / LESS 三条语言维度注册的 shortName 各自独立、全局唯一。
     override fun isEnabledByDefault(): Boolean = true
@@ -114,7 +115,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val count = group.size
             val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
                 (if (group.first().declarations.size > 3) "\n  ..." else "")
-            val msg = "$count rules share identical declarations:\n$commonDecl"
+            val msg = message("inspection.duplicate.declarations.problem.description", count, commonDecl)
             for (entry in group) {
                 val range = entry.ruleset.block ?: continue
                 holder.registerProblem(range, msg, ProblemHighlightType.GENERIC_ERROR_OR_WARNING, *fixes)
@@ -165,8 +166,8 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         private fun requestClassNameAndExtract(project: Project) {
             val input = Messages.showInputDialog(
                 project,
-                "Name the new shared CSS class (kebab-case recommended):",
-                "Extract common CSS class",
+                message("quickfix.extract.common.class.input.message"),
+                message("quickfix.extract.common.class.input.title"),
                 Messages.getQuestionIcon(),
                 "shared-" + commonDeclarations.firstOrNull()?.propertyName?.replace(' ', '-').orEmpty(),
                 null
@@ -174,13 +175,17 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             if (input.isNullOrBlank()) return
             val className = input.trim().trimStart('.')
             if (!className.matches(Regex("""^[_a-zA-Z][_a-zA-Z0-9-]*$"""))) {
-                Messages.showWarningDialog(project, "Invalid class name.", "Extract common class")
+                Messages.showWarningDialog(
+                    project,
+                    message("quickfix.extract.common.class.invalid.name.warning"),
+                    message("quickfix.extract.common.class.invalid.name.title")
+                )
                 return
             }
 
             val insertOffset = computeInsertionOffset(duplicates) ?: return
 
-            WriteCommandAction.writeCommandAction(project).withName("Extract common CSS class").run<Nothing> {
+            WriteCommandAction.writeCommandAction(project).withName(message("command.extract.common.css.class")).run<Nothing> {
                 val declarationsText = commonDeclarations.joinToString("\n") { d ->
                     val prop = d.propertyName ?: ""
                     val value = d.value?.text ?: ""
@@ -376,7 +381,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
             val count = group.size
             val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
                 (if (group.first().declarations.size > 3) "\n  ..." else "")
-            val msg = "$count rules share identical declarations:\n$commonDecl"
+            val msg = message("inspection.duplicate.declarations.problem.description", count, commonDecl)
             runCatching {
                 holder.newAnnotation(HighlightSeverity.WEAK_WARNING, msg)
                     .range(block.textRange)
@@ -408,7 +413,7 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 val count = group.size
                 val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
                     (if (group.first().declarations.size > 3) "\n  ..." else "")
-                val msg = "$count rules share identical declarations:\n$commonDecl"
+                val msg = message("inspection.duplicate.declarations.problem.description", count, commonDecl)
                 for (e in group) {
                     val range = e.ruleset.block ?: continue
                     runCatching {
@@ -473,8 +478,8 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         private val duplicates: List<CssRuleset>,
         private val commonDeclarations: List<CssDeclaration>
     ) : LocalQuickFix {
-        override fun getName(): String = "Extract ${commonDeclarations.size} shared declarations into a new common class"
-        override fun getFamilyName(): String = "DashStyle: Extract common CSS class"
+        override fun getName(): String = message("quickfix.extract.common.class.name.no.strategy", commonDeclarations.size)
+        override fun getFamilyName(): String = message("quickfix.extract.common.class.family")
         override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
             // 委托：构造一个临时的 DuplicateCssDeclarationsInspection 并触发内部 QuickFix（通过反射调用 private 内部类）
             runCatching {
