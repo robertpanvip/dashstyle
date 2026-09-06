@@ -10,6 +10,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
 import com.intellij.psi.css.StylesheetFile
+import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.PsiTreeUtil
@@ -18,12 +19,50 @@ import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 
 /**
+ * 项目使用的样式方言，决定新建 CSS Module 文件的扩展名。
+ * SASS 为缩进语法（无大括号），生成规则时需要用不同格式。
+ */
+enum class StyleDialect(val moduleExt: String, val plainExt: String) {
+    CSS(".module.css", ".css"),
+    SCSS(".module.scss", ".scss"),
+    SASS(".module.sass", ".sass"),
+    LESS(".module.less", ".less");
+
+    /** 是否为 SASS 缩进语法（不支持 `.foo { }` 大括号规则）。 */
+    val indentedSyntax: Boolean get() = this == SASS
+
+    companion object {
+        /** 从样式源文件扩展名（css/scss/sass/less）映射方言；其他返回 null。 */
+        fun fromFileExt(ext: String?): StyleDialect? = when (ext?.lowercase()) {
+            "css" -> CSS
+            "scss" -> SCSS
+            "sass" -> SASS
+            "less" -> LESS
+            else -> null
+        }
+
+        /** 从 module 文件名（如 Foo.module.less）判断方言；非 module 名返回 null。 */
+        fun fromModuleName(name: String): StyleDialect? =
+            values().firstOrNull { name.endsWith(it.moduleExt, ignoreCase = true) }
+    }
+}
+
+/**
  * CSS Module 文件级操作：查找/创建/复制 module 文件，import 检测与生成。
  *
  * 从 CssModuleResolver 拆出，职责聚焦于文件层面的解析与写入操作，
  * 不涉及 PSI 容器解析（[CssModuleResolver]）或使用端扫描（[CssModuleUsageScanner]）。
  */
 object CssModuleFileResolver {
+
+    /** package.json 依赖里出现 sass / node-sass → 判定为 SCSS 方言。 */
+    private val SASS_DEP_RE = Regex("""["'](?:sass|node-sass)["']\s*:""")
+
+    /** package.json 依赖里出现 less → 判定为 LESS 方言。 */
+    private val LESS_DEP_RE = Regex("""["']less["']\s*:""")
+
+    /** 样式方言统计优先级：平票时先看 SCSS（生态最广），再看 SASS、LESS。 */
+    private val DIALECT_PROBE_ORDER = listOf(StyleDialect.SCSS, StyleDialect.SASS, StyleDialect.LESS)
 
     val PLAIN_EXTS = listOf(".css", ".less", ".scss", ".sass")
 
@@ -353,7 +392,71 @@ object CssModuleFileResolver {
     }
 
     // ================================================================
-    // 5. module 文件创建 / 复制 / 重命名
+    // 5. 项目样式方言探测
+    // ================================================================
+
+    /**
+     * 探测项目的样式方言，决定新建 module 文件的扩展名（less / scss / sass / 原生 css）：
+     *
+     * 1. 源文件同目录已有的 `*.module.*` 文件投票（module 文件权重 3）—— 与当前文件最相关的证据优先；
+     * 2. 全项目样式文件统计（[FilenameIndex]，跳过 node_modules；module 文件权重 3、普通样式权重 1）；
+     * 3. 从源文件向上（最多 20 层）找 package.json：依赖含 sass / node-sass → SCSS，含 less → LESS；
+     * 4. 兜底：原生 CSS。
+     *
+     * 平票时按 SCSS → SASS → LESS 优先（生态占比），出现任何证据前不做臆测。
+     */
+    fun detectProjectDialect(project: Project, contextFile: VirtualFile?): StyleDialect {
+        // 1. 同目录 module 文件投票
+        val dir = contextFile?.parent
+        if (dir != null && dir.isValid) {
+            val sameDir = mutableMapOf<StyleDialect, Int>()
+            for (child in dir.children) {
+                if (child.isDirectory) continue
+                val dialect = StyleDialect.fromModuleName(child.name) ?: continue
+                sameDir[dialect] = (sameDir[dialect] ?: 0) + 3
+            }
+            sameDir.maxByOrNull { it.value }?.key?.let { return it }
+        }
+
+        // 2. 全项目样式文件统计（module 文件权重更高）
+        val scores = linkedMapOf<StyleDialect, Int>()
+        for (dialect in DIALECT_PROBE_ORDER) {
+            val files = runCatching {
+                FilenameIndex.getAllFilesByExt(
+                    project, dialect.plainExt.removePrefix("."), GlobalSearchScope.projectScope(project)
+                )
+            }.getOrDefault(emptyList())
+            var score = 0
+            for (f in files) {
+                if (f.path.contains("/node_modules/")) continue
+                score += if (f.name.contains(".module.")) 3 else 1
+            }
+            scores[dialect] = score
+        }
+        scores.maxByOrNull { it.value }?.takeIf { it.value > 0 }?.key?.let { return it }
+
+        // 3. package.json 依赖（向上最多 20 层）
+        var cur: VirtualFile? = contextFile?.parent
+        var depth = 0
+        while (cur != null && depth < 20) {
+            val pkg = cur.findChild("package.json")
+            if (pkg != null && pkg.isValid && !pkg.isDirectory) {
+                val text = runCatching { String(pkg.contentsToByteArray(), Charsets.UTF_8) }.getOrNull()
+                if (text != null) {
+                    if (SASS_DEP_RE.containsMatchIn(text)) return StyleDialect.SCSS
+                    if (LESS_DEP_RE.containsMatchIn(text)) return StyleDialect.LESS
+                }
+            }
+            cur = cur.parent
+            depth++
+        }
+
+        // 4. 兜底：原生 CSS
+        return StyleDialect.CSS
+    }
+
+    // ================================================================
+    // 6. module 文件创建 / 复制 / 重命名
     // ================================================================
 
     /**
@@ -376,19 +479,66 @@ object CssModuleFileResolver {
     }
 
     /**
-     * 新建空 module 文件。
+     * 新建空 module 文件（按样式方言决定扩展名）。
+     * 调用方必须已持有写动作（WriteCommandAction 内）。
      */
-    fun createModuleFile(parent: VirtualFile, baseName: String, sourceExt: String? = null): VirtualFile? {
-        val ext = when (sourceExt?.lowercase()) {
-            "less" -> ".module.less"
-            "scss" -> ".module.scss"
-            "sass" -> ".module.sass"
-            else -> ".module.css"
-        }
-        val newName = "$baseName$ext"
+    fun createModuleFile(parent: VirtualFile, baseName: String, dialect: StyleDialect): VirtualFile? {
+        val newName = "$baseName${dialect.moduleExt}"
         return runCatching {
             parent.createChildData(CssModuleFileResolver, newName)
         }.getOrNull()
+    }
+
+    /**
+     * 旧签名兼容：按源样式扩展名（less/scss/sass/css）映射方言后新建。
+     */
+    fun createModuleFile(parent: VirtualFile, baseName: String, sourceExt: String? = null): VirtualFile? {
+        return createModuleFile(parent, baseName, StyleDialect.fromFileExt(sourceExt) ?: StyleDialect.CSS)
+    }
+
+    /**
+     * 在写动作中新建空 module 文件（供 actionPerformed 等无写动作上下文调用）。
+     * 失败（IO 异常 / 无写权限）返回 null。
+     */
+    fun createModuleFileInWriteAction(
+        project: Project,
+        parent: VirtualFile,
+        baseName: String,
+        dialect: StyleDialect
+    ): VirtualFile? {
+        return runCatching {
+            WriteCommandAction.writeCommandAction(project)
+                .withName(message("command.create.css.module.file"))
+                .compute<VirtualFile?, Throwable> {
+                    createModuleFile(parent, baseName, dialect)
+                }
+        }.getOrNull()
+    }
+
+    /**
+     * 确保源文件有可用的同名 CSS Module 文件（提取意图 / 批量迁移的兜底目标）：
+     *
+     * 1. 同目录已有 `Xxx.module.*` → 复用，并确保 `import styles from ...` 已生成；
+     * 2. 没有 → 按项目样式方言（[detectProjectDialect]）新建 `Xxx.module.(css|scss|sass|less)`，
+     *    并生成 import。
+     *
+     * 返回 (moduleVirtualFile, importBinding)；虚拟文件缺失 / 新建失败返回 null。
+     */
+    fun ensureSameNameModuleFile(project: Project, sourceFile: PsiFile): Pair<VirtualFile, String>? {
+        val vf = sourceFile.virtualFile ?: return null
+        val parent = vf.parent ?: return null
+
+        val existing = findSameNameModuleFile(sourceFile)
+        if (existing != null) {
+            val binding = ensureImportExists(project, sourceFile, existing)
+            return existing to binding
+        }
+
+        val dialect = detectProjectDialect(project, vf)
+        val created = createModuleFileInWriteAction(project, parent, vf.nameWithoutExtension, dialect)
+            ?: return null
+        val binding = ensureImportExists(project, sourceFile, created)
+        return created to binding
     }
 
     /**

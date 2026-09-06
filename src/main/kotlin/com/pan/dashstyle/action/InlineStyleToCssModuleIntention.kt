@@ -21,6 +21,7 @@ import com.intellij.psi.*
 import com.intellij.psi.css.CssFile
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlAttribute
+import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 import com.intellij.lang.javascript.psi.JSObjectLiteralExpression
 import com.intellij.lang.javascript.psi.ecmal4.JSAttributeNameValuePair
@@ -265,7 +266,7 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         WriteCommandAction.writeCommandAction(project)
             .withName(message("command.extract.inline.style"))
             .run<Nothing> {
-                val ruleText = formatRule(chosenName, cssDeclarations)
+                val ruleText = formatRule(chosenName, cssDeclarations, target.indentedSyntax)
                 target.appendRule(project, chosenName, ruleText)
                 replaceStyleAttributeWithClass(loc, chosenName, target)
             }
@@ -482,7 +483,15 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         )
     }
 
-    private fun formatRule(className: String, declarations: String): String {
+    private fun formatRule(className: String, declarations: String, indentedSyntax: Boolean = false): String {
+        // SASS 缩进语法：无大括号，声明块用两空格缩进表达层级
+        if (indentedSyntax) {
+            val lines = declarations.lineSequence().mapNotNull { line ->
+                val t = line.trim()
+                if (t.isBlank()) null else "  $t"
+            }.joinToString("\n")
+            return if (lines.isEmpty()) "\n.$className\n" else "\n.$className\n$lines\n"
+        }
         val indented = declarations.lineSequence().mapNotNull { line ->
             val t = line.trim()
             if (t.isBlank()) null else "  $t"
@@ -497,12 +506,18 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         protected var ruleCount = 0
         abstract fun appendRule(project: Project, className: String, ruleText: String)
         abstract fun classNameAccessExpr(className: String): String
+
+        /** 目标是否使用 SASS 缩进语法（决定生成规则是否带大括号）。 */
+        abstract val indentedSyntax: Boolean
     }
 
     inner class FileTarget(
         val absolutePath: String,
         val importVariableName: String
     ) : CssModuleTarget() {
+        override val indentedSyntax: Boolean
+            get() = absolutePath.endsWith(".module.sass", ignoreCase = true)
+
         override fun appendRule(project: Project, className: String, ruleText: String) {
             val vf = LocalFileSystem.getInstance().findFileByPath(absolutePath) ?: return
             val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return
@@ -521,6 +536,9 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         val styleTag: XmlTag,
         val styleVar: String = "\$style"
     ) : CssModuleTarget() {
+        override val indentedSyntax: Boolean
+            get() = styleTag.getAttributeValue("lang")?.equals("sass", ignoreCase = true) == true
+
         override fun appendRule(project: Project, className: String, ruleText: String) {
             val embedded = this@InlineStyleToCssModuleIntention.findEmbeddedCssInStyleTag(styleTag)
             if (embedded != null) {
@@ -548,9 +566,9 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         val vFile = file.virtualFile
         val ext = vFile?.extension?.lowercase()
 
-        // Vue：优先同文件 <style module>，其次任何 <style>
+        // Vue：优先同文件 <style module>，其次任何 <style>；都没有 → 按项目方言新建 <style module>
         if (ext == "vue") {
-            val (styleTag, alias) = CssModuleFileResolver.findVueStyleModule(file) ?: return null
+            val (styleTag, alias) = ensureVueStyleModule(project, file) ?: return null
             return VueStyleModuleTarget(styleTag, alias)
         }
 
@@ -559,12 +577,41 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             return FileTarget(vf.path, alias)
         }
 
-        // 兜底：同目录下同名 Xxx.module.* 文件
-        CssModuleFileResolver.findSameNameModuleFile(file)?.let { vf ->
-            return FileTarget(vf.path, "styles")
+        // 兜底：复用同目录同名 Xxx.module.*（补 import），没有则按项目方言
+        // （less / sass / 原生 css）新建 Xxx.module.<ext> 并生成 import
+        CssModuleFileResolver.ensureSameNameModuleFile(project, file)?.let { (vf, binding) ->
+            return FileTarget(vf.path, binding)
         }
 
         return null
+    }
+
+    /**
+     * 确保Vue SFC 里有可用的 `<style>` 块：
+     * 已有（module 优先，其次任意 `<style>`）→ 复用；完全没有 → 在文件末尾
+     * 按项目样式方言新建 `<style module>`（scss/sass/less 会带上对应 lang）。
+     * 新建 / 追加失败返回 null（调用方展示错误对话框）。
+     */
+    private fun ensureVueStyleModule(project: Project, file: PsiFile): Pair<XmlTag, String>? {
+        CssModuleFileResolver.findVueStyleModule(file)?.let { return it }
+        if (file !is XmlFile) return null
+
+        val dialect = CssModuleFileResolver.detectProjectDialect(project, file.virtualFile)
+        val tagText = when (dialect) {
+            StyleDialect.SCSS -> "<style module lang=\"scss\"></style>"
+            StyleDialect.SASS -> "<style module lang=\"sass\"></style>"
+            StyleDialect.LESS -> "<style module lang=\"less\"></style>"
+            StyleDialect.CSS -> "<style module></style>"
+        }
+        val tag = runCatching {
+            WriteCommandAction.writeCommandAction(project, file)
+                .withName(message("command.add.vue.style.module"))
+                .compute<XmlTag?, Throwable> {
+                    val created = XmlElementFactory.getInstance(project).createTagFromText(tagText)
+                    file.document?.add(created) as? XmlTag
+                }
+        }.getOrNull() ?: return null
+        return tag to "\$style"
     }
 
     // ================================================================

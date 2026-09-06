@@ -238,13 +238,22 @@ class ConvertClassNameToCssModuleAction : AnAction() {
      * 2. 同目录已有 *.module.* 文件 → 直接用
      * 3. 扫描 import './xxx.less'（非 module）→ 重命名或复制
      * 4. 同目录有 plain CSS → 重命名或复制
-     * 5. 都没有 → 新建空 module 文件
+     * 5. 都没有 → 按项目样式方言（less / sass / 原生 css）新建空 module 文件
      */
     private fun resolveModuleFile(project: Project, sourceFile: PsiFile): Pair<VirtualFile, Boolean>? {
         val vf = sourceFile.virtualFile ?: return null
         val parent = vf.parent ?: return null
         val sourceExt = vf.extension?.lowercase()
         val R = CssModuleFileResolver
+
+        /** VFS 变更（rename / createChildData / setBinaryContent）必须在写动作内执行，
+         *  否则抛 AssertionError 会被 runCatching 吞掉 → 静默失败。 */
+        fun <T> vfsWrite(computable: () -> T): T? =
+            runCatching {
+                WriteCommandAction.writeCommandAction(project)
+                    .withName(message("command.resolve.css.module"))
+                    .compute<T, Throwable>(computable)
+            }.getOrNull()
 
         // 1. 已有 import 指向 module 文件
         R.findExistingModuleImport(sourceFile)?.let { return Pair(it.first, false) }
@@ -283,10 +292,10 @@ class ConvertClassNameToCssModuleAction : AnAction() {
                         Messages.getQuestionIcon()
                     )
                     if (ans == Messages.YES) {
-                        val renamed = runCatching { file.rename(null, newName); file }.getOrNull()
+                        val renamed = vfsWrite { file.rename(null, newName); file }
                         if (renamed != null) return Pair(renamed, false)
                     }
-                    return R.copyToModule(parent, file, vf.nameWithoutExtension, sourceExt)
+                    return vfsWrite { R.copyToModule(parent, file, vf.nameWithoutExtension, sourceExt) }
                 } else {
                     val ans = Messages.showYesNoDialog(
                         project,
@@ -295,7 +304,7 @@ class ConvertClassNameToCssModuleAction : AnAction() {
                         Messages.getQuestionIcon()
                     )
                     if (ans != Messages.YES) return null
-                    return R.copyToModule(parent, file, vf.nameWithoutExtension, sourceExt)
+                    return vfsWrite { R.copyToModule(parent, file, vf.nameWithoutExtension, sourceExt) }
                 }
             }
             importedPlainFiles.size > 1 -> {
@@ -321,11 +330,11 @@ class ConvertClassNameToCssModuleAction : AnAction() {
                         Messages.getQuestionIcon()
                     )
                     if (ans == Messages.YES) {
-                        val renamed = runCatching { chosen.rename(null, newName); chosen }.getOrNull()
+                        val renamed = vfsWrite { chosen.rename(null, newName); chosen }
                         if (renamed != null) return Pair(renamed, false)
                     }
                 }
-                return R.copyToModule(parent, chosen, vf.nameWithoutExtension, sourceExt)
+                return vfsWrite { R.copyToModule(parent, chosen, vf.nameWithoutExtension, sourceExt) }
             }
         }
 
@@ -349,15 +358,27 @@ class ConvertClassNameToCssModuleAction : AnAction() {
             val refCount = R.countReferences(chosen, project)
             val newName = R.renameToModule(chosen.name)
             if (refCount <= 1) {
-                val renamed = runCatching { chosen.rename(null, newName); chosen }.getOrNull()
+                val renamed = vfsWrite { chosen.rename(null, newName); chosen }
                 if (renamed != null) return Pair(renamed, false)
             }
-            return R.copyToModule(parent, chosen, vf.nameWithoutExtension, sourceExt)
+            return vfsWrite { R.copyToModule(parent, chosen, vf.nameWithoutExtension, sourceExt) }
         }
 
-        // 5. 新建空 module 文件
-        val newFile = R.createModuleFile(parent, vf.nameWithoutExtension, sourceExt)
-        return if (newFile != null) Pair(newFile, true) else null
+        // 5. 按项目样式方言新建空 module 文件（同目录 module 文件 > 全项目统计 > package.json > 原生 css）
+        val dialect = R.detectProjectDialect(project, vf)
+        val newFile = R.createModuleFileInWriteAction(project, parent, vf.nameWithoutExtension, dialect)
+        if (newFile == null) {
+            Messages.showErrorDialog(
+                project,
+                message(
+                    "action.convert.create.failed.error",
+                    parent.path + "/" + vf.nameWithoutExtension + dialect.moduleExt
+                ),
+                message("action.convert.dialog.title")
+            )
+            return null
+        }
+        return Pair(newFile, true)
     }
 
     // ================================================================
@@ -558,9 +579,15 @@ class ConvertClassNameToCssModuleAction : AnAction() {
                 if (psiFile.textLength > 0 && !psiFile.text.endsWith("\n")) {
                     sb.append("\n")
                 }
+                // SASS 缩进语法没有大括号，规则就是一行选择器
+                val indentedSyntax = moduleVf.name.endsWith(".module.sass", ignoreCase = true)
                 for (name in classNames) {
                     val kebab = if (name.contains("-")) name else NamingUtil.camelToKebab(name)
-                    sb.append("\n.$kebab {\n\n}\n")
+                    if (indentedSyntax) {
+                        sb.append("\n.$kebab\n")
+                    } else {
+                        sb.append("\n.$kebab {\n\n}\n")
+                    }
                 }
 
                 val cssText = sb.toString()
