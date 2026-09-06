@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.2"
+version = "1.3.3"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,12 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.3</h3>
+<ul>
+    <li>🌍 多语言支持：全部用户可见文案（Action / Intention / Inspection / 悬浮文档 / 对话框 / 撤销命令名）迁移至 resource bundle，默认英文，新增简体中文（zh_CN）完整翻译，跟随 IDE 界面语言自动切换、无需重启</li>
+    <li>⚙️ Settings → Editor → Inspections 中的检查项显示名与描述同步本地化（<code>%key%</code> 引用 + <code>DynamicBundle</code> 动态解析）</li>
+    <li>🧪 测试运行固定英文 locale，保障文案断言稳定通过</li>
+</ul>
 <h3>1.3.2</h3>
 <ul>
     <li>✨ JSON → CSS 复制粘贴支持 Vue / Angular 绑定前缀：整段复制 <code>:style="{...}"</code> / <code>v-bind:style="{...}"</code> / <code>[style]="{...}"</code> / <code>[ngStyle]="{...}"</code> 粘贴到 CSS / SCSS / LESS（或 .vue 的 <code>&lt;style&gt;</code> 块）时同样自动转换</li>
