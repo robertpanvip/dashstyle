@@ -13,7 +13,7 @@
 - **Inline Style → CSS Module 一键抽取**（Alt+Enter）
   - `style={{...}}` / `:style="{...}"` → 自动语义推断类名 + 重命名输入框 + 追加到 Module 文件
 
-- **Inline Style JSON → CSS 复制粘贴**：自动修复 JS 对象字面量粘贴到 CSS 时的单位问题（unitless、负数、transform 函数区分、shorthand 数组）
+- **Inline Style JSON → CSS 复制粘贴**：自动修复 JS 对象字面量粘贴到 CSS 时的单位问题（unitless、负数、transform 函数区分、shorthand 数组）；识别 Vue `:style` / `v-bind:style` 与 Angular `[style]` / `[ngStyle]` 绑定前缀及 ngStyle 键单位修饰（`'font-size.px'`）
 
 - **代码检查**：未使用 CSS Module class 置灰 + 删除 Fix；单文件重复声明检测 + 抽取公共类 `@extend`
 

@@ -11,7 +11,7 @@
 | 1 | **选择器展开引擎** | 为 LESS / SCSS / 原生 CSS Nesting 提供选择器全量展开（`&` 后缀拼接、BEM `__`、Sass 插值、`@at-root`、`%placeholder`），配合 IDE 缓存（`CachedValue`）实现高性能 |
 | 2 | **CSS Module 智能跳转 & 补全** | `styles["foo-bar"]` 字符串字面量 + `styles.fooBar` member access 双形态；Vue `<style module>` / 本地对象字面量 / 导入 Module 文件三容器 |
 | 3 | **Inline Style → CSS Module 一键抽取**（Intention Action） | `style={{...}}` 或 `:style="{...}"` → 自动语义推断类名 + 重命名输入框 + 追加到 Module 文件 |
-| 4 | **Inline Style JSON → CSS 复制粘贴**（CopyPastePreProcessor） | 支持 JS 对象字面量（key 无引号/单引号/尾随逗号/注释）、unitless 属性、负数、transform 函数区分 scale/rotate/translate 单位 |
+| 4 | **Inline Style JSON → CSS 复制粘贴**（CopyPastePreProcessor） | 支持 JS 对象字面量（key 无引号/单引号/尾随逗号/注释）、unitless 属性、负数、transform 函数区分 scale/rotate/translate 单位；Vue `:style` / `v-bind:style`、Angular `[style]` / `[ngStyle]` 绑定前缀与 ngStyle 键单位修饰（`'font-size.px'` → `font-size: 12px`） |
 | 5 | **代码检查 (Inspection)** | 未使用 CSS Module class 置灰 + 删除 Fix；单文件重复 CSS 声明检测 + 抽取公共类（生成 `@extend` 回所有重复点） |
 | 6 | **Tailwind 类补全 + CSS 预览**（`@apply` 内自动补全） | 内置 200+ 常用 Tailwind 类，候选右侧灰字显示该类展开后的 CSS 声明，按 Enter 直接补全 |
 | 7 | **缺失类快速创建 + Tailwind 展开**（Intention） | `styles.xxx` / `styles["xxx"]` 缺失时 Alt+Enter 创建空类；若名是内置 Tailwind 类则写入展开 CSS 而非空块 |
@@ -68,6 +68,8 @@
   - `scale*`, `matrix*` 等倍数型 → **不加单位**
   - `rotate*`, `skew*` → 加 **deg**
   - `translate*`, `perspective` → 加 **px**
+- **框架绑定前缀（1.3.2）**：`:style="{...}"` / `v-bind:style="{...}"`（Vue）、`[style]="{...}"` / `[ngStyle]="{...}"`（Angular）整段复制同样识别，剥前缀后走统一转换
+- **ngStyle 键单位修饰（1.3.2）**：`'font-size.px': 12` → `font-size: 12px`、`'width.%': 50` → `width: 50%`；显式单位优先于 unitless/补 px 默认推断，shorthand 数组（`'padding.px': [4, 8]`）逐项生效
 - 对外公开入口：`JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(raw)` / `convertOrNull(raw)`
 
 ### 2.5 Inspection 类检查

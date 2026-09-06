@@ -295,4 +295,54 @@ class JsonToCssConverterTest {
         assert(out.contains("left: 0;")) { "纯 0 不加 px" }
         assert(out.contains("right: 8px;"))
     }
+
+    // ====================================================================
+    // 1.3.2：Vue / Angular 绑定前缀 + ngStyle 键单位修饰
+    // ====================================================================
+
+    @Test
+    fun `convert - Vue 绑定缩写前缀整段复制（带外层引号）`() {
+        val out = convertJsonToCss(""":style="{ color: 'red', fontSize: 14 }"""")
+        assert(out.contains("color: red;")) { ":style= 前缀应被剥掉后正常转换，实际：$out" }
+        assert(out.contains("font-size: 14px;")) { "camelCase 键照常转 kebab + 补 px，实际：$out" }
+    }
+
+    @Test
+    fun `convert - Vue 完整指令 v-bind style 前缀（值不带引号的宽容形态）`() {
+        val out = convertJsonToCss("""v-bind:style={ marginTop: 8 }""")
+        assert(out.contains("margin-top: 8px;")) { "v-bind:style= 前缀 + 无引号值应可转换，实际：$out" }
+    }
+
+    @Test
+    fun `convert - Angular 中括号绑定 style 与 ngStyle 前缀`() {
+        val a = convertJsonToCss("""[style]="{ color: 'red' }"""")
+        assert(a.contains("color: red;")) { "[style]= 前缀应被剥掉，实际：$a" }
+
+        val b = convertJsonToCss("""[ngStyle]="{ 'font-weight': 'bold' }"""")
+        assert(b.contains("font-weight: bold;")) { "[ngStyle]= 前缀应被剥掉，实际：$b" }
+    }
+
+    @Test
+    fun `convert - Angular ngStyle 键单位后缀 px 与 百分号`() {
+        val out = convertJsonToCss("""{ 'font-size.px': 12, 'width.%': 50, 'lineHeight': 1.5 }""")
+        assert(out.contains("font-size: 12px;")) { "'font-size.px' 应输出 font-size: 12px，实际：$out" }
+        assert(out.contains("width: 50%;")) { "'width.%' 应输出 width: 50%，实际：$out" }
+        assert(out.contains("line-height: 1.5;")) { "无后缀键照常走 unitless 判定，实际：$out" }
+    }
+
+    @Test
+    fun `convert - ngStyle 显式单位覆盖默认推断（padding 数组）`() {
+        val out = convertJsonToCss("""{ 'padding.px': [4, 8] }""")
+        assert(out.contains("padding: 4px 8px;")) { "shorthand 数组 + .px 后缀应逐项带显式单位，实际：$out" }
+    }
+
+    @Test
+    fun `convert - Angular 单值绑定与非对象形态不误转`() {
+        // [style.width.px]="12" 是单值绑定（值不是对象），不应被转换
+        assert(convertOrNull("""[style.width.px]="12"""") == null) { "单值绑定不该误转换" }
+        // Vue 数组绑定（多对象合并）非纯样式对象，不转换
+        assert(convertOrNull(""":style="[baseStyle, activeStyle]"""") == null) { "数组绑定不该误转换" }
+        // 普通非样式赋值不受前缀剥离影响，仍返回 null
+        assert(convertOrNull("name = 'hello'") == null) { "普通赋值不该被转换" }
+    }
 }

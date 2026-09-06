@@ -81,6 +81,9 @@ internal object JsonToCssConversionTables {
         "rotate", "rotateX", "rotateY", "rotateZ", "skew", "skewX", "skewY"
     )
 
+    /** Angular ngStyle 键单位后缀：`'font-size.px'` / `'width.%'` 键尾的 `.单位` */
+    private val NG_STYLE_UNIT_SUFFIX = Regex("""\.([A-Za-z%]+)$""")
+
     // ----------------------------------------------------------------
     // 纯函数核心：normalize + convert 两步
     // 独立成顶层 object，不触碰 CopyPastePreProcessor（IDE 扩展点类）
@@ -91,10 +94,18 @@ internal object JsonToCssConversionTables {
     /**
      * 从完整的 React style={{...}} 或 JS 对象字面量中提取可解析的"严格 JSON" 字符串。
      * 与 normalizePastedStyleExpression 等价（纯函数，不依赖 IDE 类）。
+     *
+     * 另支持框架绑定属性前缀（1.3.2）：
+     *   - Vue:     `:style="{...}"` / `v-bind:style="{...}"`（值可带或不带外层引号）
+     *   - Angular: `[style]="{...}"` / `[ngStyle]="{...}"`
+     * `[style.width.px]="12"` 这类单值绑定不是对象形态，不在此列（返回 null，不误转换）。
      */
     @JvmStatic
     fun normalizeStyleExpression(raw: String): String? {
-        val t = raw.trim()
+        val frameworkStyleAttr = Regex(
+            """^\s*(?:v-bind\s*:\s*style|:style|\[\s*(?:ngStyle|style)\s*\])\s*=\s*(["']?)(\{[\s\S]*\})\1\s*$"""
+        )
+        val t = frameworkStyleAttr.find(raw)?.groupValues?.get(2)?.trim() ?: raw.trim()
         val doubleBrace = Regex("""^\s*[a-zA-Z_$][\w$]*\s*=\s*\{\{\s*([\s\S]*)\s*\}\}\s*$""")
         val singleBrace = Regex("""^\s*[a-zA-Z_$][\w$]*\s*=\s*\{\s*([\s\S]*)\s*\}\s*$""")
         val core = when {
@@ -130,9 +141,13 @@ internal object JsonToCssConversionTables {
         }
 
         val lines = mutableListOf<String>()
-        for ((key, element) in obj.entrySet()) {
+        for ((rawKey, element) in obj.entrySet()) {
+            // Angular ngStyle 键单位修饰（1.3.2）：'font-size.px': 12 → font-size: 12px；'width.%': 50 → width: 50%
+            val unitMatch = NG_STYLE_UNIT_SUFFIX.find(rawKey)
+            val key = if (unitMatch != null) rawKey.substring(0, unitMatch.range.first) else rawKey
+            val explicitUnit = unitMatch?.groupValues?.get(1)
             val kebabKey = camelToKebabStableInternal(key)
-            val valueCss = formatCssValueInternal(key, kebabKey, element) ?: continue
+            val valueCss = formatCssValueInternal(key, kebabKey, element, explicitUnit) ?: continue
             lines.add("  $kebabKey: $valueCss;")
         }
         return if (lines.isNotEmpty()) lines.joinToString("\n") + "\n" else ""
@@ -245,7 +260,7 @@ internal object JsonToCssConversionTables {
         }
     }.trimStart('-')
 
-    private fun formatCssValueInternal(origKey: String, kebabKey: String, el: JsonElement): String? {
+    private fun formatCssValueInternal(origKey: String, kebabKey: String, el: JsonElement, explicitUnit: String? = null): String? {
         if (el.isJsonNull) return null
         if (el is JsonNull) return null
 
@@ -255,14 +270,14 @@ internal object JsonToCssConversionTables {
                 el.isNumber -> el.asNumber.toString()
                 else -> el.asString
             }
-            return formatPrimitiveValueInternal(origKey, kebabKey, raw)
+            return formatPrimitiveValueInternal(origKey, kebabKey, raw, explicitUnit)
         }
         if (el is JsonArray) {
             return when {
                 kebabKey == "transform" && el.all { it.isJsonObject } -> formatTransformArrayInternal(el)
                 origKey in SHORTHAND_ARRAY_CAMEL || kebabKey in SHORTHAND_ARRAY ->
-                    formatShorthandArrayInternal(origKey, kebabKey, el)
-                else -> el.mapNotNull { formatCssValueInternal(origKey, kebabKey, it) }.joinToString(" ").ifBlank { null }
+                    formatShorthandArrayInternal(origKey, kebabKey, el, explicitUnit)
+                else -> el.mapNotNull { formatCssValueInternal(origKey, kebabKey, it, explicitUnit) }.joinToString(" ").ifBlank { null }
             }
         }
         if (el is JsonObject) {
@@ -271,7 +286,7 @@ internal object JsonToCssConversionTables {
         return null
     }
 
-    private fun formatPrimitiveValueInternal(origKey: String, kebabKey: String, v: String): String? {
+    private fun formatPrimitiveValueInternal(origKey: String, kebabKey: String, v: String, explicitUnit: String? = null): String? {
         var value = v
         if (value.isBlank()) return null
         // Gson lenient 会把 JS 的 undefined 读成字符串 "undefined"（先于 jsLiteralToStrictJson
@@ -282,6 +297,8 @@ internal object JsonToCssConversionTables {
         }
         val numeric = Regex("""^-?\d+(\.\d+)?$""")
         if (numeric.matches(value)) {
+            // 显式单位（ngStyle '.px'/'.%' 键修饰）优先于一切默认推断
+            if (explicitUnit != null) return "${value}${explicitUnit}"
             if (value == "0") return "0"
             if (isUnitless(origKey, kebabKey)) return value
             return "${value}px"
@@ -289,12 +306,12 @@ internal object JsonToCssConversionTables {
         return value
     }
 
-    private fun formatShorthandArrayInternal(origKey: String, kebabKey: String, arr: JsonArray): String? {
+    private fun formatShorthandArrayInternal(origKey: String, kebabKey: String, arr: JsonArray, explicitUnit: String? = null): String? {
         return arr.mapNotNull {
             if (it.isJsonPrimitive) {
                 val p = it.asJsonPrimitive
                 val raw = if (p.isNumber) p.asNumber.toString() else p.asString
-                formatPrimitiveValueInternal(origKey, kebabKey, raw)
+                formatPrimitiveValueInternal(origKey, kebabKey, raw, explicitUnit)
             } else null
         }.joinToString(" ").ifBlank { null }
     }

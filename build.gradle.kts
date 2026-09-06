@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.1"
+version = "1.3.2"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,17 +97,16 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.2</h3>
+<ul>
+    <li>✨ JSON → CSS 复制粘贴支持 Vue / Angular 绑定前缀：整段复制 <code>:style="{...}"</code> / <code>v-bind:style="{...}"</code> / <code>[style]="{...}"</code> / <code>[ngStyle]="{...}"</code> 粘贴到 CSS / SCSS / LESS（或 .vue 的 <code>&lt;style&gt;</code> 块）时同样自动转换</li>
+    <li>✨ 支持 Angular ngStyle 键单位修饰：<code>'font-size.px': 12</code> → <code>font-size: 12px</code>、<code>'width.%': 50</code> → <code>width: 50%</code>（显式单位优先于默认推断，shorthand 数组同样生效）</li>
+    <li>🧪 测试加固：inspection 注册路径（EP 实例化逐语言触发）、CreateMissingCssClass 意图菜单、批量迁移类名收集、Tailwind 补全格式化、悬浮文档 CSS Module 主路径等新增常驻测试</li>
+</ul>
 <h3>1.3.1</h3>
 <ul>
     <li>🔧 修复 <code>CreateMissingCssClassIntention</code>（缺失类快速创建）在 Intention 预览触发下可能出现的死锁：通过声明 <code>startInWriteAction = true</code>，让 <code>invoke()</code> 由框架在写锁内调用，避免 preview 的读锁与写锁竞争导致 UI 卡死</li>
     <li>📝 同步插件市场描述、README、FEATURES 说明到最新功能状态（补齐 member access、Inline 抽取、批量迁移等）</li>
-</ul>
-<h3>1.3.0</h3>
-<ul>
-    <li>🗑️ 移除 Flex/Grid 布局可视化预览（gutter LineMarker + 交互弹窗）及对应测试</li>
-    <li>🗑️ 移除阴影预览（box-shadow / text-shadow gutter 预览）及对应测试</li>
-    <li>🗑️ 移除全局 HighlightVisitor（StaticGlobalHighlightVisitor），避免干扰 TypeScript/JavaScript 高亮</li>
-    <li>🔧 Java target 升级至 21；修复选择器展开缓存的失效范围，外部修改文件后不再被覆盖</li>
 </ul>
     """.trimIndent()
     }

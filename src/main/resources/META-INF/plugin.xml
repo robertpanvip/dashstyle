@@ -18,7 +18,7 @@
 <ul>
   <li><strong>Smart completion &amp; navigation</strong>: auto-complete class names for both <code>styles["foo-bar"]</code> (string key) and <code>styles.fooBar</code> (member access); Ctrl+Click jumps to the matching <code>.foo-bar</code> rule, and hovering shows the expanded full rule with its declarations.</li>
   <li><strong>Inline style → CSS Module extraction</strong> (Alt+Enter): turns <code>style={{...}}</code> / <code>:style="{...}"</code> into a semantic class name and appends the rule to the matching module file.</li>
-  <li><strong>JSON → CSS copy-paste</strong>: automatically fixes JS style objects pasted into CSS (unitless properties, negatives, transform functions, shorthand arrays).</li>
+  <li><strong>JSON → CSS copy-paste</strong>: automatically fixes JS style objects pasted into CSS (unitless properties, negatives, transform functions, shorthand arrays); recognizes Vue <code>:style</code> / <code>v-bind:style</code> and Angular <code>[style]</code> / <code>[ngStyle]</code> bindings, including ngStyle unit suffixes such as <code>'font-size.px'</code>.</li>
   <li><strong>Code inspection</strong>: marks unused CSS Module classes and duplicate declaration blocks, with one-click fixes to delete or extract shared styles.</li>
   <li><strong>Tailwind support</strong>: completion with a CSS preview inside <code>@apply</code>, and auto-generation of missing atomic classes referenced via <code>styles.xxx</code>.</li>
   <li><strong>Batch migration</strong>: Refactor → Convert className to CSS Module moves a file or selection onto CSS Modules in one go.</li>
@@ -29,6 +29,13 @@
 
     <change-notes>
         <![CDATA[
+        <h3>1.3.2</h3>
+        <ul>
+            <li>✨ JSON → CSS 复制粘贴支持 Vue / Angular 绑定前缀：整段复制 <code>:style="{...}"</code> / <code>v-bind:style="{...}"</code> / <code>[style]="{...}"</code> / <code>[ngStyle]="{...}"</code> 粘贴到 CSS / SCSS / LESS（或 .vue 的 <code>&lt;style&gt;</code> 块）时同样自动转换</li>
+            <li>✨ 支持 Angular ngStyle 键单位修饰：<code>'font-size.px': 12</code> → <code>font-size: 12px</code>、<code>'width.%': 50</code> → <code>width: 50%</code>（显式单位优先于默认推断，shorthand 数组同样生效）</li>
+            <li>🧪 测试加固：inspection 注册路径（EP 实例化逐语言触发）、CreateMissingCssClass 意图菜单、批量迁移类名收集、Tailwind 补全格式化、悬浮文档 CSS Module 主路径等新增常驻测试</li>
+        </ul>
+
         <h3>1.3.1</h3>
         <ul>
             <li>🔧 修复 <code>CreateMissingCssClassIntention</code>（缺失类快速创建）在 Intention 预览触发下可能出现的死锁：通过声明 <code>startInWriteAction = true</code>，让 <code>invoke()</code> 由框架在写锁内调用，避免 preview 的读锁与写锁竞争导致 UI 卡死</li>
