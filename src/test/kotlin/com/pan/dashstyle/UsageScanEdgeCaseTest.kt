@@ -109,6 +109,29 @@ class UsageScanEdgeCaseTest : BasePlatformTestCase() {
     }
 
     @Test
+    fun `camelCase 类名被 camelCase 引用后原样命中不置灰`() {
+        val xml = myFixture.configureByText(
+            "AppCamelCls.vue.xml",
+            """
+            <style module>
+            .agentList { display: flex; }
+            </style>
+            <template>
+              <div :class="${'$'}style.agentList">Hello</div>
+            </template>
+            """.trimIndent()
+        )
+        val c = ApplicationManager.getApplication().runReadAction<CssContainer.VueStyleTag> { vueContainer(xml) }
+        val (used, _) = ApplicationManager.getApplication().runReadAction<Pair<MutableSet<String>, Boolean>> {
+            CssModuleUsageScanner.scanUsages(xml, c)
+        }
+        // 修复前只存 kebab agent-list，CSS 提取的原名 agentList 无法匹配而被误置灰；
+        // 现在原样名 agentList 也必须命中。
+        Assert.assertTrue("camelCase 类名 agentList 应原样命中", "agentList" in used)
+        Assert.assertTrue("同时保留 kebab 形式以兼容 kebab 定义", "agent-list" in used)
+    }
+
+    @Test
     fun `模板里无任何引用时 used 为空且非 dynamic`() {
         val xml = myFixture.configureByText(
             "AppNone.vue.xml",

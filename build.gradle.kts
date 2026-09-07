@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.7"
+version = "1.3.8"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.8</h3>
+<ul>
+    <li>🔧 修复 CSS Module 中「camelCase 类名」被误置灰为未使用的回归：<code>styles.agentList</code> 或 <code>:class="${'$'}style.agentList"</code> 引用 <code>.agentList</code> 这类 camelCase 类时，之前只按 kebab-case（<code>agent-list</code>）归一化，与 CSS 里提取的原始类名 <code>agentList</code> 对不上而被误判 dead code 置灰；现在引用收集同时保留「原始名 + kebab 形式」，无论是 camelCase 定义还是 kebab-case 定义的类都能正确识别为已使用</li>
+    <li>🧪 新增回归测试：<code>camelCase 类名被 camelCase 引用后原样命中不置灰</code>，锁定 .agentList 不再误置灰、kebab 形式仍兼容</li>
+</ul>
 <h3>1.3.7</h3>
 <ul>
     <li>🇻 修复 Vue 单文件组件里「重构 → 将 className 转换为 CSS Module」提示找不到类的问题：Vue 模板的类名属性是 <code>class</code>（而非 JSX 的 <code>className</code>），现在收集与替换都正确识别 <code>class="foo"</code>，并转为 <code>:class="${'$'}style.foo"</code>（已用 <code>&lt;style module&gt;</code> 的 <code>${'$'}style</code>/<code>${'$'}xxx</code> 绑定，无需额外 import；多类用数组 <code>:class="[${'$'}style.a, ${'$'}style.b]"</code>）；未使用 <code>&lt;style module&gt;</code> 时回退到 <code>import styles</code> + <code>:class="styles.foo"</code>。JSX/TSX 的 <code>className</code> 原有行为不变</li>
