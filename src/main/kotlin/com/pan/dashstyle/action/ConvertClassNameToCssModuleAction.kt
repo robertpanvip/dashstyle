@@ -46,17 +46,31 @@ class ConvertClassNameToCssModuleAction : AnAction() {
         file.virtualFile?.extension?.lowercase() == "vue"
 
     /**
-     * Vue 里 class 迁移后的绑定名：
-     *  - 存在 `<style module>` → 用 Vue 自动注入的 `$style` / `$xxx` 绑定（无需 import）；
-     *  - 否则返回 null，走 React 风格 `import styles`。
+     * 决定 Vue 里 class 迁移后的绑定名（就地升级策略）：
+     *  1. 存在 `<style module>` → 用 Vue 自动注入的 `$style` / `$xxx` 绑定（无需 import）；
+     *  2. 只有普通 `<style>`（可带 scoped）→ 弹确认后【就地升级】为 `<style module>`（移除 scoped、保留 lang），
+     *     返回 `$style`；
+     *  3. 若无普通 <style> 或用户拒绝 → 返回 null，走 React 风格 `import styles`。
      */
-    private fun vueStyleModuleBinding(file: PsiFile): String? {
+    private fun vueStyleModuleBinding(project: Project, file: PsiFile): String? {
         if (!isVueFile(file)) return null
-        val styleTag = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
-            .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
-            ?: return null
-        val modVal = styleTag.getAttributeValue("module")
-        return if (modVal.isNullOrBlank()) "\$style" else "\$$modVal"
+        // 1. 已有 <style module> → 直接用它
+        CssModuleFileResolver.findVueStyleModule(file)?.let { return it.second }
+        // 2. 只有普通 <style> → 就地升级（补 module、移除 scoped、保留 lang）
+        if (!CssModuleFileResolver.hasPlainVueStyle(file)) return null
+        // 升级前确认：把整个 <style> 收编进 CSS Module 作用域（会移除 scoped）
+        val promote = Messages.showYesNoDialog(
+            project,
+            message("action.convert.promote.vue.style.message"),
+            message("action.convert.dialog.title"),
+            Messages.getQuestionIcon()
+        )
+        if (promote != Messages.YES) return null
+        var binding: String? = null
+        WriteCommandAction.writeCommandAction(project, file)
+            .withName(message("command.promote.vue.style.module"))
+            .run<Nothing> { binding = CssModuleFileResolver.promoteVueStyleModule(project, file) }
+        return binding
     }
 
     // ================================================================
@@ -145,8 +159,8 @@ class ConvertClassNameToCssModuleAction : AnAction() {
         // 3. 查找或创建 CSS Module 文件
         val (moduleFile, isNewFile) = resolveModuleFile(project, file) ?: return
 
-        // 4. 生成绑定名：Vue 优先用 <style module> 的 $style；否则走 React import styles
-        val importBinding = vueStyleModuleBinding(file)
+        // 4. 生成绑定名：Vue 优先用 <style module>，否则就地升级普通 <style>，再兜底 React import styles
+        val importBinding = vueStyleModuleBinding(project, file)
             ?: CssModuleFileResolver.ensureImportExists(project, file, moduleFile)
 
         // 5. 替换选中区域中的 className 字面量

@@ -158,9 +158,47 @@ object CssModuleFileResolver {
             val alias = if (modValue.isNullOrBlank()) "\$style" else "\$$modValue"
             return mod to alias
         }
-        val any = styles.firstOrNull()
-        if (any != null) return any to "\$style"
+        // 注意：普通 <style> 不带 module 时 Vue 不会提供 $style 绑定，不再回退返回，
+        // 避免调用方把「无 module 的普通 <style>」误当成可用绑定。
         return null
+    }
+
+    /**
+     * Vue 文件里是否存在「不带 module 属性的普通 <style>」。
+     * 供批量迁移 / 抽取决定是否可就地升级为 <style module>。
+     */
+    fun hasPlainVueStyle(file: PsiFile): Boolean =
+        file is XmlFile && PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
+            .any { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") == null }
+
+    /**
+     * 就地把 Vue 里第一个「普通 `<style>`」升级为 `<style module>`：
+     * 补上 module 属性、移除 scoped（module 已提供作用域）、保留 lang 等其它属性。
+     * 返回绑定名 `$style`；没有可升级的普通 style 返回 null。
+     * 必须在写动作内调用。
+     */
+    fun promoteVueStyleModule(project: Project, file: PsiFile): String? {
+        if (file !is XmlFile) return null
+        val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return null
+        val tag = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
+            .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") == null }
+            ?: return null
+        val range = tag.textRange
+        val orig = document.getText(com.intellij.openapi.util.TextRange(range.startOffset, range.endOffset))
+        val openEnd = orig.indexOf('>')
+        if (openEnd < 0) return null
+        val open = orig.substring(0, openEnd + 1)
+        val rest = orig.substring(openEnd + 1)
+        val newOpen = open
+            // 摘除 scoped 属性（bool 属性，后面跟空格、/> 或 >）
+            .replace(Regex("""\s+scoped(?=\s|/?>)"""), "")
+            // 若尚无 module，则在 <style 后补上 module
+            .let { if (it.contains(Regex("""\bmodule(?=\s|/?>|=)"""))) it
+                   else it.replaceFirst(Regex("(?=^<style\\b)"), "<style module") }
+        if (newOpen == open) return null
+        val replacement = newOpen + rest
+        document.replaceString(range.startOffset, range.endOffset, replacement)
+        return "\$style"
     }
 
     /**
