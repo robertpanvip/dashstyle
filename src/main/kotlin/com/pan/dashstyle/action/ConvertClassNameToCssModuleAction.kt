@@ -18,6 +18,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlAttribute
+import com.intellij.psi.xml.XmlTag
 import java.util.regex.Pattern
 
 /**
@@ -38,6 +39,24 @@ class ConvertClassNameToCssModuleAction : AnAction() {
     companion object {
         // 匹配 className="..." 或 className='...' 中的类名
         private val CLASS_NAME_SPLIT = Regex("""\s+""")
+    }
+
+    /** 是否 Vue SFC：模板里类名属性是 `class`，而非 JSX 的 `className`。 */
+    private fun isVueFile(file: PsiFile): Boolean =
+        file.virtualFile?.extension?.lowercase() == "vue"
+
+    /**
+     * Vue 里 class 迁移后的绑定名：
+     *  - 存在 `<style module>` → 用 Vue 自动注入的 `$style` / `$xxx` 绑定（无需 import）；
+     *  - 否则返回 null，走 React 风格 `import styles`。
+     */
+    private fun vueStyleModuleBinding(file: PsiFile): String? {
+        if (!isVueFile(file)) return null
+        val styleTag = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
+            .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+            ?: return null
+        val modVal = styleTag.getAttributeValue("module")
+        return if (modVal.isNullOrBlank()) "\$style" else "\$$modVal"
     }
 
     // ================================================================
@@ -126,8 +145,9 @@ class ConvertClassNameToCssModuleAction : AnAction() {
         // 3. 查找或创建 CSS Module 文件
         val (moduleFile, isNewFile) = resolveModuleFile(project, file) ?: return
 
-        // 4. 生成 import（如果缺失）
-        val importBinding = CssModuleFileResolver.ensureImportExists(project, file, moduleFile)
+        // 4. 生成绑定名：Vue 优先用 <style module> 的 $style；否则走 React import styles
+        val importBinding = vueStyleModuleBinding(file)
+            ?: CssModuleFileResolver.ensureImportExists(project, file, moduleFile)
 
         // 5. 替换选中区域中的 className 字面量
         replaceClassNames(project, editor, file, selStart, selEnd, uniqueNames, importBinding)
@@ -167,8 +187,9 @@ class ConvertClassNameToCssModuleAction : AnAction() {
 
     private fun collectClassNameValues(file: PsiFile, start: Int, end: Int): Set<String> {
         val result = mutableSetOf<String>()
+        val vue = isVueFile(file)
 
-        // 方法 1：通过 PSI 查找 JSXAttribute / JSAttribute
+        // 方法 1：通过 PSI 查找 JSXAttribute / JSAttribute（JSX 的 className）
         PsiTreeUtil.findChildrenOfType(file, JSLiteralExpression::class.java).forEach { literal ->
             // 跳过不在选中范围内的
             val textRange = literal.textRange
@@ -176,7 +197,8 @@ class ConvertClassNameToCssModuleAction : AnAction() {
 
             // 检查父节点是否是 className 属性
             val parent = literal.parent ?: return@forEach
-            if (!isClassNameAttribute(parent)) return@forEach
+            if (vue) return@forEach // Vue 模板不走 JSX 字面量，模板类名在 XML 属性里
+            if (!isClassNameAttribute(parent, vue)) return@forEach
 
             // 提取字符串值
             val strValue = literal.stringValue ?: return@forEach
@@ -184,11 +206,26 @@ class ConvertClassNameToCssModuleAction : AnAction() {
             result += parts
         }
 
+        // 方法 1b：Vue 模板的 class XML 属性（<div class="foo bar">）
+        if (vue) {
+            PsiTreeUtil.findChildrenOfType(file, XmlAttribute::class.java).forEach { attr ->
+                if (attr.name != "class") return@forEach
+                val range = attr.textRange
+                if (range.startOffset < start || range.endOffset > end) return@forEach
+                val strValue = attr.value ?: return@forEach
+                // 只收集纯静态类名：跳过动态绑定（:class）、指令（v-bind: / @）
+                if (strValue.startsWith(":")) return@forEach
+                val parts = strValue.split(CLASS_NAME_SPLIT).filter { it.isNotBlank() }
+                result += parts
+            }
+        }
+
         // 方法 2：文本级 fallback（当 PSI 结构不完整时）
-        // 扫描选中文本中的 className="xxx" 或 className='xxx'
+        // 扫描选中文本中的 className="xxx"（JSX）或 class="xxx"（Vue 模板）字符串
         if (result.isEmpty()) {
             val selectedText = file.text.substring(start, end)
-            val textPattern = Pattern.compile("""className\s*=\s*["']([^"']*)["']""")
+            val attrRe = if (vue) """(?:^|[\s<])class\s*=\s*["']([^"']*)["']""" else """className\s*=\s*["']([^"']*)["']"""
+            val textPattern = Pattern.compile(attrRe)
             val matcher = textPattern.matcher(selectedText)
             while (matcher.find()) {
                 val value = matcher.group(1).trim()
@@ -203,9 +240,9 @@ class ConvertClassNameToCssModuleAction : AnAction() {
     }
 
     /**
-     * 判断 PSI 元素是否是 className 属性（兼容多种 JSX/JSAttribute 实现）。
+     * 判断 PSI 元素是否是类名属性。JSX 用 className；Vue 模板用 class。
      */
-    private fun isClassNameAttribute(element: PsiElement): Boolean {
+    private fun isClassNameAttribute(element: PsiElement, vue: Boolean): Boolean {
         val className = element.javaClass.name
         // 新版 JSAttribute / JsxAttribute 等
         if (className.contains("JSAttribute", ignoreCase = true) ||
@@ -217,15 +254,17 @@ class ConvertClassNameToCssModuleAction : AnAction() {
                     m.name == "getName" && m.parameterCount == 0
                 }?.invoke(element) as? CharSequence
             }.getOrNull()?.toString()
-            return attrName == "className"
+            val target = if (vue) "class" else "className"
+            return attrName == target
         }
-        // XmlAttribute（某些版本将 JSX 解析为 XML）
+        // XmlAttribute（某些版本将 JSX 解析为 XML；Vue 模板即为 XML 属性）
         if (element is XmlAttribute) {
-            return element.name == "className"
+            val target = if (vue) "class" else "className"
+            return element.name == target
         }
         // 文本匹配（兜底）
         val text = element.text.trimStart()
-        return text.startsWith("className") || text.startsWith("className=")
+        return if (vue) text.startsWith("class=") else (text.startsWith("className") || text.startsWith("className="))
     }
 
     // ================================================================
@@ -394,34 +433,63 @@ class ConvertClassNameToCssModuleAction : AnAction() {
         classNames: Set<String>,
         importBinding: String
     ) {
-        // 收集所有需要替换的 site
-        val sites = mutableListOf<ClassNameSite>()
+        val vue = isVueFile(file)
 
+        // 收集所有需要替换的 site；xml=true 表示 Vue 模板属性（class）
+        val sites = mutableListOf<ClassNameSite>()
+        val siteIsXml = mutableMapOf<ClassNameSite, Boolean>()
+
+        // 方法 1：JSX 的 className 字符串字面量
         PsiTreeUtil.findChildrenOfType(file, JSLiteralExpression::class.java).forEach { literal ->
             val textRange = literal.textRange
             if (textRange.startOffset < selStart || textRange.endOffset > selEnd) return@forEach
             val parent = literal.parent ?: return@forEach
-            if (!isClassNameAttribute(parent)) return@forEach
+            if (vue) return@forEach // Vue 模板不走 JSX 字面量
+            if (!isClassNameAttribute(parent, vue)) return@forEach
 
             val strValue = literal.stringValue ?: return@forEach
             val parts = strValue.split(CLASS_NAME_SPLIT).filter { it.isNotBlank() }
             val matched = parts.filter { it in classNames }
             if (matched.isNotEmpty()) {
-                sites.add(
-                    ClassNameSite(
-                        literal = literal,
-                        value = strValue,
-                        startOffset = textRange.startOffset,
-                        endOffset = textRange.endOffset
-                    )
+                val site = ClassNameSite(
+                    literal = literal,
+                    value = strValue,
+                    startOffset = textRange.startOffset,
+                    endOffset = textRange.endOffset
                 )
+                sites.add(site)
+                siteIsXml[site] = false
+            }
+        }
+
+        // 方法 1b：Vue 模板的 class XML 属性
+        if (vue) {
+            PsiTreeUtil.findChildrenOfType(file, XmlAttribute::class.java).forEach { attr ->
+                if (attr.name != "class") return@forEach
+                val range = attr.textRange
+                if (range.startOffset < selStart || range.endOffset > selEnd) return@forEach
+                val strValue = attr.value ?: return@forEach
+                if (strValue.startsWith(":")) return@forEach // 跳过 :class 动态绑定
+                val parts = strValue.split(CLASS_NAME_SPLIT).filter { it.isNotBlank() }
+                val matched = parts.filter { it in classNames }
+                if (matched.isNotEmpty()) {
+                    val site = ClassNameSite(
+                        literal = attr,
+                        value = strValue,
+                        startOffset = range.startOffset,
+                        endOffset = range.endOffset
+                    )
+                    sites.add(site)
+                    siteIsXml[site] = true
+                }
             }
         }
 
         // 如果 PSI 没有找到，回退到文本搜索
         if (sites.isEmpty()) {
             val selectedText = file.text.substring(selStart, selEnd)
-            val textPattern = Pattern.compile("""className\s*=\s*["']([^"']*)["']""")
+            val attrRe = if (vue) """(?:^|[\s<])class\s*=\s*["']([^"']*)["']""" else """className\s*=\s*["']([^"']*)["']"""
+            val textPattern = Pattern.compile(attrRe)
             val matcher = textPattern.matcher(selectedText)
             while (matcher.find()) {
                 val value = matcher.group(1).trim()
@@ -431,14 +499,14 @@ class ConvertClassNameToCssModuleAction : AnAction() {
                     if (matched.isNotEmpty()) {
                         val absStart = selStart + matcher.start(1)
                         val absEnd = selStart + matcher.end(1)
-                        sites.add(
-                            ClassNameSite(
-                                literal = file.findElementAt(absStart) ?: file,
-                                value = value,
-                                startOffset = absStart - 1, // 包含引号
-                                endOffset = absEnd + 1
-                            )
+                        val site = ClassNameSite(
+                            literal = file.findElementAt(absStart) ?: file,
+                            value = value,
+                            startOffset = absStart - 1, // 包含引号
+                            endOffset = absEnd + 1
                         )
+                        sites.add(site)
+                        siteIsXml[site] = vue
                     }
                 }
             }
@@ -457,14 +525,17 @@ class ConvertClassNameToCssModuleAction : AnAction() {
                     val matched = parts.filter { it in classNames }
                     if (matched.isEmpty()) continue
 
-                    // className="foo" → className={styles.foo}
-                    // className="foo bar" → className={clsx(styles.foo, styles.bar)}
                     val accessList = matched.map { classNameAccessExpr(it, importBinding) }
-                    val newExpr =
-                        if (accessList.size == 1) accessList.first()
-                        else "clsx(${accessList.joinToString(", ")})"
+                    val isXml = siteIsXml[site] == true
+                    val newExpr = when {
+                        accessList.size == 1 -> accessList.first()
+                        // className="foo bar" → className={clsx(styles.foo, styles.bar)}
+                        !isXml -> "clsx(${accessList.joinToString(", ")})"
+                        // Vue: class="foo bar" → :class="[$style.foo, $style.bar]"
+                        else -> "[" + accessList.joinToString(", ") + "]"
+                    }
 
-                    applyClassNameReplacement(project, file, site, newExpr)
+                    applyClassNameReplacement(project, file, site, newExpr, isXml)
                 }
             }
     }
@@ -476,43 +547,56 @@ class ConvertClassNameToCssModuleAction : AnAction() {
     }
 
     /**
-     * 单点替换：优先纯 PSI —— 从 literal 向上找到所属 className 属性节点，
-     * 整体 replace 为 `className={expr}` 形式（dummy 属性节点由
-     * [CssModuleFileResolver.createJsxAttributePsi] 创建，与 import 注入同一模式）。
+     * 单点替换：优先纯 PSI —— 从 literal 向上找到所属类名属性节点，
+     * JSX 整体 replace 为 `className={expr}`，Vue 模板 replace 为 `:class="expr"`。
      * 仅当 PSI 结构不完整找不到属性节点（text-fallback site）、或 PSI 替换抛异常时，
      * 才退回 Document 替换（PSI 不完整场景的有意文档化例外）。
      */
-    private fun applyClassNameReplacement(project: Project, file: PsiFile, site: ClassNameSite, newExpr: String) {
-        val attr = findOwningClassNameAttribute(site.literal)
+    private fun applyClassNameReplacement(project: Project, file: PsiFile, site: ClassNameSite, newExpr: String, isXml: Boolean) {
+        val targetName = if (isXml) "class" else "className"
+        val attr = findOwningClassNameAttribute(site.literal, targetName)
         if (attr != null) {
             val replaced = runCatching {
-                val namePart = attr.text.substringBefore('=').trimEnd()
-                val newAttrText = "$namePart={$newExpr}"
-                val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newAttrText)
-                if (newAttr != null) {
-                    attr.replace(newAttr)
-                    true
-                } else false
+                if (isXml) {
+                    // Vue 模板：class="..." / 已是 :class 都统一为 :class="expr"
+                    // 属性节点文本可能是 :class 或 class，直接整体替换
+                    val old = attr.text.trimStart()
+                    val colon = if (old.startsWith(":")) ":" else ""
+                    val newAttrText = "$colon$targetName=\"$newExpr\""
+                    val newAttr = CssModuleFileResolver.createXmlAttributePsi(project, newAttrText)
+                    if (newAttr != null) {
+                        attr.replace(newAttr)
+                        true
+                    } else false
+                } else {
+                    val namePart = attr.text.substringBefore('=').trimEnd()
+                    val newAttrText = "$namePart={$newExpr}"
+                    val newAttr = CssModuleFileResolver.createJsxAttributePsi(project, file, newAttrText)
+                    if (newAttr != null) {
+                        attr.replace(newAttr)
+                        true
+                    } else false
+                }
             }.getOrDefault(false)
             if (replaced) return
         }
-        replaceViaDocument(project, file, site, newExpr)
+        replaceViaDocument(project, file, site, newExpr, isXml)
     }
 
     /**
-     * 从字面量向上（最多 10 层）找所属 className 属性节点。
+     * 从字面量向上（最多 10 层）找所属类名属性节点。
      * 只认 PSI 类型（[JSAttributeNameValuePair] / [XmlAttribute]），
-     * 不用文本匹配 —— 避免误抓「文本恰好以 className 开头」的祖先容器。
+     * 匹配 [targetName]（JSX：className；Vue：class）。
      */
-    private fun findOwningClassNameAttribute(start: PsiElement): PsiElement? {
+    private fun findOwningClassNameAttribute(start: PsiElement, targetName: String): PsiElement? {
         var cur: PsiElement? = start
         for (i in 0..10) {
             cur ?: return null
             when (cur) {
                 is JSAttributeNameValuePair ->
-                    if (cur.name == "className" && cur.text.contains('=')) return cur
+                    if (cur.name == targetName && cur.text.contains('=')) return cur
                 is XmlAttribute ->
-                    if (cur.name == "className" && cur.text.contains('=')) return cur
+                    if (cur.name == targetName && cur.text.contains('=')) return cur
             }
             cur = cur.parent
         }
@@ -523,14 +607,15 @@ class ConvertClassNameToCssModuleAction : AnAction() {
      * Document 兜底替换（仅用于 PSI 不完整的 text-fallback site）：
      * 沿用旧的 findAttributeStart/End 字符扫描 + replaceFirst。
      */
-    private fun replaceViaDocument(project: Project, file: PsiFile, site: ClassNameSite, newExpr: String) {
+    private fun replaceViaDocument(project: Project, file: PsiFile, site: ClassNameSite, newExpr: String, isXml: Boolean) {
         val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return
         runCatching {
             val attrStart = findAttributeStart(file, site.startOffset)
             val attrEnd = findAttributeEnd(file, site.endOffset)
             if (attrStart < 0 || attrEnd <= attrStart) return@runCatching
             val attrText = document.getText(com.intellij.openapi.util.TextRange(attrStart, attrEnd))
-            val newAttr = attrText.replaceFirst(Regex("""["'].*?["']"""), "{$newExpr}")
+            val replacement = if (isXml) newExpr else "{$newExpr}"
+            val newAttr = attrText.replaceFirst(Regex("""["'].*?["']"""), replacement)
             document.replaceString(attrStart, attrEnd, newAttr)
         }
     }
