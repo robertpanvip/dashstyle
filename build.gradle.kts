@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.6"
+version = "1.3.7"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.7</h3>
+<ul>
+    <li>🇻 修复 Vue 单文件组件里「重构 → 将 className 转换为 CSS Module」提示找不到类的问题：Vue 模板的类名属性是 <code>class</code>（而非 JSX 的 <code>className</code>），现在收集与替换都正确识别 <code>class="foo"</code>，并转为 <code>:class="${'$'}style.foo"</code>（已用 <code>&lt;style module&gt;</code> 的 <code>${'$'}style</code>/<code>${'$'}xxx</code> 绑定，无需额外 import；多类用数组 <code>:class="[${'$'}style.a, ${'$'}style.b]"</code>）；未使用 <code>&lt;style module&gt;</code> 时回退到 <code>import styles</code> + <code>:class="styles.foo"</code>。JSX/TSX 的 <code>className</code> 原有行为不变</li>
+    <li>🔧 转换逻辑改为按文件类型区分类名属性（Vue 用 <code>class</code>、JSX 用 <code>className</code>），文本兜底 / PSI 替换 / 动态绑定跳过均同步适配</li>
+</ul>
 <h3>1.3.6</h3>
 <ul>
     <li>🔧 修复 React style JSON / JS 字面量里 <code>gap: 8</code> 这类纯数字间距值转换后没有补 <code>px</code> 的问题：gap / grid-gap / row-gap / column-gap / flex-basis 之前被误放进「无单位属性」名单，而纯数字 gap 在 CSS 里是非法值（复制粘贴与「提取为 CSS Module」两条路径一并修复）</li>
