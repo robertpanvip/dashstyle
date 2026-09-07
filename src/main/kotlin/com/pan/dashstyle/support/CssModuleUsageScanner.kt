@@ -42,8 +42,11 @@ object CssModuleUsageScanner {
             when {
                 inner is JSLiteralExpression -> {
                     val s = inner.stringValue ?: return@forEach
-                    val kebab = if (s.contains("-")) s else NamingUtil.camelToKebab(s)
-                    used += kebab
+                    // 字面量索引 `styles["xxx"]` 里的 xxx 就是 CSS class 原名，必须原样保留
+                    // （.agentList 既可能被 styles["agentList"] 也可能被 styles["agent-list"] 引用）；
+                    // 同时补一份 kebab 以兼容按 kebab 定义/引用的写法。
+                    used += s
+                    used += if (s.contains("-")) s else NamingUtil.camelToKebab(s)
                 }
                 else -> dynamic = true
             }
@@ -56,8 +59,12 @@ object CssModuleUsageScanner {
             if (c != container) return@forEach
             val name = ref.referenceName ?: return@forEach
             if (name == "let" || name == "const" || name == "var") return@forEach
-            val kebab = if (name.contains("-")) name else NamingUtil.camelToKebab(name)
-            used += kebab
+            // `styles.agentList` 的成员名就是 CSS class 名。CSS Module 里 .agentList：
+            //   - `styles.agentList`（原样）可以访问；
+            //   - 也补一份 kebab（styles.agentList → agent-list），兼容按 kebab-case 定义的类。
+            // 两个都放进 used，避免 .agentList 被误判未使用而置灰。
+            used += name
+            used += if (name.contains("-")) name else NamingUtil.camelToKebab(name)
         }
 
         // 3. Vue template 属性值 fallback（当 Vue 插件未将 $style.xxx 解析为 JS PSI 时）
@@ -94,8 +101,9 @@ object CssModuleUsageScanner {
             // 静态字符串成员
             for (m in memberPattern.findAll(value)) {
                 val name = m.groupValues[1]
-                val kebab = if (name.contains("-")) name else NamingUtil.camelToKebab(name)
-                used += kebab
+                // 与 JS 成员访问一致：原样名 + kebab 都计入，避免 .agentList 被误置灰
+                used += name
+                used += if (name.contains("-")) name else NamingUtil.camelToKebab(name)
             }
             for (m in bracketPattern.findAll(value)) {
                 used += m.groupValues[1]
