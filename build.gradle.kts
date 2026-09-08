@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.9"
+version = "1.4.0"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.4.0</h3>
+<ul>
+    <li>🧭 内联样式提取的类名推断改进：现在会读取<strong>父级/祖先元素</strong>的 className（含 <code>styles.nav</code> / <code>class="nav"</code>），生成 <code>nav-item</code> 类语义候选并优先于"文件名+root"。修复 <code>&lt;div className={styles.nav}&gt;&lt;div style={{...}}/&gt;</code> 提取子元素内联样式时类名不合预期的问题</li>
+    <li>🛡 修复"git 回滚后全部置灰 / 置灰功能异常"：外部批量改文件 / VFS refresh / 索引未及时更新时，引用源列表可能暂态为空，若据此把全部类当 unused 会整文件误置灰；现在 references 为空时保守地把文件标为"动态引用"跳过置灰，并在任何代码变更后自动失效重算（退出暂态即恢复正常置灰）。同时修复置灰分析在 references 为空时把 <code>PsiModificationTracker.modificationCount</code>（Long）当作 CachedValue 依赖导致的 "<code>Wrong dependency type: class java.lang.Long</code>" 崩溃——改为依赖 tracker 对象本身</li>
+</ul>
 <h3>1.3.9</h3>
 <ul>
     <li>🛡 防止覆盖外部改动：当文件在磁盘上已被外部工具（Cursor / git 等）修改而编辑器尚未重新加载时，所有写路径（重构转换 className、补齐缺失类、抽取内联样式、抽取重复声明为 mixin、删除未使用规则、粘贴时补 import、升级 <code>&lt;style&gt;</code> 为 module 等）都会先检测外部改动守卫并中止，弹窗提示先执行 File | Reload all from Disk。此前若在此窗口写入会让 Document 变为 unsaved，从而抑制平台自动 reload，用户保存时磁盘上的外部改动会被整体覆盖丢失</li>

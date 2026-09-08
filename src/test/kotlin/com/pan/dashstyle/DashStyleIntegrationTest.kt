@@ -1467,21 +1467,31 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     @Test
     fun `EP-instantiated inspections fire per language on module files`() {
         val cases = listOf(
-            "DashStyle.UnusedCssClass.Css" to "p.module.css",
-            "DashStyle.UnusedCssClass.Less" to "p.module.less",
-            "DashStyle.UnusedCssClass.Scss" to "p.module.scss"
+            Triple("DashStyle.UnusedCssClass.Css", "ep_ref_css.tsx", "p.module.css"),
+            Triple("DashStyle.UnusedCssClass.Less", "ep_ref_less.tsx", "p.module.less"),
+            Triple("DashStyle.UnusedCssClass.Scss", "ep_ref_scss.tsx", "p.module.scss")
         )
-        for ((shortName, fileName) in cases) {
+        for ((shortName, importer, fileName) in cases) {
             val tool = instantiateFromEp(shortName)
             Assert.assertNotNull("<$shortName> 无法经 EP 实例化", tool)
-            myFixture.configureByText(fileName, ".epUnused { color: red; }\n")
+            // 必须给每个 module 配一个"引用了它、但完全不用 .epUnused"的真实源文件：
+            //   references 非空 且 非动态 → .epUnused 走正常"未使用"判定并置灰，报告数 ≥1。
+            //   若完全没有引用源，置灰的保守策略会把整个文件标为"动态引用"跳过置灰
+            //  （目的：git 回滚 / 索引暂态失准时避免把全部类误置灰），报告数恒为 0，
+            //   那样本用例无法与"EP 注册未触发"区分开 —— 所以必须造一个真实引用源。
+            myFixture.addFileToProject(
+                importer,
+                "import styles from './$fileName'\nexport default 1\n"
+            )
+            val moduleFile = myFixture.addFileToProject(fileName, ".epUnused { color: red; }\n")
+            myFixture.openFileInEditor(moduleFile.virtualFile)
             // 守护：module 文件必须真的解析出 CssRuleset（语言插件缺失时会静默变纯文本，
             // 否则「报告数 0」无法与「注册不触发」区分开）
             val rulesetCount = ApplicationManager.getApplication().runReadAction<Int> {
-                PsiTreeUtil.findChildrenOfType(myFixture.file, CssRuleset::class.java).size
+                PsiTreeUtil.findChildrenOfType(moduleFile, CssRuleset::class.java).size
             }
             Assert.assertEquals(
-                "$fileName 应解析出恰好 1 个 CssRuleset（实际 PSI=${myFixture.file.javaClass.simpleName}）",
+                "$fileName 应解析出恰好 1 个 CssRuleset（实际 PSI=${moduleFile.javaClass.simpleName}）",
                 1, rulesetCount
             )
             myFixture.enableInspections(tool!!)

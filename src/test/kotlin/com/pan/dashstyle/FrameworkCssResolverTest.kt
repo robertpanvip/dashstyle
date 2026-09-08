@@ -211,6 +211,30 @@ class FrameworkCssResolverTest : BasePlatformTestCase() {
         Assert.assertEquals("wrapper", SemanticClassNameInferrer.topCandidate(emptyList()))
     }
 
+    @Test
+    fun `inferCandidates - 祖先 className 使 nav-item 优先于 文件名+root`() {
+        // Vue template 场景：内层 div 的 :style 提取成 CSS Module 类时，
+        // 祖先 <div class="nav"> 的 class 应参与推断 → nav-item 优先于"文件名+root"/wrapper 兜底。
+        val xml = myFixture.configureByText(
+            "Nav.vue.xml",
+            "<template><div class=\"nav\"><div :style=\"{ color: 'red' }\"></div></div></template>"
+        )
+        val styleAttr = ApplicationManager.getApplication().runReadAction<com.intellij.psi.PsiElement?> {
+            PsiTreeUtil.findChildrenOfType(xml, com.intellij.psi.xml.XmlAttribute::class.java)
+                .firstOrNull { it.name == "style" || it.name == ":style" }
+        }
+        Assert.assertNotNull("应定位到 style 属性", styleAttr)
+        val cands = ApplicationManager.getApplication().runReadAction<List<SemanticClassNameInferrer.Candidate>> {
+            SemanticClassNameInferrer.inferCandidates(styleAttr!!, "color:red", xml)
+        }
+        val top = SemanticClassNameInferrer.topCandidate(cands)
+        Assert.assertTrue(
+            "top 候选应含祖先语义 nav-item，实际为 $top",
+            top.startsWith("nav-")
+        )
+        Assert.assertTrue("top 不应是 文件名+root", !top.startsWith("nav-root"))
+    }
+
     // ========================================================================
     // D. Util —— Vue SFC 脚本/style 标签定位
     // ========================================================================

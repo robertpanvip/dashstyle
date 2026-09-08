@@ -2,6 +2,7 @@ package com.pan.dashstyle.support
 
 import com.intellij.lang.javascript.psi.*
 import com.intellij.psi.PsiElement
+import com.intellij.psi.xml.XmlAttribute
 import com.intellij.psi.xml.XmlTag
 import com.intellij.psi.util.PsiTreeUtil
 
@@ -176,6 +177,18 @@ object SemanticClassNameInferrer {
             }
         }
 
+        // (3.5) 祖先元素 className：把内联样式提升为父容器里的一个"子项"。
+        //   例：<div className={styles.nav}><div style={...}/></div> → 期望 nav-item / nav-element，
+        //   而不是退化为"文件名+root"。这里的优先级（18>17）刻意高于 component-scope 的 root(18)？
+        //   注意：与 root(18) 同分时 name 更长的 -element 会胜出，为让 nav-item 稳定优先于 nav-element，
+        //   给 nav-item 高于 18 的分，正好轻压 component 的 root；同时低于垂直组合语义，避免喧宾夺主。
+        ancestorClassNames(styleAttrElement).forEach { anc ->
+            if (anc.isNotBlank()) {
+                addScore("$anc-item", 21, "ancestor-context")
+                addScore("$anc-element", 18, "ancestor-context")
+            }
+        }
+
         // (4) 文件/父组件: class / function 组件名
         val component = inferComponentName(contextFileElement)
         if (component != null) {
@@ -245,6 +258,85 @@ object SemanticClassNameInferrer {
         }
         // kebab-case 类名作为语义上下文 (取第一个，避免泛滥)
         return names.distinct().take(2)
+    }
+
+    /**
+     * 读取**祖先元素**上的 className/class 字面量（跳开 style 自身所在的那个元素的属性）。
+     * 定位方式是：从 style 属性所在的容器向上走若干层，每遇到一个"新标签"就扫它的静态类属性，
+     * 直到遇到边界（文件根 / <template> / <script> / JS 函数体）为止。
+     *
+     * 相比 siblingClassNames：
+     *   - siblings 看的是"和 style 同标签的其它属性"（内联区域与 class 并列，少有）；
+     *   - ancestors 看的是"style 所在标签的父/祖标签"（<div className={styles.nav}><div style=…/></div>），
+     *     这是最常见的"把内联样式提成 父容器的子项类" 场景，能产生 nav-item / nav-element。
+     *
+     * 支持 className="nav"（JSX 字符串）与 Vue class="a b"；对 `{styles.nav}` 这类绑定表达式，仅当其
+     * 文本能解析出字面量类名（如 styles.nav / styles["nav"]）时提取，否则忽略。
+     */
+    private fun ancestorClassNames(el: PsiElement): List<String> {
+        val names = mutableListOf<String>()
+        val seenTags = LinkedHashSet<String>()
+        var cur: PsiElement? = el.parent // 跳过 style 属性自身
+        var safety = 0
+        while (cur != null && safety++ < 20) {
+            val clsName = cur.javaClass.simpleName
+            val isTag = clsName.contains("JSXTag", ignoreCase = true) ||
+                    clsName == "JSXXmlElementImpl" ||
+                    (clsName.contains("JSX", ignoreCase = true) &&
+                     clsName.contains("OpeningElement", ignoreCase = true)) ||
+                    cur is XmlTag
+            val isBoundary = clsName.contains("JSFile", ignoreCase = true) ||
+                    (cur is XmlTag && (cur.name == "template" || cur.name == "script" || cur.name == "style")) ||
+                    // 到达函数体/语句块，说明已离开 JSX 树
+                    clsName.contains("block", ignoreCase = true) && cur !is XmlTag
+
+            // 只有"新标签"才扫描属性（防止在同一个标签的多个属性节点上重复扫）。
+            // 注意 key 不能用 clsName：JSX/XmlTag 的多个标签 clsName 相同（如都是 XmlTagImpl），
+            // 会导致只扫第一个标签、把更外层的祖先漏掉。改用标签自身的 textRange 作 key。
+            if (isTag && seenTags.add(cur.textRange.toString())) {
+                // 收集该标签属性里的静态 class / className
+                var attrSib = cur.firstChild
+                while (attrSib != null) {
+                    collectClassLiteralFromAttr(attrSib.text ?: "", names)
+                    // 若是 XmlTag 用 PSI 属性更稳
+                    if (attrSib is XmlAttribute) collectClassLiteralFromAttr(attrSib.text ?: "", names)
+                    attrSib = attrSib.nextSibling
+                }
+                if (names.size >= 2) break // 最多取两个，避免泛滥
+            }
+
+            if (isBoundary) break
+            cur = cur.parent
+        }
+        return names.distinct().take(2)
+    }
+
+    /** 从一个属性文本里提取类名字面量：className="nav" / class="nav" / className={styles.nav} / styles["nav"]。 */
+    private fun collectClassLiteralFromAttr(attrText: String, into: MutableList<String>) {
+        if (attrText.isNullOrBlank()) return
+        // 1) 静态字符串：className="a b" / class="a b" / :class="a b"
+        val static = Regex("""(?:className|class|:class|v-bind:class)\s*=\s*"([^"{}]+)"""")
+            .find(attrText)
+        if (static != null) {
+            val cls = static.groupValues[1].trim()
+            if (cls.isNotBlank()) cls.split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { into += it }
+            return
+        }
+        // 2) 绑定表达式，仅当可静态还原为唯一字面量：className={styles.nav} → nav、styles["nav"] → nav。
+        //    其它的（对象/三元/模板拼接）忽略，避免把含语义噪声的表达式当类名。
+        val bind = Regex("""(?:className|class|:class|v-bind:class)\s*=\s*\{\s*styles\.([a-zA-Z_$][\w$]*)""")
+            .find(attrText)
+        if (bind != null) {
+            val s = bind.groupValues[1].trim()
+            if (s.isNotBlank()) into += s
+            return
+        }
+        val bindBracket = Regex("""(?:className|class|:class|v-bind:class)\s*=\s*\{\s*styles\[\s*"(?:&lt;)?([^"&]+)"\s*\]""")
+            .find(attrText)
+        if (bindBracket != null) {
+            val s = bindBracket.groupValues[1].trim()
+            if (s.isNotBlank()) into += s
+        }
     }
 
     private fun inferComponentName(fileEl: PsiElement): String? {

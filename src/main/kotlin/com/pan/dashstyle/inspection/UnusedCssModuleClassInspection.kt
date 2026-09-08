@@ -317,8 +317,27 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 return CachedValueProvider.Result.create(Snapshot(emptySet(), true, emptyMap(), emptySet()), cssFile)
 
             val references = findReferencingSourceFiles(cssFile)
-            if (references.isEmpty())
-                return CachedValueProvider.Result.create(Snapshot(emptySet(), false, emptyMap(), emptySet()), cssFile)
+            if (references.isEmpty()) {
+                // 没有任何引用源文件，且不是动态引用：存在两类情形——
+                //   ① 该 CSS Module 确实没有任何 import（真·全部未使用）；
+                //   ② 扫描暂态失准：git 回滚 / VFS refresh / 索引未及时更新 / PSI 与磁盘不同步
+                //      （ReferencesSearch 依赖索引，外部批量改文件时结果可能为空）。
+                // 情形②若被当成"全 unused" 会导致**整个 CSS 文件全部置灰**（用户反馈：git 回滚后全部置灰）。
+                // 采用保守策略：references 为空的场景本身无法区分 ①②，
+                // 直接把整个文件标为 hasDynamic（跳过置灰），等索引/PSI 稳定后再判断。
+                // 这样彻底避免"回滚瞬间/刷新间隙 把全部类误置灰"。
+                // 依赖 PsiModificationTracker 实例：任何代码改动（含 git 回滚后的重排）
+                // 都会让此 hasDynamic 快照失效并重算，一旦 references 恢复，回归正常置灰判断。
+                // 注意：必须依赖 tracker 对象本身（ModificationTracker 类型），
+                // 不能依赖 tracker.modificationCount（Long）—— CachedValue 拒绝非受管类型依赖，
+                // 会抛 "Wrong dependency type: class java.lang.Long" 并让 daemon 置灰分析崩溃。
+                val tracker = com.intellij.psi.util.PsiModificationTracker.getInstance(cssFile.project)
+                return CachedValueProvider.Result.create(
+                    Snapshot(emptySet(), true, emptyMap(), emptySet()),
+                    cssFile,
+                    tracker
+                )
+            }
 
             val snap = computeFileSnapshot(cssFile, references)
             val deps = mutableListOf<Any>()
