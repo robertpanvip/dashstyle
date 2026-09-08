@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.4.0"
+version = "1.4.1"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.4.1</h3>
+<ul>
+    <li>✨ 支持提取<strong>静态字符串</strong>内联样式：<code>style="margin-block: unset"</code> 这类静态 CSS 声明字符串此前会提示"非对象形式"而无法提取，现在直接按 CSS 声明解析提取（<code>:style="'css'"</code> 内层引号字符串同样支持）；动态表达式（三元、变量）仍明确拒绝并给出说明</li>
+    <li>🛡 修复执行提取时偶发的 "<code>AWT events are not allowed inside write action</code>" 报错：平台把意图执行包在 write action 里，此前同步弹出的对话框会泵送挂起的焦点事件触发该错误；现在所有对话框与写操作整体延迟到 write action 结束后执行</li>
+</ul>
 <h3>1.4.0</h3>
 <ul>
     <li>🧭 内联样式提取的类名推断改进：现在会读取<strong>父级/祖先元素</strong>的 className（含 <code>styles.nav</code> / <code>class="nav"</code>），生成 <code>nav-item</code> 类语义候选并优先于"文件名+root"。修复 <code>&lt;div className={styles.nav}&gt;&lt;div style={{...}}/&gt;</code> 提取子元素内联样式时类名不合预期的问题</li>
