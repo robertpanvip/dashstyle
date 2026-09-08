@@ -49,6 +49,10 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         private val VALID_VUE_STYLE_RE = Regex("""^\s*(?:v-bind:)?style\s*=\s*""")
         private val CLASS_NAME_RE = Regex("""^[_a-zA-Z][_a-zA-Z0-9-]*$""")
 
+        // 静态字符串 style（style="margin-block: unset"）的 CSS 属性名规则
+        private val STATIC_CSS_PROP_RE = Regex("""^[-a-zA-Z][-a-zA-Z0-9]*$""")
+        private val STATIC_STYLE_TEXT_RE = Regex("""^\s*(?:v-bind:|:)?style\s*=\s*(['"])([\s\S]*)\1\s*$""")
+
         // 框架标志性 API 证据（非 import 语句，PSI 化成本高收益低，仅作次级文本证据）
         private val VUE_API_RE = Regex("""\bdefineComponent\s*\(|\buseCssModule\s*\(""")
         private val REACT_API_RE = Regex("""\bReact\.Component\b""")
@@ -214,37 +218,28 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         val loc = listOf(offset, (offset - 1).coerceAtLeast(0), (offset + 1).coerceAtMost((file.textLength - 1).coerceAtLeast(0)))
             .asSequence().mapNotNull { file.findElementAt(it) }
             .firstNotNullOfOrNull { locateStyleAttribute(it, file, offset) }
-            ?: run { Messages.showWarningDialog(project,
-                message("intention.extract.no.style.attribute.warning"),
-                message("intention.extract.dialog.title")); return }
 
-        val styleObjText = extractObjectLiteral(loc) ?: run {
-            Messages.showWarningDialog(project,
-                message("intention.extract.not.object.warning"),
-                message("intention.extract.dialog.title"))
-            return
-        }
-
-        val cssDeclarations = try {
-            JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(styleObjText)
-        } catch (t: Throwable) {
-            // 兜底：extractObjectLiteral 有时剥壳不干净（例如光标在 value 内部时
-            // attrPsi.text 只是局部片段）。而 convertJsonToCss 的 normalizeStyleExpression
-            // 本身支持 `name={{...}}` / `name={...}` / `{...}` 全形式，因此直接用
-            // 完整属性文本再试一次，尽量避免误报 "Not a recognized style object"。
-            val retry = runCatching {
-                JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(loc.attrPsi.text)
-            }.getOrNull()
-            if (!retry.isNullOrBlank()) retry
-            else {
-                LOG.warn("convertJsonToCss failed", t)
-                Messages.showErrorDialog(project,
-                    message("intention.extract.convert.failed.error", t.message ?: ""),
+        // 平台把 invoke() 包在 write action 里执行，而 write action 内严禁
+        // 弹出模态对话框：对话框会泵送挂起的 AWT 焦点事件（如意图弹窗关闭时
+        // 的 FOCUS_LOST），触发 "AWT events are not allowed inside write action"。
+        // 因此交互流程（含全部对话框与写操作）整体延迟到 write action 结束后执行。
+        app.invokeLater {
+            if (project.isDisposed || !file.isValid) return@invokeLater
+            val validLoc = loc?.takeIf { it.attrPsi.isValid }
+            if (validLoc == null) {
+                Messages.showWarningDialog(project,
+                    message("intention.extract.no.style.attribute.warning"),
                     message("intention.extract.dialog.title"))
-                return
+                return@invokeLater
             }
+            doExtract(project, file, validLoc)
         }
-        if (cssDeclarations.isBlank()) return
+    }
+
+    /** write action 之外的完整提取流程（延迟执行，可安全弹窗）。 */
+    private fun doExtract(project: Project, file: PsiFile, loc: StyleAttrLoc) {
+        val cssDeclarations = resolveCssDeclarations(project, loc)
+        if (cssDeclarations.isNullOrBlank()) return
 
         val candidates = SemanticClassNameInferrer.inferCandidates(
             styleAttrElement = loc.attrPsi,
@@ -286,10 +281,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         if (target is FileTarget) {
             val vf = LocalFileSystem.getInstance().findFileByPath(target.absolutePath)
             if (vf != null && vf.isValid) {
-                ApplicationManager.getApplication().invokeLater {
-                    val fd = OpenFileDescriptor(project, vf, 0)
-                    FileEditorManager.getInstance(project).openTextEditor(fd, true)
-                }
+                val fd = OpenFileDescriptor(project, vf, 0)
+                FileEditorManager.getInstance(project).openTextEditor(fd, true)
             }
         }
 
@@ -299,6 +292,39 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             message("intention.extract.success.message", chosenName, declCount, target.toString(), cssDeclarations.trim()),
             message("intention.extract.success.title")
         )
+    }
+
+    /**
+     * 解析 style 属性值为 CSS 声明文本：
+     * ① 对象字面量（style={{...}} / :style="{...}"）→ JSON→CSS 转换；
+     * ② 静态 CSS 字符串（style="margin-block: unset"、:style="'css'"）→ 直接解析声明。
+     * 返回 null 表示无法提取（由调用方弹警告）。
+     */
+    private fun resolveCssDeclarations(project: Project, loc: StyleAttrLoc): String? {
+        val objText = extractObjectLiteral(loc)
+        if (objText != null) {
+            return try {
+                JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(objText)
+            } catch (t: Throwable) {
+                // 兜底：extractObjectLiteral 有时剥壳不干净（例如光标在 value 内部时
+                // attrPsi.text 只是局部片段）。而 convertJsonToCss 的 normalizeStyleExpression
+                // 本身支持 `name={{...}}` / `name={...}` / `{...}` 全形式，因此直接用
+                // 完整属性文本再试一次，尽量避免误报 "Not a recognized style object"。
+                val retry = runCatching {
+                    JsonToCssCopyPastePreProcessor.Util.convertJsonToCss(loc.attrPsi.text)
+                }.getOrNull()
+                if (!retry.isNullOrBlank()) retry
+                else {
+                    LOG.warn("convertJsonToCss failed", t)
+                    Messages.showErrorDialog(project,
+                        message("intention.extract.convert.failed.error", t.message ?: ""),
+                        message("intention.extract.dialog.title"))
+                    null
+                }
+            }
+        }
+        // 静态字符串样式兜底（修复：style="margin-block: unset" 之前不生效）
+        return extractStaticCssDeclarations(loc)
     }
 
     // ================================================================
@@ -431,7 +457,7 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
     // ================================================================
     // 提取 { key: value, ... } 文本（同时兼容新版 JSX 的 valueNode API）
     // ================================================================
-    private fun extractObjectLiteral(loc: StyleAttrLoc): String? {
+    internal fun extractObjectLiteral(loc: StyleAttrLoc): String? {
         if (loc.jsxAttribute != null) {
             // PSI 方式：通过 JSAttributeNameValuePair 接口直接访问 valueNode/values，
             // 不再使用 javaClass.methods reflection
@@ -466,6 +492,57 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
         if (t.startsWith("{") && t.endsWith("}")) {
             val inner = t.substring(1, t.length - 1).trim()
             if (inner.startsWith("{") && inner.endsWith("}")) return inner
+        }
+        return t
+    }
+
+    // ================================================================
+    // 静态字符串样式提取（style="margin-block: unset" / :style="'css'"）：
+    // 值本身就是 CSS 声明语法，无需 JSON 转换，直接按 `prop: value;` 解析。
+    // ================================================================
+    internal fun extractStaticCssDeclarations(loc: StyleAttrLoc): String? {
+        val raw = staticStyleValue(loc)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        // 对象字面量交给 convertJsonToCss 处理；这里只接受纯声明文本
+        if (raw.contains('{') || raw.contains('}')) return null
+        val decls = raw.split(';').map { it.trim() }.filter { it.isNotEmpty() }
+        if (decls.isEmpty()) return null
+        val lines = mutableListOf<String>()
+        for (d in decls) {
+            val idx = d.indexOf(':')
+            if (idx <= 0) return null
+            val prop = d.substring(0, idx).trim()
+            val value = d.substring(idx + 1).trim()
+            // 属性名不含空格/`?`/`:` —— 动态表达式（isDark ? a : b、styleObj）在此被拒绝
+            if (!STATIC_CSS_PROP_RE.matches(prop)) return null
+            if (value.isEmpty()) return null
+            // 括号不配对说明被 `;` 误切（如 url(data:...;base64,...)），放弃解析
+            if (value.count { it == '(' } != value.count { it == ')' }) return null
+            lines.add("  $prop: $value;")
+        }
+        return lines.joinToString("\n") + "\n"
+    }
+
+    private fun staticStyleValue(loc: StyleAttrLoc): String? {
+        loc.xmlAttribute?.let { attr ->
+            val v = attr.value ?: attr.valueElement?.text
+            return unwrapAttributeQuotes(v)
+        }
+        if (loc.jsxAttribute is JSAttributeNameValuePair) {
+            val vn = loc.jsxAttribute.valueNode?.psi?.text
+            if (vn != null) return unwrapAttributeQuotes(vn)
+        }
+        val m = STATIC_STYLE_TEXT_RE.find(loc.attrPsi.text) ?: return null
+        return m.groupValues[2].trim()
+    }
+
+    /** 去掉一层成对的包裹引号（如 `:style="'css'"` 值中的 `'css'`）。 */
+    private fun unwrapAttributeQuotes(s: String?): String? {
+        if (s == null) return null
+        val t = s.trim()
+        if (t.length >= 2) {
+            val f = t.first()
+            val l = t.last()
+            if ((f == '"' && l == '"') || (f == '\'' && l == '\'')) return t.substring(1, t.length - 1).trim()
         }
         return t
     }

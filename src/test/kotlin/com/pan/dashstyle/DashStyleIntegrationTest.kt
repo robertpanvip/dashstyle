@@ -1337,6 +1337,62 @@ class DashStyleIntegrationTest : BasePlatformTestCase() {
     }
 
     // ========================================================================
+    // #31. 静态字符串 style 提取（Bug 修复回归）——
+    //      style="margin-block: unset" 这类静态 CSS 声明字符串此前
+    //      extractObjectLiteral 返回 null，直接弹"非对象"警告导致不生效；
+    //      现在走 extractStaticCssDeclarations 静态声明解析。
+    //      同时覆盖：多声明、:style="'css'" 内层引号、动态表达式拒绝、
+    //      url() 内分号（括号不配对）拒绝。
+    // ========================================================================
+    @Test
+    fun `static css string style attribute extracts declarations`() {
+        val intention = InlineStyleToCssModuleIntention()
+        fun loc(fileName: String, content: String): InlineStyleToCssModuleIntention.StyleAttrLoc {
+            val xml = myFixture.addFileToProject(fileName, content)
+            val styleAttr = PsiTreeUtil.findChildrenOfType(xml, XmlAttribute::class.java)
+                .firstOrNull { it.name == "style" || it.name == ":style" }
+            Assert.assertNotNull("找不到 style 属性", styleAttr)
+            return InlineStyleToCssModuleIntention.StyleAttrLoc(
+                styleAttr!!, InlineStyleToCssModuleIntention.StyleAttrLoc.Lang.VUE,
+                xmlAttribute = styleAttr
+            )
+        }
+
+        // a) 单声明（用户上报的原始用例）：旧逻辑 extractObjectLiteral 返回 null
+        val a = loc("data31a.xml", "<root><div style=\"margin-block: unset\">hi</div></root>")
+        Assert.assertNull("静态字符串在 extractObjectLiteral 应为 null（旧路径根因）",
+            intention.extractObjectLiteral(a))
+        val aCss = intention.extractStaticCssDeclarations(a)
+        println("=== #31a static single ===")
+        println(aCss)
+        Assert.assertEquals("  margin-block: unset;\n", aCss)
+
+        // b) 多声明
+        val bCss = intention.extractStaticCssDeclarations(
+            loc("data31b.xml", "<root><div style=\"margin-block: unset; color: red\">hi</div></root>")
+        )
+        Assert.assertEquals("  margin-block: unset;\n  color: red;\n", bCss)
+
+        // c) :style="'css'"（值为内层引号包裹的字符串字面量）
+        val cCss = intention.extractStaticCssDeclarations(
+            loc("data31c.xml", "<root><div :style=\"'margin-block: unset'\">hi</div></root>")
+        )
+        Assert.assertEquals("  margin-block: unset;\n", cCss)
+
+        // d) 动态表达式拒绝（三元表达式含冒号，属性名校验必须挡住）
+        val d = intention.extractStaticCssDeclarations(
+            loc("data31d.xml", "<root><div :style=\"isDark ? dark : light\">hi</div></root>")
+        )
+        Assert.assertNull("动态表达式应拒绝", d)
+
+        // e) url() 内含分号（data URI 被 ; 截断 → 括号不配对）拒绝
+        val e = intention.extractStaticCssDeclarations(
+            loc("data31e.xml", "<root><div style=\"background: url(data:image/png;base64,AAAA)\">hi</div></root>")
+        )
+        Assert.assertNull("括号不配对（; 截断 url）应拒绝", e)
+    }
+
+    // ========================================================================
     // #28. 兄弟范围（A3 修复）——
     //      findClassAttr 只扫同标签直接属性；后代 span 的 className 不能被
     //      误当作兄弟合并目标（旧实现递归 descendants 会合并进错误的元素）。
