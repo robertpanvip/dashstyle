@@ -171,6 +171,9 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
             val rule = descriptor.psiElement.parent as? CssRuleset ?: return
             if (!rule.isPhysical || !rule.isWritable) return
+            // 外部改动守卫：磁盘已改但编辑器未重载时中止删除，避免覆盖外部改动
+            //（防御性双保险；inspection 的 visitElement 已在 stale 时跳过分析，此 fix 通常不会出现）
+            if (Util.hasPendingExternalModification(rule.containingFile)) return
             val next = rule.nextSibling
             runCatching { rule.delete() }
             // 折叠被删规则留下的多余空行：纯 PSI 替换空白节点（不走 Document API，

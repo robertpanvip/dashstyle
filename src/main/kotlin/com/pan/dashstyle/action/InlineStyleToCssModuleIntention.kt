@@ -263,6 +263,18 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             return
         }
 
+        // 外部改动守卫：磁盘已改但编辑器未重载时中止写入，避免覆盖外部改动
+        val targetVf = (target as? FileTarget)
+            ?.let { LocalFileSystem.getInstance().findFileByPath(it.absolutePath) }
+        Util.findStaleFileForWrite(listOf(file.virtualFile, targetVf))?.let { stale ->
+            Messages.showErrorDialog(
+                project,
+                message("external.modification.pending.message", stale.name),
+                message("external.modification.pending.title")
+            )
+            return
+        }
+
         WriteCommandAction.writeCommandAction(project)
             .withName(message("command.extract.inline.style"))
             .run<Nothing> {

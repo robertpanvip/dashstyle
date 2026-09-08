@@ -118,6 +118,9 @@ class CssModuleImportCopyPasteProcessor : CopyPastePreProcessor {
      * 不经过 Document API（由外层 WriteCommandAction 提供写动作）。
      */
     private fun injectImportAtModuleScope(project: Project, file: PsiFile, meta: ImportMeta) {
+        // 外部改动守卫：磁盘已改但编辑器未重载时跳过 import 注入，避免覆盖外部改动
+        //（粘贴文本本身已由平台插入编辑器，不受影响；用户重载后重新粘贴即可）
+        if (Util.hasPendingExternalModification(file)) return
         val importText = "import ${meta.binding} from '${meta.from}'"
         CssModuleFileResolver.appendImportDeclaration(project, file, importText)
     }

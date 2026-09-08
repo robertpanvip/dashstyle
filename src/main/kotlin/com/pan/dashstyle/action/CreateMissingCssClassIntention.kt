@@ -103,6 +103,16 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         }
         if (targetFile == null) return
 
+        // 外部改动守卫：磁盘已改但编辑器未重载时中止写入，避免覆盖外部改动
+        Util.findStaleFileForWrite(listOf(file.virtualFile, targetFile))?.let { stale ->
+            Messages.showErrorDialog(
+                project,
+                message("external.modification.pending.message", stale.name),
+                message("external.modification.pending.title")
+            )
+            return
+        }
+
         when (container) {
             is CssModuleResolver.CssContainer.ImportedFile -> {
                 appendRuleToFile(project, container.psiFile, kebab, tailwindCss)

@@ -179,6 +179,9 @@ object CssModuleFileResolver {
      */
     fun promoteVueStyleModule(project: Project, file: PsiFile): String? {
         if (file !is XmlFile) return null
+        // 外部改动守卫：磁盘已改但编辑器未重载时中止，避免基于旧 document 写入、
+        // 抑制平台自动 reload 后在保存时覆盖外部改动
+        if (Util.hasPendingExternalModification(file)) return null
         val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return null
         val tag = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
             .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") == null }
@@ -246,6 +249,9 @@ object CssModuleFileResolver {
      * `file.addAfter()` 修改 PSI 树，不经过 Document API，避免 Document+PSI 混合写入。
      */
     fun ensureImportExists(project: Project, sourceFile: PsiFile, moduleVf: VirtualFile): String {
+        // 外部改动守卫：磁盘待重载时不写 import，避免覆盖外部改动。
+        // （上游 action 已在入口守卫并弹窗中止；这里是对直接调用的防御，binding 退回 styles）
+        if (Util.hasPendingExternalModification(sourceFile)) return "styles"
         val imports = PsiTreeUtil.findChildrenOfType(sourceFile, ES6ImportDeclaration::class.java)
         val moduleFileName = moduleVf.name
         val originalFileName = moduleFileName.replace(".module.", ".")

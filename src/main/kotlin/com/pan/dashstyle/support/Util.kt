@@ -68,5 +68,24 @@ class Util {
             return !FileDocumentManager.getInstance().isDocumentUnsaved(doc) &&
                     doc.modificationStamp != vf.modificationStamp
         }
+
+        /** [hasPendingExternalModification] 的 PsiFile 重载：无 VirtualFile 时视为无外部改动。 */
+        @JvmStatic
+        fun hasPendingExternalModification(psi: PsiFile?): Boolean {
+            val vf = psi?.virtualFile ?: return false
+            return hasPendingExternalModification(vf)
+        }
+
+        /**
+         * 写入前统一守卫：返回第一个「磁盘已被外部修改、编辑器尚未重载」的文件；全部新鲜返回 null。
+         *
+         * 背景：该窗口内做 PSI/Document 写入会让 document 变为 unsaved，从而抑制平台对本文件的
+         * 自动 reload——用户随后保存时，磁盘上的外部改动就会被旧内容+本次编辑整体覆盖丢失。
+         * 因此所有写路径（action / intention / quickfix / copy-paste 注入）在写入前必须调用，
+         * 检出 stale 时中止写入并提示用户先 Reload from Disk。
+         */
+        @JvmStatic
+        fun findStaleFileForWrite(files: Collection<VirtualFile?>): VirtualFile? =
+            files.firstOrNull { it != null && it.isValid && hasPendingExternalModification(it) }
     }
 }

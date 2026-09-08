@@ -669,6 +669,8 @@ class ConvertClassNameToCssModuleAction : AnAction() {
     // ================================================================
 
     private fun appendCssRules(project: Project, moduleVf: VirtualFile, classNames: Set<String>) {
+        // 外部改动守卫：module 文件磁盘待重载时不追加规则，避免覆盖外部改动
+        if (Util.hasPendingExternalModification(moduleVf)) return
         WriteCommandAction.writeCommandAction(project)
             .withName(message("command.add.css.module.rules"))
             .run<Nothing> {

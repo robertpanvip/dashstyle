@@ -77,6 +77,20 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
                 selection = range
             )
         }.getOrNull() ?: return
+        // 外部改动守卫：scopeReplace 会整文档替换（doc.replaceString(0, textLength)），
+        // 磁盘待重载时必须中止，否则外部改动会被整体覆盖丢失
+        val scopeFile = when (scope) {
+            is Scope.FileScope -> scope.psi
+            is Scope.VueStyleScope -> scope.scopeFile
+        }
+        Util.findStaleFileForWrite(listOf(file.virtualFile, scopeFile.virtualFile))?.let { stale ->
+            Messages.showErrorDialog(
+                project,
+                message("external.modification.pending.message", stale.name),
+                message("external.modification.pending.title")
+            )
+            return
+        }
         runCatching {
             WriteCommandAction.writeCommandAction(project)
                 .withName(message("command.extract.duplicate.css.mixin"))
