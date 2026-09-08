@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.3.8"
+version = "1.3.9"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.3.9</h3>
+<ul>
+    <li>🛡 防止覆盖外部改动：当文件在磁盘上已被外部工具（Cursor / git 等）修改而编辑器尚未重新加载时，所有写路径（重构转换 className、补齐缺失类、抽取内联样式、抽取重复声明为 mixin、删除未使用规则、粘贴时补 import、升级 <code>&lt;style&gt;</code> 为 module 等）都会先检测外部改动守卫并中止，弹窗提示先执行 File | Reload all from Disk。此前若在此窗口写入会让 Document 变为 unsaved，从而抑制平台自动 reload，用户保存时磁盘上的外部改动会被整体覆盖丢失</li>
+    <li>🧪 仅分析路径（unused class / duplicate declaration 检查与高亮）本就有该守卫；本次补齐所有写入入口，并新增 <code>findStaleFileForWrite</code> 统一入口与中英文文案</li>
+</ul>
 <h3>1.3.8</h3>
 <ul>
     <li>🔧 修复 CSS Module 中「camelCase 类名」被误置灰为未使用的回归：<code>styles.agentList</code> 或 <code>:class="${'$'}style.agentList"</code> 引用 <code>.agentList</code> 这类 camelCase 类时，之前只按 kebab-case（<code>agent-list</code>）归一化，与 CSS 里提取的原始类名 <code>agentList</code> 对不上而被误判 dead code 置灰；现在引用收集同时保留「原始名 + kebab 形式」，无论是 camelCase 定义还是 kebab-case 定义的类都能正确识别为已使用</li>
