@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.4.2"
+version = "1.4.3"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,18 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.4.3</h3>
+<ul>
+    <li>⚡ 性能优化：修复打开/编辑包含大量 CSS / SCSS / LESS / Vue 文件的（新）项目时明显卡顿——多类功能对整份文件反复做无缓存的全量扫描，现已收敛：
+        <ul>
+            <li>「提取重复声明为 mixin」意图的可用性判定不再在每次光标移动时对整份 CSS/Vue 全量分组签名，改为按文件 / <code>&lt;style&gt;</code> 作用域做缓存；Vue 文件找不到样式块的兜底也不再每动一下光标就整文件遍历</li>
+            <li>「重复 CSS declarations」检查的每次高亮 pass 全文件重扫改为作用域级缓存（CSS 文件按文件、Vue 按单个 <code>&lt;style&gt;</code> 块独立分组，不跨块误报）</li>
+            <li>Vue <code>&lt;style module&gt;</code> 探测结果按文件缓存：此前每个 CSS ruleset × 每次高亮 pass 都可能对整个 .vue 做一次全树遍历</li>
+            <li>「未使用 CSS Module class」置灰快照的失效依赖收窄：不再因任意 JS/TS/Vue 文件里的普通编辑（函数体内打字）就让所有 module 快照集体失效并逐个重跑全项目引用搜索</li>
+        </ul>
+    </li>
+    <li>🛡 外部改动保护不受影响：上述缓存仅用于只读高亮/菜单判定且以 PSI 为缓存键（外部 Reload 后自动失效）；所有写入路径仍在写前经外部改动守卫检测，磁盘已被外部修改且未 Reload 时中止写入并提示，不会用缓存或旧内容覆盖外部改动</li>
+</ul>
 <h3>1.4.2</h3>
 <ul>
     <li>🐞 修复 Vue 单文件组件中「新增 class、点击菜单自动创建对应 class 后 CSS 仍被置灰为未使用」：<code>&lt;style module&gt;</code> 的引用源别名在普通字符串里误用了 raw-string 的 <code>${'$'}{class="code"}</code> 转义，实际生成的是字面 <code>${'$'}{class="code"}style</code>，导致扫描器匹配不到模板里的 <code>${'$'}style.card</code> 引用，所有类都被误判 dead code；现已改为正确的 <code>\${'$'}style</code> 转义</li>
