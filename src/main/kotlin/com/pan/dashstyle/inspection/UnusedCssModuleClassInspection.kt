@@ -52,8 +52,8 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 // 跳过分析以避免 PSI 访问触发对话框自动关闭。让用户先 reload 再检查。
                 if (Util.hasPendingExternalModification(cssVf)) return
 
-                // 必须是 CSS Module 文件（*.module.*），全局 CSS 不处理
-                if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return
+                // 必须是 CSS Module 作用域（*.module.* 或 Vue 内嵌 <style module>），全局 CSS 不处理
+                if (!isCssModuleFile(cssFile)) return
 
                 // 按 cssFile 级缓存所有计算（只算一次）
                 val snap = getOrComputeFileSnapshot(cssFile)
@@ -108,8 +108,8 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
      */
     fun inspectRulesetAndRegisterProblems(rs: CssRuleset, project: Project) {
         val cssFile = rs.containingFile ?: return
-        val cssVf = cssFile.virtualFile ?: return
-        if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return
+        if (cssFile.virtualFile == null) return
+        if (!isCssModuleFile(cssFile)) return
 
         val snap = getOrComputeFileSnapshot(cssFile)
         if (snap.hasDynamic) return
@@ -199,7 +199,9 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
     }
 
     companion object {
-        private val MODULE_EXTS = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
+        // CSS Module 作用域判定统一走 CssModuleResolver.isCssModuleFile：
+        // 既覆盖 *.module.* 文件，也覆盖 Vue 内嵌 <style module>（其虚拟文件名为 .vue）。
+        private fun isCssModuleFile(cssFile: PsiFile): Boolean = CssModuleResolver.isCssModuleFile(cssFile)
 
         // 匹配 .foo-bar 或 &-suffix 展开前/后的 kebab-case 选择器中的 class 名（不含伪类/伪元素）
         private val MODULE_CLASS_RE = Regex("""(^|[^\w-])\.-?([_a-zA-Z][_a-zA-Z0-9-]*)(?=[^\w-]|${'$'})""")
@@ -313,7 +315,7 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
          */
         private fun computeSnapshotWithDeps(cssFile: PsiFile): CachedValueProvider.Result<Snapshot> {
             val cssVf = cssFile.virtualFile
-            if (cssVf == null || !MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) })
+            if (cssVf == null || !isCssModuleFile(cssFile))
                 return CachedValueProvider.Result.create(Snapshot(emptySet(), true, emptyMap(), emptySet()), cssFile)
 
             val references = findReferencingSourceFiles(cssFile)
@@ -371,7 +373,13 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 val modTag = PsiTreeUtil.findChildrenOfType(sourceFile, XmlTag::class.java)
                     .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
                 if (modTag != null) {
-                    val alias = if (bindingName.isBlank() || bindingName == "style") "\$style" else "\$$bindingName"
+                    // bindingName 可能已带前导 $（如 "$style" / "$xxx"），不能重复加 $，
+                    // 否则生成 "$$style" 导致 scanVueTemplateAttributes / PSI resolve 匹配不到引用 → used 为空 → 全部置灰。
+                    val alias = when {
+                        bindingName.startsWith("\$") -> bindingName
+                        bindingName.isBlank() || bindingName == "style" -> "\$style"
+                        else -> "\$$bindingName"
+                    }
                     return CssModuleResolver.CssContainer.VueStyleTag(modTag, alias, sourceFile)
                 }
             }
@@ -469,21 +477,17 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
                 }
 
                 // --- Vue SFC：如果 cssFile 是 vue 内嵌 <style module>，此时直接取 vueFile 为引用源 ---
-                val parentFile = cssFile.parent
-                if (parentFile != null) {
-                    val containingVue = runCatching {
-                        com.intellij.psi.util.PsiTreeUtil.getContextOfType(parentFile, XmlTag::class.java)
-                            ?.let { xmlTag ->
-                                val xmlFile = com.intellij.psi.util.PsiTreeUtil.getContextOfType(xmlTag, XmlFile::class.java)
-                                if (xmlFile != null && xmlFile.name.endsWith(".vue") &&
-                                    xmlTag.name.equals("style", ignoreCase = true) && xmlTag.getAttribute("module") != null)
-                                    xmlFile to (xmlTag.getAttributeValue("module")?.takeIf { it.isNotBlank() }?.let { "\${'$'}$it" } ?: "\${'$'}style")
-                                else null
-                            }
-                    }.getOrNull()
-                    if (containingVue != null) {
-                        seen += containingVue.first.virtualFile?.path.orEmpty()
-                        out += containingVue
+                // 用 findVueStyleModuleTag 统一覆盖「cssFile 是内嵌 CSS」与「cssFile 就是 Vue/Xml 文件」两种表示。
+                val vueTag = CssModuleResolver.findVueStyleModuleTag(cssFile)
+                if (vueTag != null) {
+                    runCatching {
+                        val xmlFile = com.intellij.psi.util.PsiTreeUtil.getContextOfType(vueTag, XmlFile::class.java)
+                        if (xmlFile != null) {
+                            val alias = vueTag.getAttributeValue("module")?.takeIf { it.isNotBlank() }
+                                ?.let { "\$it" } ?: "\$style"
+                            val key = "vue#" + (xmlFile.virtualFile?.path.orEmpty()) + "#" + alias
+                            if (seen.add(key)) out += xmlFile to alias
+                        }
                     }
                 }
             }

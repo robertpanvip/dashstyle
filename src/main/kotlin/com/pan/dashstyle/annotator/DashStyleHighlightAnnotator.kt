@@ -53,8 +53,8 @@ class DashStyleHighlightAnnotator : Annotator {
     // ================================================================
     private fun annotateUnused(rs: CssRuleset, holder: AnnotationHolder) {
         val cssFile = rs.containingFile ?: return
-        val cssVf = cssFile.virtualFile ?: return
-        if (!MODULE_EXTS.any { cssVf.name.endsWith(it, ignoreCase = true) }) return
+        if (cssFile.virtualFile == null) return
+        if (!CssModuleResolver.isCssModuleFile(cssFile)) return
 
         val snap = runCatching { unusedInspection.snapshotFor(cssFile) }.getOrNull() ?: return
         if (snap.hasDynamic) return
@@ -141,8 +141,6 @@ class DashStyleHighlightAnnotator : Annotator {
     }
 
     companion object {
-        private val MODULE_EXTS = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
-
         // 未使用：跟随主题的灰（Darcula=浅灰，Light=中灰）
         val UNUSED_CSS_CLASS_KEY: TextAttributesKey = run {
             val fg: Color = JBColor.namedColor(

@@ -216,4 +216,59 @@ object CssModuleResolver {
         val psiFile = PsiManager.getInstance(project).findFile(cssVFile) ?: return null
         return CssContainer.ImportedFile(psiFile, cssVFile, importBindingName, null)
     }
+
+    // ================================================================
+    // CSS Module 作用域判定
+    // Vue 内嵌 <style module> 的虚拟文件名是目标 .vue（不是 .module.*），
+    // 仅靠 MODULE_EXTS 会漏判，导致内嵌类永远不参与「未使用置灰」分析。
+    // 这个判定被 Inspection 与 Highlighter 共用。
+    // ================================================================
+
+    /**
+     * cssFile（或其外包裹）是否属于 CSS Module 作用域：
+     *  1) 文件名以 `.module.*` 结尾；或
+     *  2) 是 Vue 单文件组件里内嵌的 `<style module>` 样式块。
+     */
+    fun isCssModuleFile(cssFile: PsiFile): Boolean {
+        val vf = cssFile.virtualFile
+        if (vf != null && isModuleResourceName(vf.name)) return true
+        return findVueStyleModuleTag(cssFile) != null
+    }
+
+    /**
+     * 判断文件名是否属于标准 CSS Module 命名 `*.module.<css|scss|sass|less>`。
+     * 注意不能用 `endsWith(".module.")`：`App.module.css` 实际以 `.css` 结尾，
+     * 那会把它误判为非 module，导致纯 module 文件从不参与置灰分析。
+     * 这里用「去掉最后一个扩展名后的 basename 以 `.module` 结尾」来判定。
+     */
+    private fun isModuleResourceName(fileName: String): Boolean {
+        val dot = fileName.lastIndexOf('.')
+        if (dot <= 0) return false
+        val base = fileName.substring(0, dot)
+        return base.endsWith(".module", ignoreCase = true)
+    }
+
+    /**
+     * 定位 cssFile 所在的 Vue `<style module>` 标签。
+     * cssFile 既可以是内嵌 CSS 的 PsiFile（沿祖先找包裹的 <style> 标签），
+     * 也可以是 Vue/Xml 根文件本身（在其子元素中找 <style module>）。
+     */
+    fun findVueStyleModuleTag(cssFile: PsiFile): XmlTag? {
+        if (cssFile.virtualFile?.name?.endsWith(".vue", ignoreCase = true) != true) return null
+        return runCatching {
+            // 情形 A：内嵌 CSS → 沿 context 祖先找到包裹它的 <style> 标签
+            val ancestorTag = PsiTreeUtil.getContextOfType(cssFile, XmlTag::class.java)
+            if (ancestorTag != null && ancestorTag.name.equals("style", ignoreCase = true) &&
+                ancestorTag.getAttribute("module") != null
+            ) {
+                return@runCatching ancestorTag
+            }
+            // 情形 B：cssFile 自身是 Vue/Xml 根文件 → 直接搜其子元素
+            val rootFile = if (cssFile is XmlFile) cssFile
+            else generateSequence(cssFile as PsiElement?) { it.context }
+                .lastOrNull() as? XmlFile ?: return@runCatching null
+            PsiTreeUtil.findChildrenOfType(rootFile, XmlTag::class.java)
+                .firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+        }.getOrNull()
+    }
 }

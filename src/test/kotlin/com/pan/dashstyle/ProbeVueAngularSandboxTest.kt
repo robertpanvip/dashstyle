@@ -153,6 +153,160 @@ class ProbeVueAngularSandboxTest : BasePlatformTestCase() {
         )
     }
 
+    // ================================================================
+    // 探针7：Vue 内嵌 <style module> 的置灰链路诊断——
+    //        排查「新增 class 引用、点菜单自动创建 CSS 类后仍置灰」的 root cause。
+    //        打印 cssFile.virtualFile / language / parent，以及 computeFileSnapshot。
+    // ================================================================
+    @Test
+    fun probe07_vueEmbeddedStyleSnapshotDiagnostics() {
+        val f = myFixture.configureByText(
+            "ProbeSnap.vue",
+            """
+            <template>
+              <div :class="${'$'}style.card"></div>
+            </template>
+            <style module>
+            .card { color: red; }
+            .unused { opacity: 0; }
+            </style>
+            """.trimIndent()
+        )
+        val ruleset = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(
+            f, com.intellij.psi.css.CssRuleset::class.java
+        ).firstOrNull()
+        Assert.assertNotNull("style module 应有 CssRuleset", ruleset)
+        val cssFile = ruleset!!.containingFile
+        val vf = cssFile.virtualFile
+        println("PROBE[embedded-css] cssFile=${cssFile::class.java.simpleName} lang=${cssFile.language.id} " +
+            "vf=${vf?.path} vfName=${vf?.name} parentCss=${cssFile.parent?.javaClass?.simpleName}")
+        println("PROBE[embedded-css] cssFileIsStylesheet=${cssFile is com.intellij.psi.css.StylesheetFile} " +
+            "isXml=${cssFile is com.intellij.psi.xml.XmlFile}")
+
+        val snap = com.pan.dashstyle.inspection.UnusedCssModuleClassInspection.computeFileSnapshot(
+            cssFile, listOf(f to "\$style")
+        )
+        println("PROBE[snapshot] hasDynamic=${snap.hasDynamic} used=${snap.used.sorted()} " +
+            "global=${snap.globalClassNames.sorted()} rulesetCount=${snap.classesByRulesetText.size}")
+
+        // 对照组 A：手动构造正确 alias="$style" 的 VueStyleTag 再 scanUsages，
+        //        确定「正确的 container」能否扫到 $style.card（排除扫描器本身问题）
+        val modTag = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(
+            f, com.intellij.psi.xml.XmlTag::class.java
+        ).firstOrNull { it.name.equals("style", ignoreCase = true) && it.getAttribute("module") != null }
+        Assert.assertNotNull("应有 style module 标签", modTag)
+        val manual = com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction<
+            Pair<MutableSet<String>, Boolean>
+            > {
+            com.pan.dashstyle.support.CssModuleUsageScanner.scanUsages(
+                f,
+                com.pan.dashstyle.support.CssModuleResolver.CssContainer.VueStyleTag(modTag!!, "\$style", f)
+            )
+        }
+        println("PROBE[manual-alias-\\\$style] used=${manual.first.sorted()} hasDynamic=${manual.second}")
+
+        // 对照组 B：构造「带双美元 alias」的容器（等价于 resolveContainerForUsageScan
+        //         当前在 bindingName 已含 $ 时的行为），验证是否因此扫不到
+        val doubleAlias = com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction<
+            Pair<MutableSet<String>, Boolean>
+        > {
+            com.pan.dashstyle.support.CssModuleUsageScanner.scanUsages(
+                f,
+                com.pan.dashstyle.support.CssModuleResolver.CssContainer.VueStyleTag(modTag!!, "\$\$style", f)
+            )
+        }
+        println("PROBE[double-dollar-alias] used=${doubleAlias.first.sorted()} hasDynamic=${doubleAlias.second}")
+
+        // 对照组 C：把 bindingName 当作「import binding 名」走 resolveContainerForUsageScan
+        //        私有不可直接调，改为模拟其 import 语义：bindingName="style"（不带 $）
+        val importSem = com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction<
+            Pair<MutableSet<String>, Boolean>
+        > {
+            com.pan.dashstyle.support.CssModuleUsageScanner.scanUsages(
+                f,
+                com.pan.dashstyle.support.CssModuleResolver.CssContainer.VueStyleTag(modTag!!, "\$style", f)
+            )
+        }
+        println("PROBE[import-sem-binding-style] used=${importSem.first.sorted()} hasDynamic=${importSem.second}")
+
+        // 对照组 D：模板里实际出现的是不是 $style（原样打印），确认正则匹配基准
+        val tplAttrs = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(
+                f, com.intellij.psi.xml.XmlAttribute::class.java
+            ).map { "${it.name}=${it.value}" }
+        println("PROBE[template-attrs] $tplAttrs")
+
+        // 同时核对 annotation 置灰路径所用的 virtualFile 判断：
+        // withName 是 .vue 而非 *.module.* —— 这是关键分叉
+        val moduleEx = listOf(".module.css", ".module.scss", ".module.sass", ".module.less")
+        val modOk = vf != null && moduleEx.any { vf.name.endsWith(it, ignoreCase = true) }
+        println("PROBE[module-check] vfName=${vf?.name} passesModuleExtCheck=$modOk")
+    }
+
+    // ================================================================
+    // 回归：Vue 内嵌 <style module> 的「未使用置灰」判定——
+    //        走生产路径 UnusedCssModuleClassInspection.snapshotFor（内部含 findReferencingSourceFiles
+    //        与 resolveContainerForUsageScan），断言被引用的 card 计入 used、未被引用的 unused 不在 used。
+    //        （修复前：bindingName 被拼成 $$style 扫不到引用 → used 为空 → card 被置灰，即用户报告的 bug）
+    // ================================================================
+    @Test
+    fun probe08_vueEmbeddedClassUsedIsNotGrayed() {
+        val f = myFixture.configureByText(
+            "ProbeRegress.vue",
+            """
+            <template>
+              <div :class="${'$'}style.card"></div>
+              <span :class="${'$'}style['flex-item']">x</span>
+            </template>
+            <style module>
+            .card { color: red; }
+            .flex-item { color: blue; }
+            .unused { opacity: 0; }
+            </style>
+            """.trimIndent()
+        )
+        val ruleset = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(
+            f, com.intellij.psi.css.CssRuleset::class.java
+        ).firstOrNull { it.selectorList?.text?.contains(".card") == true }
+        Assert.assertNotNull("应有 .card 的 CssRuleset", ruleset)
+        val cssFile = ruleset!!.containingFile
+
+        // --- 诊断 1：cssFile 的形状 ---
+        println("PROBE[diag-cssfile] class=${cssFile::class.java.simpleName} " +
+            "isXmlFile=${cssFile is com.intellij.psi.xml.XmlFile} vfName=${cssFile.virtualFile?.name}")
+
+        val snap = com.pan.dashstyle.inspection.UnusedCssModuleClassInspection().snapshotFor(cssFile)
+        println("PROBE[regress-vue] used=${snap.used.sorted()} hasDynamic=${snap.hasDynamic} " +
+            "isCssModule=${com.pan.dashstyle.support.CssModuleResolver.isCssModuleFile(cssFile)}")
+
+        // --- 诊断 2：用与生产路径一致的方式（findVueStyleModuleTag + VueStyleTag 容器）直接扫描 ---
+        val modTag = com.pan.dashstyle.support.CssModuleResolver.findVueStyleModuleTag(cssFile)
+        println("PROBE[diag-modaTag] found=${modTag != null} aliasAttr=${modTag?.getAttributeValue("module")}")
+        val tplTag = com.pan.dashstyle.support.Util.findTagInFile(cssFile, "template")
+        println("PROBE[diag-template] found=${tplTag != null}")
+        val attrs = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(
+                cssFile, com.intellij.psi.xml.XmlAttribute::class.java
+            ).map { "${it.name}=${it.value}" }
+        println("PROBE[diag-attrs] $attrs")
+        if (modTag != null) {
+            val direct = com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction<
+                Pair<MutableSet<String>, Boolean>
+            > {
+                com.pan.dashstyle.support.CssModuleUsageScanner.scanUsages(
+                    cssFile,
+                    com.pan.dashstyle.support.CssModuleResolver.CssContainer.VueStyleTag(modTag!!, "\$style", cssFile)
+                )
+            }
+            println("PROBE[direct-scan] used=${direct.first.sorted()} hasDynamic=${direct.second}")
+        }
+
+        Assert.assertTrue("card 被 \$style.card 引用，不应被置灰，必须计入 used（实际 used=${snap.used.sorted()}, hasDynamic=${snap.hasDynamic}）",
+            snap.used.contains("card"))
+        Assert.assertTrue("flex-item 被 \$style['flex-item'] 引用，必须计入 used（实际 used=${snap.used.sorted()}）",
+            snap.used.contains("flex-item"))
+        Assert.assertFalse("unused 未被引用，应仍在置灰候选（即未出现在 used）",
+            snap.used.contains("unused"))
+    }
+
     @Test
     fun probe06_inlineStylesDecoratorCssRuleset() {
         val f = myFixture.configureByText(
