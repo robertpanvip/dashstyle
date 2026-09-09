@@ -252,8 +252,27 @@ object CssModuleResolver {
      * 定位 cssFile 所在的 Vue `<style module>` 标签。
      * cssFile 既可以是内嵌 CSS 的 PsiFile（沿祖先找包裹的 <style> 标签），
      * 也可以是 Vue/Xml 根文件本身（在其子元素中找 <style module>）。
+     *
+     * 性能：结果按 cssFile 挂文件级 CachedValue（依赖 cssFile 自身 PSI）。原因：这个判定在
+     * Annotator / Inspection 里对**每个 CssRuleset × 每次高亮 pass** 都会被调用，
+     * 无 module 标签时的"情形 B"需要对整个 .vue 文件做一次 findChildrenOfType 全树遍历；
+     * 不缓存会导致每个 ruleset 都重复整文件遍历（大 .vue + 几十 ruleset = 每 pass 几十次全树扫）。
      */
     fun findVueStyleModuleTag(cssFile: PsiFile): XmlTag? {
+        if (cssFile.virtualFile?.name?.endsWith(".vue", ignoreCase = true) != true) return null
+        return com.intellij.psi.util.CachedValuesManager.getManager(cssFile.project).getCachedValue(
+            cssFile,
+            com.intellij.psi.util.CachedValueProvider {
+                com.intellij.psi.util.CachedValueProvider.Result.create(
+                    locateVueStyleModuleTagUncached(cssFile),
+                    cssFile
+                )
+            }
+        )
+    }
+
+    /** findVueStyleModuleTag 的实际计算（无缓存）；仅应在缓存 provider 内被调用。 */
+    private fun locateVueStyleModuleTagUncached(cssFile: PsiFile): XmlTag? {
         if (cssFile.virtualFile?.name?.endsWith(".vue", ignoreCase = true) != true) return null
         return runCatching {
             // 情形 A：内嵌 CSS → 沿 context 祖先找到包裹它的 <style> 标签

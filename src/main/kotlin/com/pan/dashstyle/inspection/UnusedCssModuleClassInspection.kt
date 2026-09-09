@@ -344,15 +344,20 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             val snap = computeFileSnapshot(cssFile, references)
             val deps = mutableListOf<Any>()
             deps += cssFile
+            // 依赖每个引用源文件自身：编辑引用源（含在其中新增/删除 $style.xxx 引用或 import）→ 该
+            // 文件 PSI 变化 → 快照失效重算，used 立即更新。
             for ((srcPsi, _) in references) deps += srcPsi
-            // 覆盖"新增 import / 新增引用文件"这类结构变化：跟踪 JS/TS/Vue 的 AST 变更，
-            // 比全局 MODIFICATION_COUNT 细得多（其它语言文件改动不会触发重算）。
-            deps += com.intellij.psi.util.PsiModificationTracker.getInstance(cssFile.project)
-                .forLanguages { lang ->
-                    val id = lang.id.lowercase()
-                    id == "javascript" || id == "html" || id == "vue" ||
-                        id.contains("typescript") || id.contains("jsx")
-                }
+            // 注意：这里**不能**再加 PsiModificationTracker.forLanguages(js/html/vue) 之类的全局依赖
+            // —— 它会在任何 JS/Vue 文件的任意代码块修改时 bump：用户在无关文件函数体内打一个字，
+            // 所有 module 快照都被判失效，下一次 pass 逐个重算（每次重算含一次全项目 ReferencesSearch），
+            // module 文件越多越卡（用户反馈：装插件后大项目明显变卡）。
+            // 覆盖「新增 import 引用」的失效策略：
+            //   ① module 尚无任何引用源 → references 为空，上方 hasDynamic 分支已依赖全局
+            //      PsiModificationTracker 实例（任意代码改动都会失效重算），首个 import 出现即可恢复；
+            //   ② module 已有引用源、再有**新文件**开始 import 它 → 新文件不在 references 集合内，
+            //      快照会短暂不失效（最迟在 cssFile 或任一既有引用源被编辑后重算）。
+            //      这是刻意的取舍：不置灰正确性（references 为空才可能误置灰，已被①的保守分支覆盖）
+            //      不受影响，只可能延迟「取消置灰」一拍，换取避免「每次无关编辑全量重算」的性能问题。
             return CachedValueProvider.Result.create(snap, deps)
         }
 

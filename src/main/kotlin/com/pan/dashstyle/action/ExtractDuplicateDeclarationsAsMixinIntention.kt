@@ -17,6 +17,8 @@ import com.intellij.psi.PsiFile
 import com.intellij.psi.xml.XmlTag
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
+import com.intellij.psi.util.CachedValueProvider
+import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.util.PsiTreeUtil
 
 /** 提取门槛：共享声明（重复的 "属性:值"）至少 3 条才提取，避免单条共享也滥竽充数。 */
@@ -54,14 +56,39 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
     override fun getFamilyName(): String = message("intention.extract.mixin.family")
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean = runCatching {
+        val selection = editor.selectionModel
+        val hasSelection = runCatching { selection.hasSelection() }.getOrDefault(false)
+        // 无选区：最常见的可用性评估（光标移动/窗口切换都会触发）。结果只依赖作用域本身，
+        // 走文件/作用域级 CachedValue —— 不再每次对整份 CSS/Vue 全量 findChildrenOfType + 分组签名
+        // （旧实现：每次光标一动就对整个文件做一遍 O(N) 计算，是"打开/编辑项目卡顿"的主因之一）。
+        if (!hasSelection) {
+            return@runCatching cachedScopeHasDuplicates(project, file, editor.caretModel.offset)
+        }
+        // 有选区：按选区过滤（低频路径，选区通常较小；全选大文件时可接受一次性计算）。
         val scope = resolveScope(file, editor.caretModel.offset) ?: return@runCatching false
         val root = scopeRoot(scope) ?: return@runCatching false
-        val selection = editor.selectionModel
         val range = selectionRangeOrNull(selection, file)
         val rules = collectCandidateRulesets(root, range)
         // 共享声明（签名里的 prop:value 段）>= 3 且出现一组重复（size>=2）才显示，避免单条共享也滥竽充数
         groupBySignature(rules).any { (sign, list) -> list.size >= 2 && sign.size >= MIN_SHARED_DECLARATIONS }
     }.getOrDefault(false)
+
+    /**
+     * 无选区时的可用性判定：以「作用域根」（.css/.scss/.less 文件或单个 Vue <style> 标签）
+     * 为 key 缓存"是否存在可提取的重复组"。依赖作用域根自身的 PSI：内容改动（含编辑）才失效；
+     * 纯光标移动 / 窗口切换全部命中缓存。
+     */
+    private fun cachedScopeHasDuplicates(project: Project, file: PsiFile, offset: Int): Boolean {
+        val scope = resolveScope(file, offset) ?: return false
+        val root = scopeRoot(scope) ?: return false
+        return CachedValuesManager.getManager(project).getCachedValue(root, CachedValueProvider {
+            val rules = collectCandidateRulesets(root, null) // 无选区 → 整个 scope
+            val has = groupBySignature(rules).any { (sign, list) ->
+                list.size >= 2 && sign.size >= MIN_SHARED_DECLARATIONS
+            }
+            CachedValueProvider.Result.create(has, root)
+        })
+    }
 
     override fun invoke(project: Project, editor: Editor, file: PsiFile) {
         val scope = runCatching { resolveScope(file, editor.caretModel.offset) }.getOrNull() ?: return
@@ -130,13 +157,24 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
                 if ((tagName(cur) ?: "").equals("style", ignoreCase = true)) return Scope.VueStyleScope(cur, file)
                 cur = cur.parent
             }
-            val all = PsiTreeUtil.findChildrenOfType(file, PsiElement::class.java)
-                .filter { (tagName(it) ?: "").equals("style", ignoreCase = true) }
-                .toList()
-            if (all.size == 1) return Scope.VueStyleScope(all.first(), file)
-            return null
+            // 向上没找到 style（光标在 <template>/<script> 等区域）：只有当整个 .vue 恰好有
+            // 唯一一个 <style> 时才把该 style 作为 scope。此处走文件级缓存 —— 旧实现每次
+            // 都对整个 .vue 做 PsiTreeUtil.findChildrenOfType(file, PsiElement) 全树构建再过滤，
+            // 光标在 template 里每动一下都重复整文件遍历（大单文件组件尤甚）。
+            val single = cachedSingleVueStyleTag(file) ?: return null
+            return Scope.VueStyleScope(single, file)
         }
         return null
+    }
+
+    /** 缓存「整个 .vue 文件只有一个 <style> 标签」的探测结果，依赖文件 PSI。 */
+    private fun cachedSingleVueStyleTag(file: PsiFile): XmlTag? {
+        return CachedValuesManager.getManager(file.project).getCachedValue(file, CachedValueProvider {
+            val tags = PsiTreeUtil.findChildrenOfType(file, XmlTag::class.java)
+                .filter { it.name.equals("style", ignoreCase = true) }
+            val result = if (tags.size == 1) tags.firstOrNull() else null
+            CachedValueProvider.Result.create(result, file)
+        })
     }
 
     private fun scopeRoot(scope: Scope): PsiElement? = when (scope) {

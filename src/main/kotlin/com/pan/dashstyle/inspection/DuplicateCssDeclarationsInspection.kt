@@ -88,54 +88,26 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
     }
 
     private fun inspectStyleScope(root: PsiElement, contextFile: PsiFile, holder: ProblemsHolder, kind: ScopeKind) {
-        val rulesets = PsiTreeUtil.findChildrenOfType(root, CssRuleset::class.java)
-            .filter { rs -> rs.block != null }
-        if (rulesets.size < 2) return
-
-        // ruleset → 归一化声明签名
-        data class Entry(val ruleset: CssRuleset, val declarations: List<CssDeclaration>, val signature: String)
-        val entries = rulesets.mapNotNull { rs ->
-            val decls = directDeclarations(rs.block)
-            if (decls.size < 1) return@mapNotNull null
-            val signature = DeclarationSignatureUtil.computeSignatureFromDeclarations(decls)
-            if (signature.isBlank()) return@mapNotNull null
-            Entry(rs, decls, signature)
-        }
-
-        // 按签名分组，只看重复规则数 >= 2 且共享声明数 >= MIN_SHARED_DECLARATIONS 的组
-        val groups = entries.groupBy { it.signature }
-            .filterValues { it.size >= 2 && it.first().declarations.size >= MIN_SHARED_DECLARATIONS }
+        // 性能：全文件分组结果按「作用域根」挂文件级 CachedValue。
+        // 每次高亮 pass 的 buildVisitor 都会走到这里，若每次全文件 findChildrenOfType + 签名分组，
+        // 大 CSS/Vue 文件会每 pass 都做一次 O(文件大小) 重复计算（用户反馈：打开/编辑项目明显卡）。
+        // 见 companion.cachedDuplicateGroups（依赖 scope 根自身 PSI，改动时才失效重算）。
+        val groups = cachedDuplicateGroups(root)
         if (groups.isEmpty()) return
 
-        for ((_, group) in groups) {
-            // 重复组的每一处都高亮 + 带 QuickFix（之前只高亮 group.drop(1)，用户把光标放在第一个 ruleset 上
-            // 时看不到任何 warning，导致「没实现」的错觉；现在整组所有位置都显式标黄。）
+        for (group in groups) {
             val fixes: Array<LocalQuickFix> =
-                arrayOf(ExtractCommonRuleQuickFix(group.map { it.ruleset }, group.first().declarations))
-            val count = group.size
-            val commonDecl = group.first().declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
-                (if (group.first().declarations.size > 3) "\n  ..." else "")
+                arrayOf(ExtractCommonRuleQuickFix(group.rulesets, group.declarations))
+            val count = group.rulesets.size
+            val commonDecl = group.declarations.joinToString("\n", limit = 3) { "  ${it.text}" } +
+                (if (group.declarations.size > 3) "\n  ..." else "")
             val msg = message("inspection.duplicate.declarations.problem.description", count, commonDecl)
-            for (entry in group) {
-                val range = entry.ruleset.block ?: continue
+            for (rs in group.rulesets) {
+                val range = rs.block ?: continue
                 holder.registerProblem(range, msg, ProblemHighlightType.GENERIC_ERROR_OR_WARNING, *fixes)
             }
         }
     }
-
-    /** 归一化签名委托 DeclarationSignatureUtil */
-    private fun normalizeSignature(decls: List<CssDeclaration>): String =
-        DeclarationSignatureUtil.computeSignatureFromDeclarations(decls)
-
-    private fun normalizeValue(raw: String): String =
-        DeclarationSignatureUtil.normalizeValue(raw)
-
-    /**
-     * 只取 block 的直接 CssDeclaration 子节点（不递归进嵌套 ruleset）。
-     * 避免把 &:hover / &-active 等嵌套块内的声明当作父 block 的声明参与重复检测。
-     */
-    private fun directDeclarations(block: CssBlock?): List<CssDeclaration> =
-        Companion.directDeclarationsStatic(block)
 
     // ================================================================
     // QuickFix
@@ -469,6 +441,42 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                 }
                 val grouped = entries.groupBy { it.signature }
                 CachedValueProvider.Result.create(grouped, cssFile)
+            })
+        }
+
+        /** 一次作用域扫描产出的一个「重复组」（供 inspection 高亮复用）。 */
+        private data class DuplicateGroup(
+            val rulesets: List<CssRuleset>,
+            val declarations: List<CssDeclaration>
+        )
+
+        /**
+         * buildVisitor 路径（Inspection 自身）的作用域级分组缓存：以作用域根（CSS 文件 /
+         * Vue <style> 标签 / stylesheet PSI）为 key + 依赖。避免每次高亮 pass 对整个
+         * 文件重新 findChildrenOfType + 签名分组（大文件 O(N) 每 pass 重复）。
+         * 与 groupedSnapshot 的区别：按「作用域根」而不是「整个文件」分组 ——
+         * .vue 文件多个 <style> 块必须各自独立分组，不能混扫（混扫会把两个 style 里
+         * 相同的声明误判为跨块重复）。结果等价于 buildVisitor 逐 scope 的原始实现。
+         */
+        private fun cachedDuplicateGroups(root: PsiElement): List<DuplicateGroup> {
+            return CachedValuesManager.getManager(root.project).getCachedValue(root, CachedValueProvider {
+                val rulesets = PsiTreeUtil.findChildrenOfType(root, CssRuleset::class.java).filter { it.block != null }
+                val bySig = hashMapOf<String, MutableList<Entry>>()
+                for (rs in rulesets) {
+                    val decls = directDeclarationsStatic(rs.block)
+                    if (decls.isEmpty()) continue
+                    val sig = normalizeSignatureStatic(decls)
+                    if (sig.isBlank()) continue
+                    bySig.getOrPut(sig) { mutableListOf() } += Entry(rs, decls, sig)
+                }
+                val groups = bySig.values.mapNotNull { list ->
+                    if (list.size < 2 || list.first().declarations.size < MIN_SHARED_DECLARATIONS) {
+                        null
+                    } else {
+                        DuplicateGroup(list.map { it.ruleset }, list.first().declarations)
+                    }
+                }
+                CachedValueProvider.Result.create(groups, root)
             })
         }
     }
