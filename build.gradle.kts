@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.4.1"
+version = "1.4.2"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.4.2</h3>
+<ul>
+    <li>🐞 修复 Vue 单文件组件中「新增 class、点击菜单自动创建对应 class 后 CSS 仍被置灰为未使用」：<code>&lt;style module&gt;</code> 的引用源别名在普通字符串里误用了 raw-string 的 <code>${'$'}{class="code"}</code> 转义，实际生成的是字面 <code>${'$'}{class="code"}style</code>，导致扫描器匹配不到模板里的 <code>${'$'}style.card</code> 引用，所有类都被误判 dead code；现已改为正确的 <code>\${'$'}style</code> 转义</li>
+    <li>🐞 修复 <code>isCssModuleFile</code> 用 <code>endsWith(".module.")</code> 判定导致的纯 module 文件漏判：<code>App.module.css</code> 实际以 <code>.css</code> 结尾，并不以 <code>.module.</code> 结尾，此前会被误判为非 CSS Module 而跳过整个置灰分析；现改为「去扩展名后 basename 以 <code>.module</code> 结尾」判定，恢复 <code>*.module.css/scss/sass/less</code> 的正常未使用置灰</li>
+</ul>
 <h3>1.4.1</h3>
 <ul>
     <li>✨ 支持提取<strong>静态字符串</strong>内联样式：<code>style="margin-block: unset"</code> 这类静态 CSS 声明字符串此前会提示"非对象形式"而无法提取，现在直接按 CSS 声明解析提取（<code>:style="'css'"</code> 内层引号字符串同样支持）；动态表达式（三元、变量）仍明确拒绝并给出说明</li>
