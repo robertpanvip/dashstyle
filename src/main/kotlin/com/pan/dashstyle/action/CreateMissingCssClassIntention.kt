@@ -10,10 +10,7 @@ import com.intellij.codeInsight.intention.impl.BaseIntentionAction
 import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.lang.css.CSSLanguage
 import com.intellij.lang.javascript.psi.*
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileTypes.PlainTextLanguage
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -137,26 +134,12 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
         }
 
         // 打开目标文件并把光标定位到新建规则的 {} 内
-        ApplicationManager.getApplication().invokeLater {
-            val psi = when (container) {
-                is CssModuleResolver.CssContainer.ImportedFile -> container.psiFile
-                is CssModuleResolver.CssContainer.VueStyleTag -> container.containingFile
-                else -> return@invokeLater
-            }
-            val doc = PsiDocumentManager.getInstance(project).getDocument(psi) ?: return@invokeLater
-            val offset = run {
-                val idx = doc.charsSequence.indexOf(".$kebab")
-                if (idx < 0) 0 else {
-                    val braceOpen = doc.charsSequence.indexOf('{', idx)
-                    if (braceOpen >= 0) braceOpen + 1 else idx + kebab.length + 1
-                }
-            }
-            val vf = psi.virtualFile ?: targetFile
-            if (vf.isValid) {
-                val fd = OpenFileDescriptor(project, vf, offset)
-                FileEditorManager.getInstance(project).openTextEditor(fd, true)
-            }
-        }
+        val navFile = when (container) {
+            is CssModuleResolver.CssContainer.ImportedFile -> container.virtualFile
+            is CssModuleResolver.CssContainer.VueStyleTag -> container.containingFile.virtualFile
+            else -> null
+        } ?: targetFile
+        Util.navigateToLastCssRule(project, navFile, kebab)
     }
 
     // ----------------------------------------------------------------

@@ -7,6 +7,7 @@ import com.pan.dashstyle.support.*
 import com.pan.dashstyle.annotator.*
 
 import com.intellij.codeInsight.intention.impl.BaseIntentionAction
+import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.SelectionModel
@@ -54,6 +55,17 @@ class ExtractDuplicateDeclarationsAsMixinIntention : BaseIntentionAction() {
 
     override fun getText(): String = message("intention.extract.mixin.text")
     override fun getFamilyName(): String = message("intention.extract.mixin.family")
+
+    /**
+     * 禁用自动预览。
+     *
+     * 平台默认预览会在文件副本上调用 invoke()，而本意图内部会开启写命令
+     * （`WriteCommandAction`）并对 scope 做整文档替换；预览期不允许启动写命令，
+     * 会抛 "Side effect occurred on invoking the intention ... on a copy of the file"。
+     * 故直接返回 EMPTY，平台退化为展示意图描述。
+     */
+    override fun generatePreview(project: Project, editor: Editor, file: PsiFile): IntentionPreviewInfo =
+        IntentionPreviewInfo.EMPTY
 
     override fun isAvailable(project: Project, editor: Editor, file: PsiFile): Boolean = runCatching {
         val selection = editor.selectionModel

@@ -10,8 +10,6 @@ import com.intellij.codeInsight.intention.impl.BaseIntentionAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileTypes.PlainTextLanguage
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.InputValidatorEx
@@ -278,12 +276,13 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
                 replaceStyleAttributeWithClass(loc, chosenName, target)
             }
 
-        if (target is FileTarget) {
-            val vf = LocalFileSystem.getInstance().findFileByPath(target.absolutePath)
-            if (vf != null && vf.isValid) {
-                val fd = OpenFileDescriptor(project, vf, 0)
-                FileEditorManager.getInstance(project).openTextEditor(fd, true)
-            }
+        // 打开目标（module 文件 / Vue SFC）并把光标定位到刚追加的规则内。
+        // 注意：必须放在下方模态成功提示「之后」——模态对话框会泵送 EDT 事件队列，
+        // 若提前排队导航，焦点可能在对话框关闭时被还原，导致光标没落在新建规则上。
+        val navTarget = when (target) {
+            is FileTarget -> LocalFileSystem.getInstance().findFileByPath(target.absolutePath)
+            is VueStyleModuleTarget -> target.styleTag.containingFile?.virtualFile
+            else -> null
         }
 
         val declCount = cssDeclarations.lineSequence().filter { it.contains(':') }.count()
@@ -292,6 +291,8 @@ class InlineStyleToCssModuleIntention : BaseIntentionAction() {
             message("intention.extract.success.message", chosenName, declCount, target.toString(), cssDeclarations.trim()),
             message("intention.extract.success.title")
         )
+
+        Util.navigateToLastCssRule(project, navTarget, chosenName)
     }
 
     /**
