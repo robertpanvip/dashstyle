@@ -8,6 +8,7 @@ import com.pan.dashstyle.annotator.*
 
 import com.intellij.codeInsight.intention.impl.BaseIntentionAction
 import com.intellij.lang.css.CSSLanguage
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.lang.javascript.psi.*
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
@@ -113,14 +114,20 @@ class CreateMissingCssClassIntention : BaseIntentionAction() {
             return
         }
 
-        when (container) {
-            is CssModuleResolver.CssContainer.ImportedFile -> {
-                appendRuleToFile(project, container.psiFile, kebab, tailwindCss)
-            }
-            is CssModuleResolver.CssContainer.VueStyleTag -> {
-                appendRuleToStyleTag(project, container.styleTag, kebab, tailwindCss)
-            }
-            else -> {}
+        runCatching {
+            WriteCommandAction.writeCommandAction(project)
+                .withName(message("intention.create.missing.class.command.name"))
+                .run<Nothing> {
+                    when (container) {
+                        is CssModuleResolver.CssContainer.ImportedFile -> {
+                            appendRuleToFile(project, container.psiFile, kebab, tailwindCss)
+                        }
+                        is CssModuleResolver.CssContainer.VueStyleTag -> {
+                            appendRuleToStyleTag(project, container.styleTag, kebab, tailwindCss)
+                        }
+                        else -> {}
+                    }
+                }
         }
 
         // 打开目标文件并把光标定位到新建规则的 {} 内
