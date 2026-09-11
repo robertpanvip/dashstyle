@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.4.3"
+version = "1.4.4"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.4.4</h3>
+<ul>
+    <li>🐞 修复 Alt+Enter 意图预览报错（<code>Must not change PSI outside command or undo-transparent action</code>）：平台会在「文件副本 + 后台线程 + 禁止副作用」的预览会话里直接调用 <code>invoke()</code>，而「在 CSS Module 中创建缺失的 class」会写入磁盘上的物理 CSS Module 文件、「提取重复声明为 mixin」会在预览里开启写命令，都无法在预览会话中安全执行。现两处意图改为返回 <code>IntentionPreviewInfo.EMPTY</code> 关闭自动预览（平台退化为展示意图描述），正常执行路径不受影响</li>
+    <li>🎯 修复自动创建 class 后光标未聚焦到刚创建的规则：新增统一的 <code>Util.navigateToLastCssRule</code>，打开目标文件（<code>*.module.*</code> 或 Vue SFC）后把光标定位到最后一条新建规则的大括号内（SASS 缩进语法定位到选择器行末）并滚动居中；修复「提取内联样式到 CSS Module」此前固定打开到文件顶部、以及 Vue 场景完全不定位的问题</li>
+</ul>
 <h3>1.4.3</h3>
 <ul>
     <li>⚡ 性能优化：修复打开/编辑包含大量 CSS / SCSS / LESS / Vue 文件的（新）项目时明显卡顿——多类功能对整份文件反复做无缓存的全量扫描，现已收敛：
