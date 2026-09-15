@@ -307,6 +307,71 @@ class ProbeVueAngularSandboxTest : BasePlatformTestCase() {
             snap.used.contains("unused"))
     }
 
+    // ================================================================
+    // 复现用户报告：:class="$style['assistant']"（单引号中括号 + 纯小写单词）
+    // 引用 <style module> 里的空规则体 .assistant {} —— 不应置灰。
+    // 诊断输出：模板表达式是否被 Vue 插件解析为 JS PSI（路径 1 可用性）、
+    //           resolveQualifier 的解析结果、生产路径 snapshot 的最终 used，
+    //           以及 Annotator / Inspection 两个置灰入口的实际判定。
+    // ================================================================
+    @Test
+    fun probe09_vueBracketPureWordUsedNotGrayed() {
+        val f = myFixture.configureByText(
+            "ProbeBracket.vue",
+            """
+            <template>
+              <div :class="${'$'}style['assistant']">hi</div>
+            </template>
+            <style module>
+            .assistant {
+            }
+            </style>
+            """.trimIndent()
+        )
+        // 诊断 1：模板表达式是否被解析成 JS PSI（决定走路径 1 还是正则 fallback）
+        val idx = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(
+            f, com.intellij.lang.javascript.psi.JSIndexedPropertyAccessExpression::class.java
+        )
+        println("PROBE09[idx-psi] size=${idx.size} texts=${idx.map { it.text }} " +
+            "qualifiers=${idx.map { it.qualifier?.text }} indexes=${idx.map { it.indexExpression?.text }}")
+        if (idx.isNotEmpty()) {
+            val q = idx.first().qualifier!!
+            val resolved = com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction<
+                Pair<com.pan.dashstyle.support.CssModuleResolver.CssContainer, String>?>
+            {
+                com.pan.dashstyle.support.CssModuleResolver.resolveQualifier(q, f)
+            }
+            val tagText = (resolved?.first as? com.pan.dashstyle.support.CssModuleResolver.CssContainer.VueStyleTag)?.styleTag?.text?.take(40)
+            println("PROBE09[resolve] container=${resolved?.first?.javaClass?.simpleName} alias=${resolved?.second} tagText=$tagText")
+        }
+
+        // 生产路径 snapshot（Annotator / Inspection 共用）
+        val ruleset = com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(
+            f, com.intellij.psi.css.CssRuleset::class.java
+        ).first()
+        val cssFile = ruleset.containingFile
+        val snap = com.pan.dashstyle.inspection.UnusedCssModuleClassInspection().snapshotFor(cssFile)
+        println("PROBE09[snap] used=${snap.used.sorted()} hasDynamic=${snap.hasDynamic}")
+
+        // 置灰入口 A（Annotator）决策模拟
+        val expanded = com.pan.dashstyle.support.CssSelectorUtil.expandSelector(ruleset)
+        val expandedClasses = com.pan.dashstyle.support.CssSelectorUtil.extractClassNames(expanded)
+        val allUnused = expandedClasses.all { it !in snap.used }
+        println("PROBE09[annotator] expanded=[$expanded] classes=$expandedClasses allUnused=$allUnused")
+
+        // 置灰入口 B（Inspection）端到端
+        myFixture.enableInspections(com.pan.dashstyle.inspection.UnusedCssModuleClassInspection())
+        val unusedProblems = myFixture.doHighlighting()
+            .filter { it.description?.contains("assistant") == true }
+        println("PROBE09[problems] ${unusedProblems.map { "${it.severity}:${it.description}" }}")
+
+        Assert.assertTrue("assistant 必须计入 used（实际 used=${snap.used.sorted()}, hasDynamic=${snap.hasDynamic}）",
+            snap.used.contains("assistant"))
+        Assert.assertFalse("annotator 不应判定整个 ruleset 未使用", allUnused)
+        Assert.assertTrue("inspection 不应对 assistant 报未使用问题（实际=${unusedProblems.map { it.description }}）",
+            unusedProblems.isEmpty())
+    }
+
     @Test
     fun probe06_inlineStylesDecoratorCssRuleset() {
         val f = myFixture.configureByText(

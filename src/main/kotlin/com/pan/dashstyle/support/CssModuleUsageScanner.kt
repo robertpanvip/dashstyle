@@ -106,10 +106,14 @@ object CssModuleUsageScanner {
                 used += if (name.contains("-")) name else NamingUtil.camelToKebab(name)
             }
             for (m in bracketPattern.findAll(value)) {
-                used += m.groupValues[1]
+                val name = m.groupValues[1]
+                used += name
+                used += if (name.contains("-")) name else NamingUtil.camelToKebab(name)
             }
             for (m in bracketSinglePattern.findAll(value)) {
-                used += m.groupValues[1]
+                val name = m.groupValues[1]
+                used += name
+                used += if (name.contains("-")) name else NamingUtil.camelToKebab(name)
             }
             // 动态引用 $alias[expr]（expr 不是字符串字面量）：
             // 匹配 $alias[ 之后第一个字符不是引号，说明是变量表达式

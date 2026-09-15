@@ -69,6 +69,28 @@ class UsageScanEdgeCaseTest : BasePlatformTestCase() {
     }
 
     @Test
+    fun `单引号 bracket camelCase 访问转换为 kebab 后命中`() {
+        val xml = myFixture.configureByText(
+            "AppCamelBracket.vue.xml",
+            """
+            <style module>
+            .agent-list { gap: 8px; }
+            </style>
+            <template>
+              <span :class="${'$'}style['agentList']">Item</span>
+            </template>
+            """.trimIndent()
+        )
+        val c = ApplicationManager.getApplication().runReadAction<CssContainer.VueStyleTag> { vueContainer(xml) }
+        val (used, _) = ApplicationManager.getApplication().runReadAction<Pair<MutableSet<String>, Boolean>> {
+            CssModuleUsageScanner.scanUsages(xml, c)
+        }
+        // 修复前 bracket 命中只存原样名 agentList，kebab 定义的 .agent-list 无法匹配而被误置灰
+        Assert.assertTrue("bracket 里的 camelCase agentList 应归一为 agent-list", "agent-list" in used)
+        Assert.assertTrue("原样名 agentList 也应保留", "agentList" in used)
+    }
+
+    @Test
     fun `module 别名 foo 的 dollar 引用可被扫描`() {
         val xml = myFixture.configureByText(
             "AppAlias.vue.xml",
