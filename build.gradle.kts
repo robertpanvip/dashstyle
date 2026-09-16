@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.4.4"
+version = "1.4.5"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,12 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.4.5</h3>
+<ul>
+    <li>🐞 修复「未使用 CSS Module class」置灰时把仅被 LESS mixin 调用或 <code>:extend</code> 引用的类误判为未使用：<code>.flex-center</code> 只被 <code>.timeout-setting { .flex-center(); }</code> 调用（无 JS/Vue 引用）时不再置灰；mixin 调用名用 PSI 选择器提取的定义类集合校验，避免把调用文本误当定义</li>
+    <li>💥 修复 Alt+Enter 意图菜单渲染时的 <code>PsiInvalidElementAccessException</code>：<code>ExtractCommonRuleQuickFix.getName()</code> 不再在渲染期（文件可能已被重新解析、元素已变为 stub 失效态）触碰 PSI，文案改为构造时预计算并缓存</li>
+    <li>🐞 修复 <code>${'$'}style['agentList']</code> 花括号字符串访问回退扫描漏匹配 kebab 系类名，导致 <code>.agent-list</code> 被误置灰</li>
+</ul>
 <h3>1.4.4</h3>
 <ul>
     <li>🐞 修复 Alt+Enter 意图预览报错（<code>Must not change PSI outside command or undo-transparent action</code>）：平台会在「文件副本 + 后台线程 + 禁止副作用」的预览会话里直接调用 <code>invoke()</code>，而「在 CSS Module 中创建缺失的 class」会写入磁盘上的物理 CSS Module 文件、「提取重复声明为 mixin」会在预览里开启写命令，都无法在预览会话中安全执行。现两处意图改为返回 <code>IntentionPreviewInfo.EMPTY</code> 关闭自动预览（平台退化为展示意图描述），正常执行路径不受影响</li>
