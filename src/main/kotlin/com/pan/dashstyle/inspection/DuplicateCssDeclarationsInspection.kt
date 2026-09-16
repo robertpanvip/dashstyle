@@ -116,10 +116,20 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
         private val duplicates: List<CssRuleset>,
         private val commonDeclarations: List<CssDeclaration>
     ) : LocalQuickFix {
-        override fun getName(): String {
-            val strategy = duplicates.firstOrNull()?.let { quickFixStrategy(it) } ?: "shared selector"
-            return "Extract ${commonDeclarations.size} shared declarations into a new common class ($strategy)"
+        // getName() 会在 Alt+Enter 菜单渲染时被框架调用（ShowIntentionsPass → QuickFixWrapper.getText），
+        // 此时文件可能已被重新解析，持有的 CssRuleset 已是 stub 失效元素，
+        // 触碰 containingFile 会抛 PsiInvalidElementAccessException（用户上报的 IDE 内部错误）。
+        // 因此在构造时（PSI 仍有效）就解析好策略文案并缓存，getName 不再触碰任何 PSI。
+        private val cachedName: String = run {
+            val strategy = try {
+                duplicates.firstOrNull()?.let { quickFixStrategy(it) } ?: "shared selector"
+            } catch (_: Exception) {
+                "shared selector"
+            }
+            "Extract ${commonDeclarations.size} shared declarations into a new common class ($strategy)"
         }
+
+        override fun getName(): String = cachedName
         override fun getFamilyName(): String = "DashStyle: Extract common CSS class"
 
         override fun applyFix(project: Project, descriptor: ProblemDescriptor) {

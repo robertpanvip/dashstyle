@@ -212,6 +212,12 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
         private val PSEUDO_PART_RE = Regex(""":+[\w-]+(?:\([^)]*\))?""")
         private val EXTEND_RE = Regex("""@extend\s*\.?([\w-]+)""")
         private val APPLY_RE = Regex("""@apply\s+([^;{}\n]+)""")
+        // LESS mixin 调用（声明块内）：.foo; / .foo(); / .foo(a, b)。
+        // 选择器不会以 ( 或 ; 收尾，因此「.name 后紧跟 ( 或 ;」只可能是 mixin 调用；
+        // 使用时再与 classesInFile 求交集兜底，杜绝值文本里的偶发误匹配。
+        private val LESS_MIXIN_CALL_RE = Regex("""(?:^|[^\w-])\.([_a-zA-Z][\w-]*)\s*(?:\(|;)""")
+        // LESS :extend(.foo) / &:extend(.foo all) 形式（SCSS 的 @extend 已由 EXTEND_RE 覆盖）
+        private val LESS_EXTEND_RE = Regex(""":extend\s*\(\s*\.?\s*([\w-]+)""")
         // :global(...) 括号形式：找 `:global(` 起始位置（后面用 indexOf(')') 找闭合）
         private val GLOBAL_PAREN_OPEN_RE = Regex(""":global\s*\(""", RegexOption.IGNORE_CASE)
         // :global { ... } 块形式：完整匹配 `:global`（作为独立单词）前面的非单词锚点
@@ -439,14 +445,35 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             //     .a .b {} 里出现的 nested class b 若在 classesInFile 中也保守算 used；
             //     同时把每个 ruleset 的 class 名按 identityHashCode 存进 Snapshot，
             //     避免 buildVisitor / inspectRuleset 每次 pass 都重新 extractClassNamesFromRuleset。
+            //     psiDefinedClasses：PSI 选择器提取出的全部定义类，供下方 mixin gate 使用。
             val classesByRuleset = HashMap<String, List<String>>()
+            val psiDefinedClasses = LinkedHashSet<String>()
             for (rs in runCatching { com.intellij.psi.util.PsiTreeUtil.findChildrenOfType(cssFile, CssRuleset::class.java) }.getOrDefault(emptyList())) {
                 val selText = runCatching { rs.selectorList?.text }.getOrNull().orEmpty()
                 for (nested in NESTED_CLASS_RE.findAll(selText).map { it.groupValues[1] }) {
                     if (nested in classesInFile) used += nested
                 }
                 val clsNames = extractClassNamesFromRuleset(rs)
+                psiDefinedClasses += clsNames
                 if (clsNames.isNotEmpty()) classesByRuleset[System.identityHashCode(rs).toString()] = clsNames
+            }
+
+            // --- LESS mixin 调用 / :extend 也算使用：
+            //     .flex-center 仅被 .timeout-setting 内的 .flex-center() 调用（无 JS/Vue 引用）时，
+            //     不应被误置灰。
+            //     mixin 的 gate 必须用 PSI 定义类集合而非 classesInFile：后者是全文文本扫描，
+            //     `.foo();` 调用文本自身就会被 MODULE_CLASS_RE 命中成假定义，交集永远为真；
+            //     且置灰管线只灰 extractClassNamesFromRuleset 提取出的类，
+            //     用同一套 PSI 提取做 gate 恰与管线严格对齐。
+            for (m in LESS_MIXIN_CALL_RE.findAll(cssText)) {
+                val name = m.groupValues[1].trim()
+                if (name in psiDefinedClasses) used += name
+            }
+            for (m in LESS_EXTEND_RE.findAll(cssText)) {
+                // :extend(.foo) 的 .foo 会被 PSEUDO_PART_RE 从选择器剥掉、PSI 集合拿不到，
+                // 故沿用全文 classesInFile 口径（与上方 @extend 扫描一致）
+                val raw = m.groupValues[1].trim()
+                if (raw in classesInFile) used += raw
             }
 
             return Snapshot(used, false, classesByRuleset, computeGlobalClassNames(cssText))
