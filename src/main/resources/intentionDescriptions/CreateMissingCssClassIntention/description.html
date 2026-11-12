@@ -1,0 +1,5 @@
+When <code>styles.fooBar</code> or <code>styles["foo-bar"]</code> has no corresponding CSS class,
+creates <code>.foo-bar { }</code> at the end of the target CSS Module (or Vue
+<code>&lt;style module&gt;</code>) and places the caret inside the braces. If the missing
+name matches a built-in Tailwind utility class, the expanded CSS declaration is generated
+instead of an empty block (e.g. <code>.flex { display: flex }</code>).

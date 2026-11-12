@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.4.5"
+version = "1.4.6"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.4.6</h3>
+<ul>
+    <li>🖥️ 兼容 WebStorm 2026.3：补齐三个 Intention 的 <code>intentionDescriptions/&lt;ClassName&gt;/description.html</code> 资源，修复启动期 Settings 可搜索选项扫描抛 <code>PluginException: Intention Description Dir URL is null</code>（plugin.xml 内联 <code>&lt;description&gt;</code> 已不足以满足新版 IDE 的硬性要求）</li>
+</ul>
 <h3>1.4.5</h3>
 <ul>
     <li>🐞 修复「未使用 CSS Module class」置灰时把仅被 LESS mixin 调用或 <code>:extend</code> 引用的类误判为未使用：<code>.flex-center</code> 只被 <code>.timeout-setting { .flex-center(); }</code> 调用（无 JS/Vue 引用）时不再置灰；mixin 调用名用 PSI 选择器提取的定义类集合校验，避免把调用文本误当定义</li>

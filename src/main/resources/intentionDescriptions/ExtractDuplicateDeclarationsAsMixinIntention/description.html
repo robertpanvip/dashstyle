@@ -1,0 +1,8 @@
+Scans the current CSS/SCSS/LESS file (or the selected portion) for
+rulesets sharing exactly the same declaration block body and
+factors them out into a single shared Less-style mixin (e.g.
+<code>.shared-padding { padding: 10px; }</code>), replacing each
+original ruleset's body with a mixin call (e.g.
+<code>.shared-padding;</code>). Nested blocks, strings and
+function calls like <code>linear-gradient(...)</code> /
+<code>url("...")</code> are preserved verbatim during comparison.
