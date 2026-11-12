@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.0"
+version = "1.5.1"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.1</h3>
+<ul>
+    <li>🟢 扩展支持 <code>:class</code> / <code>v-bind:class</code> 属性里的 JS 字符串字面量：<code>['a', computedVar, isB ? 'b' : 'c']</code> 中的 <code>'a'</code> 和 <code>'b'</code>/<code>'c'</code> 会被逐个替换为 <code>${'$'}style.xxx</code>（仅替换命中当前 scoped style 定义集合的字面量，computedVar 等动态表达式保持原样），从后往前逐段替换避免 offset 漂移</li>
+</ul>
 <h3>1.5.0</h3>
 <ul>
     <li>✨ 新 Intention：一键将 Vue SFC 的 <code>&lt;style scoped&gt;</code> 全量迁移到 <code>&lt;style module&gt;</code>（<code>VueScopedStyleToModuleIntention</code>）：收集当前 scoped style 里所有 CSS 类名，扫描模板里全部静态 <code>class="..."</code> 属性并改写为 <code>:class="${'$'}style.xxx"</code>（支持多类名、kebab-case 自动走 <code>${'$'}style["foo-bar"]</code> bracket 写法），然后在一个原子事务里把 style tag 从 <code>scoped</code> 升级为 <code>module</code>。安全跳过：动态 <code>:class</code> 绑定、模板插值 <code>{{...}}</code>、当前 scoped style 里未定义的 Tailwind/第三方组件 class</li>
