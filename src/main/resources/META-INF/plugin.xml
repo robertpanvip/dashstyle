@@ -310,6 +310,24 @@
             <bindToCode>true</bindToCode>
         </intentionAction>
 
+        <intentionAction>
+            <className>com.pan.dashstyle.action.VueScopedStyleToModuleIntention</className>
+            <category>DashStyle</category>
+            <description><![CDATA[
+              One-file migration for Vue SFCs still using <code>&lt;style scoped&gt;</code> but wanting
+              CSS Modules instead. The intention walks every static <code>class="..."</code> attribute,
+              rewrites classes defined in the current style to <code>:class="$style.xxx"</code>
+              (including <code>$style["kebab-name"]</code> for kebab-case names), and upgrades the
+              style tag from <code>scoped</code> to <code>module</code> in a single atomic transaction.
+              <br/>
+              <b>Safe-skip rules</b>: dynamic <code>:class</code> / <code>v-bind:class</code> bindings,
+              template interpolations (<code>{{...}}</code>), and classes that have no matching definition
+              in the current scoped style (Tailwind utilities, third-party component class names, etc.)
+              are left untouched.
+            ]]></description>
+            <bindToCode>true</bindToCode>
+        </intentionAction>
+
         <!-- postStartupActivity 诊断块已移除（DashStyleLanguageDumpActivity 用完即删） -->
     </extensions>
 

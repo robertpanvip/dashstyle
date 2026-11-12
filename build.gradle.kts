@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.4.6"
+version = "1.5.0"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.0</h3>
+<ul>
+    <li>✨ 新 Intention：一键将 Vue SFC 的 <code>&lt;style scoped&gt;</code> 全量迁移到 <code>&lt;style module&gt;</code>（<code>VueScopedStyleToModuleIntention</code>）：收集当前 scoped style 里所有 CSS 类名，扫描模板里全部静态 <code>class="..."</code> 属性并改写为 <code>:class="${'$'}style.xxx"</code>（支持多类名、kebab-case 自动走 <code>${'$'}style["foo-bar"]</code> bracket 写法），然后在一个原子事务里把 style tag 从 <code>scoped</code> 升级为 <code>module</code>。安全跳过：动态 <code>:class</code> 绑定、模板插值 <code>{{...}}</code>、当前 scoped style 里未定义的 Tailwind/第三方组件 class</li>
+</ul>
 <h3>1.4.6</h3>
 <ul>
     <li>🖥️ 兼容 WebStorm 2026.3：补齐三个 Intention 的 <code>intentionDescriptions/&lt;ClassName&gt;/description.html</code> 资源，修复启动期 Settings 可搜索选项扫描抛 <code>PluginException: Intention Description Dir URL is null</code>（plugin.xml 内联 <code>&lt;description&gt;</code> 已不足以满足新版 IDE 的硬性要求）</li>

@@ -1,0 +1,10 @@
+One-file migration for Vue SFCs still using <code>&lt;style scoped&gt;</code>:
+all static <code>class="..."</code> attributes that reference classes defined in the current
+style block are rewritten to <code>:class="$style.xxx"</code> (with <code>$style["kebab-name"]</code>
+for kebab-case names), and the style tag is upgraded from <code>scoped</code> to <code>module</code>
+in a single atomic transaction.
+<br/>
+<b>Safe-skip rules</b>: dynamic <code>:class</code> / <code>v-bind:class</code> bindings,
+template interpolations (<code>{{...}}</code>), and classes that have no matching definition
+in the current scoped style (Tailwind utilities, third-party component class names, etc.)
+are left untouched.
