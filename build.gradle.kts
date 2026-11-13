@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.4"
+version = "1.5.5"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,12 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.5</h3>
+<ul>
+    <li>🐞 修复 <code>DashStyleHighlightAnnotator</code> 画黄线范围太大：原来对整个 <code>ruleset.block</code>（<code>{ ... }</code> body）画波浪线，LESS/SCSS 深嵌套场景下嵌套 ruleset 子块也被黄线覆盖视觉非常扎眼；现已改为 <code>dedupDeclarationRange(block)</code> 只画该 ruleset 的**直接 declaration** 范围，排除所有嵌套 ruleset 子块</li>
+    <li>🐞 修复 LESS/SCSS 里作用域边界漏算导致 LCA（最近公共祖先）错误：<code>commonAncestorRuleset</code> / <code>ancestorRulesets</code> 原来只向上找 <code>CssRuleset</code> parent，漏掉了 <code>@media</code> / <code>@supports</code> / <code>@layer</code> / <code>@container</code> 等 at-rule 容器；改成向上遍历时所有能容纳 ruleset 的容器（<code>CssRuleset</code> / <code>CssAtRule</code> / <code>CssStylesheet</code> / <code>CssRulesetList</code>）都作为候选祖先，两个重复 ruleset 中间被 <code>@media</code> 隔开时 LCA 能正确落在 <code>@media</code> 里而不是跑到外面</li>
+    <li>🐞 修复 QuickFix 插入位置在父块 <code>{</code> 正后面导致缩进错乱：<code>computeInsertionOffset</code> 原来用 <code>block.textRange.startOffset + 1</code> 插在 <code>{</code> 之后，LESS/SCSS 里父块 <code>{</code> 后若有 <code>@media</code> / 空行，会把共享类插到这些节点之间导致缩进错位；改为找 LCA 容器内**第一个子 <code>CssRuleset</code>** 之前插入，保证和重复 ruleset 同级，缩进天然对齐</li>
+</ul>
 <h3>1.5.4</h3>
 <ul>
     <li>🐞 修复 <code>VueScopedStyleToModuleIntention</code> 收集 CSS 类名时从<b>整个文件全局</b>扫 <code>CssRuleset</code>，把不带 scoped 的普通 <code>&lt;style&gt;</code>（全局样式）里的类也误算进来：模板引用这些全局类的静态 <code>class="..."</code> 被误转成 <code>:class="${'$'}style.xxx"</code>，但 promote 只升级 scoped style，全局 style 保持原样，运行时 <code>${'$'}style.xxx</code> 找不到定义；现已限定只从当前 scoped style tag <b>子树内部</b> 提取类名</li>

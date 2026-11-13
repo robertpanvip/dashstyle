@@ -277,40 +277,66 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
          * 而不是总提到文件顶层。这样：
          *  1) 值里引用的 CSS 变量（var(...)）、LESS/SCSS 变量仍在原作用域内，不会失效；
          *  2) mixin / @extend 调用点都在该类定义之后（LESS 不允许使用尚未定义的要 mixin）。
-         * 当重复规则都位于顶层（无共同父 ruleset）时，回退到文件/tag 根的最前面。
+         * 当重复规则都位于顶层（无共同父容器）时，回退到文件/tag 根的最前面。
+         *
+         * 插入策略（BUG-3）：插在 LCA 容器内**第一个子 CssRuleset 之前**——保证和重复
+         * ruleset 同级，靠前位置。不能插在 { 正后面：LESS/SCSS 里如果父块 { 后是 @media
+         * 或空行，{+1 会把 .shared 插到这些节点之前导致缩进错乱；放在第一个 ruleset
+         * 之前，换行和缩进都天然对齐。
          */
         private fun computeInsertionOffset(duplicates: List<CssRuleset>): Int? {
-            val lca = commonAncestorRuleset(duplicates)
+            val lca = commonAncestorContainer(duplicates)
             if (lca != null) {
-                val block = lca.block ?: return null
-                // 插到该块开 `{` 之后，保证在调用点之前定义
-                return block.textRange.startOffset + 1
+                // 找到 LCA 里第一个子 CssRuleset（递归找整个子树的第一个 ruleset）
+                val firstChild = PsiTreeUtil.findChildOfType(lca, CssRuleset::class.java)
+                if (firstChild != null) return firstChild.textRange.startOffset
+                // 兜底：没有子 ruleset（理论上不太可能），退回到容器起始位置
+                return lca.textRange.startOffset + 1
             }
+            // 无共同父容器：都在顶层，回退到 stylesheet root 起始位置
             val root = findInsertionRoot(duplicates.first()) ?: return null
             return root.textRange.startOffset
         }
 
-        /** 最近公共父 ruleset（越深越近）；无则返回 null（代表都在顶层）。 */
-        private fun commonAncestorRuleset(duplicates: List<CssRuleset>): CssRuleset? {
-            var common: Set<CssRuleset>? = null
+        /**
+         * 判断一个 PsiElement 是否是「能包含 CssRuleset 的作用域容器」。
+         * JetBrains WebStorm 2025.3 CSS SDK 没有统一的 CssBlockOwner 接口，
+         * 这里用类型判断来覆盖所有能当作用域边界的节点：
+         *   - CssRuleset：嵌套 ruleset 的父容器（通过 .block 包含子 rulesets）
+         *   - CssStylesheet：文件级根容器（顶层 rulesets 的容器）
+         *   - CssRulesetList：CSS at-rule 和 rulesets 混合列表的容器
+         *   - CssAtRule：@media/@supports/@layer/@container/@keyframes/@page 等
+         *     所有 at-rule 子类都可能直接包含 rulesets
+         */
+        private fun isScopeContainer(p: PsiElement): Boolean =
+            p is CssRuleset || p is CssStylesheet || p is CssRulesetList || p is CssAtRule
+
+        /**
+         * 最近公共父**作用域容器**（不只是 CssRuleset，还包括 @media/@supports/@layer/@container 等 at-rule 块）。
+         *
+         * 关键（BUG-2）：LESS/SCSS 里的 `@media` 是真正的作用域边界——两个重复 ruleset 若一个在 @media 外、
+         * 一个在 @media 内，或两个被 @media 隔开，只算 CssRuleset 祖先的实现会算到 @media 外面去，
+         * 导致 .shared 被插到 @media 外而不是 @media 里，LESS mixin 就匹配不上 @media 内的调用点。
+         * 所以 ancestors 链必须把 at-rule 容器也算进去。
+         */
+        private fun commonAncestorContainer(duplicates: List<CssRuleset>): PsiElement? {
+            var common: Set<PsiElement>? = null
             for (rs in duplicates) {
-                // 候选链 = 从根到自身（含自身）：当某个重复规则本身就是另一个重复规则的祖先时，
-                // LCA 应是该重复规则本身，不能因为它的祖先链为空而被判定为「顶层」。
-                val chain = (ancestorRulesets(rs) + rs).toSet()
+                val chain = ancestorScopes(rs).toSet()
                 common = if (common == null) chain else common.intersect(chain)
                 if (common.isEmpty()) return null
             }
-            // 取深度最大的公共祖先
-            val candidates = common ?: return null  // duplicates 非空时不可能为 null，这里仅作编译器兜底
-            return candidates.maxByOrNull { ancestorRulesets(it).size }
+            val candidates = common ?: return null
+            // 取"最深"的那个——深度 = 从该容器到文件根之间还有多少其他容器祖先
+            return candidates.maxByOrNull { ancestorScopes(it).size }
         }
 
-        /** 自底向上的祖先 CssRuleset 链（不含自己）。 */
-        private fun ancestorRulesets(rs: CssRuleset): List<CssRuleset> {
-            val list = mutableListOf<CssRuleset>()
-            var p = rs.parent
+        /** 自底向上收集所有「作用域容器」祖先（不含自己）。 */
+        private fun ancestorScopes(start: PsiElement): List<PsiElement> {
+            val list = mutableListOf<PsiElement>()
+            var p = start.parent
             while (p != null) {
-                if (p is CssRuleset) list.add(p)
+                if (isScopeContainer(p)) list.add(p)
                 p = p.parent
             }
             return list

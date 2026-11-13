@@ -13,6 +13,8 @@ import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.psi.PsiElement
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.css.CssBlock
 import com.intellij.psi.css.CssDeclaration
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
@@ -108,11 +110,13 @@ class DashStyleHighlightAnnotator : Annotator {
         if (group.size < 2) return
 
         val msg = "${group.size} rules share identical declarations"
-        holder.newSilentAnnotation(HighlightSeverity.WEAK_WARNING)
-            .range(block)
-            .tooltip(msg)
-            .textAttributes(DUPLICATE_CSS_BLOCK_KEY)
-            .create()
+        // 黄线只画 declaration 范围（排除嵌套 ruleset 子块），
+        // 避免整个 { ... } body 全画波浪线太扎眼——用户要的是"声明重复"的提示，不是"块重复"
+        val declRange = dedupDeclarationRange(block)
+        val builder = declRange?.let { range ->
+            holder.newSilentAnnotation(HighlightSeverity.WEAK_WARNING).range(range)
+        } ?: holder.newSilentAnnotation(HighlightSeverity.WEAK_WARNING).range(block)
+        builder.tooltip(msg).textAttributes(DUPLICATE_CSS_BLOCK_KEY).create()
     }
 
     private fun locateStyleScopeRoot(rs: CssRuleset, file: PsiElement): PsiElement? {
@@ -132,6 +136,20 @@ class DashStyleHighlightAnnotator : Annotator {
 
     private fun normalizeSignature(rs: CssRuleset): String? =
         DeclarationSignatureUtil.computeSignature(rs)
+
+    /**
+     * 计算 block 内「直接声明部分」的整体范围（排除嵌套 ruleset 子块）。
+     * 把黄线限定在 declaration 区域——嵌套 ruleset 也是完整的 CssRuleset，
+     * 其 block 内可能有更多 declaration，若 block 整体画黄线会覆盖到嵌套块里，
+     * 在 LESS/SCSS 深嵌套场景下视觉上非常扎眼。
+     */
+    private fun dedupDeclarationRange(block: CssBlock): TextRange? {
+        val decls = DuplicateCssDeclarationsInspection.Companion.directDeclarationsStatic(block)
+        if (decls.isEmpty()) return null
+        val first = decls.first().textRange.startOffset
+        val last = decls.last().textRange.endOffset
+        return TextRange(first, last)
+    }
 
     private fun extractClassNamesFromRuleset(rs: CssRuleset): List<String> {
         // 委托给 CssSelectorUtil，避免内联 Regex className parser
