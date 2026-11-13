@@ -161,7 +161,7 @@ class DeclarationSignatureUtilTest {
     }
 
     @Test
-    fun `inherit/initial/unset 关键字原样小写`() {
+    fun `inherit initial unset 关键字原样小写`() {
         Assert.assertEquals("inherit", DeclarationSignatureUtil.normalizeValue("INHERIT"))
         Assert.assertEquals("initial", DeclarationSignatureUtil.normalizeValue("Initial"))
         Assert.assertEquals("unset", DeclarationSignatureUtil.normalizeValue("Unset"))
@@ -177,7 +177,7 @@ class DeclarationSignatureUtilTest {
     // ==================== 等价签名（说明 computeSignature 排序后才等价） ====================
 
     @Test
-    fun `两条声明 prop/value 相同但顺序不同 — 需要排序才等价`() {
+    fun `两条声明 prop value 相同但顺序不同 — 需要排序才等价`() {
         val a = DeclarationSignatureUtil.normalizeDeclaration("padding", "4px") + "|" +
                 DeclarationSignatureUtil.normalizeDeclaration("margin", "0")
         val b = DeclarationSignatureUtil.normalizeDeclaration("margin", "0") + "|" +

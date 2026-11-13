@@ -70,7 +70,7 @@ class DeclarationSignatureUtilPsiTest : BasePlatformTestCase() {
             .a { padding: 4px; margin: 0; }
             .b { margin: 0; padding: 4px; }
         """.trimIndent())
-        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
+        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java).toList()
 
         val sigA = computeSignature(rulesets[0])
         val sigB = computeSignature(rulesets[1])
@@ -84,7 +84,7 @@ class DeclarationSignatureUtilPsiTest : BasePlatformTestCase() {
             .a { padding: 4px; }
             .b { padding: 8px; }
         """.trimIndent())
-        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
+        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java).toList()
 
         val sigA = computeSignature(rulesets[0])
         val sigB = computeSignature(rulesets[1])
@@ -100,7 +100,7 @@ class DeclarationSignatureUtilPsiTest : BasePlatformTestCase() {
             .a { color: #f00; }
             .b { color: #FF0000; }
         """.trimIndent())
-        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
+        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java).toList()
 
         Assert.assertEquals("hex3 #f00 应归一为 #ff0000，签名相同",
             computeSignature(rulesets[0]), computeSignature(rulesets[1]))
@@ -112,7 +112,7 @@ class DeclarationSignatureUtilPsiTest : BasePlatformTestCase() {
             .a { margin:  4px   8px; }
             .b { margin: 4px 8px; }
         """.trimIndent())
-        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
+        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java).toList()
 
         Assert.assertEquals("内部多空白压缩后签名相同",
             computeSignature(rulesets[0]), computeSignature(rulesets[1]))
@@ -124,7 +124,7 @@ class DeclarationSignatureUtilPsiTest : BasePlatformTestCase() {
             .a { PADDING: 4px; }
             .b { padding: 4px; }
         """.trimIndent())
-        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
+        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java).toList()
 
         Assert.assertEquals("prop 名 PADDING 应归一为 padding",
             computeSignature(rulesets[0]), computeSignature(rulesets[1]))
@@ -169,7 +169,7 @@ class DeclarationSignatureUtilPsiTest : BasePlatformTestCase() {
             }
         """.trimIndent())
 
-        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java)
+        val rulesets = PsiTreeUtil.findChildrenOfType(file, CssRuleset::class.java).toList()
         // SCSS 嵌套解析后会有 2 个 CssRuleset：.parent 和 .parent .child
         Assert.assertTrue("应至少有 2 个 ruleset（父 + 子），实际 ${rulesets.size}", rulesets.size >= 2)
 
