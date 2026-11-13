@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.6"
+version = "1.5.7"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.7</h3>
+<ul>
+    <li>🧪 测试增强：<code>DeclarationSignatureUtil</code> 新增 36 个回归测试（27 纯函数单元 + 9 PSI 集成），锁定重复 CSS 检测的签名归一化行为（hex3→hex6 / 空白压缩 / 尾逗号 / lowercase / CSS 变量 / 嵌套 SCSS 边界）</li>
+</ul>
 <h3>1.5.6</h3>
 <ul>
     <li>🧪 新增约 28 个端到端回归测试：<code>VueScopedStyleToModuleIntentionTest</code>（15 用例，覆盖 v1.5.0~v1.5.5 全流程 + isAvailable 边界）、<code>DuplicateCssInspectionEdgeCaseTest</code>（10 用例，覆盖 MIN_SHARED_DECLARATIONS=3 阈值边界 + v1.5.5 三个 bug 回归：黄线范围 / @media LCA / @supports LCA）、<code>LessMixinUnusedDetectionTest</code> 扩充 3 用例（跨父级 mixin 调用 / 参数化 mixin / :extend all 形式）</li>
