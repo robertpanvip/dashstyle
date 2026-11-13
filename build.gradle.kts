@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.1"
+version = "1.5.2"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.2</h3>
+<ul>
+    <li>🐞 紧急修复 <code>VueScopedStyleToModuleIntention</code> 迁移后 <code>&lt;style scoped&gt;</code> 变成 <code>&lt;style module&lt;style&gt;</code> 标签头粘在一起：<code>CssModuleFileResolver.promoteVueStyleModule</code> 里用了零宽正向先行断言 <code>(?=^&lt;style\b)</code>，替换不消耗字符导致原 <code>&lt;style&gt;</code> 残留；现已改为直接匹配 <code>^&lt;style\b</code> 替换</li>
+</ul>
 <h3>1.5.1</h3>
 <ul>
     <li>🟢 扩展支持 <code>:class</code> / <code>v-bind:class</code> 属性里的 JS 字符串字面量：<code>['a', computedVar, isB ? 'b' : 'c']</code> 中的 <code>'a'</code> 和 <code>'b'</code>/<code>'c'</code> 会被逐个替换为 <code>${'$'}style.xxx</code>（仅替换命中当前 scoped style 定义集合的字面量，computedVar 等动态表达式保持原样），从后往前逐段替换避免 offset 漂移</li>

@@ -195,9 +195,9 @@ object CssModuleFileResolver {
         val newOpen = open
             // 摘除 scoped 属性（bool 属性，后面跟空格、/> 或 >）
             .replace(Regex("""\s+scoped(?=\s|/?>)"""), "")
-            // 若尚无 module，则在 <style 后补上 module
+            // 若尚无 module，则把开头的 <style 替换为 <style module
             .let { if (it.contains(Regex("""\bmodule(?=\s|/?>|=)"""))) it
-                   else it.replaceFirst(Regex("(?=^<style\\b)"), "<style module") }
+                   else it.replaceFirst(Regex("^<style\\b"), "<style module") }
         if (newOpen == open) return null
         val replacement = newOpen + rest
         document.replaceString(range.startOffset, range.endOffset, replacement)
