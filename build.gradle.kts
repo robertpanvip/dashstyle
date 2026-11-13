@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.7"
+version = "1.5.8"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.8</h3>
+<ul>
+    <li>🧪 测试增强：<code>DashStyleHighlightAnnotator</code> 新增 10 个直接测试（置灰 5 + 黄线 4 + 共存 1），锁定置灰范围严格夹紧 selectorList、黄线范围只含 declaration（排除嵌套 ruleset 子块）的正确性</li>
+</ul>
 <h3>1.5.7</h3>
 <ul>
     <li>🧪 测试增强：<code>DeclarationSignatureUtil</code> 新增 36 个回归测试（27 纯函数单元 + 9 PSI 集成），锁定重复 CSS 检测的签名归一化行为（hex3→hex6 / 空白压缩 / 尾逗号 / lowercase / CSS 变量 / 嵌套 SCSS 边界）</li>
