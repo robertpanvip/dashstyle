@@ -131,7 +131,7 @@ class DashStyleHighlightAnnotatorTest : BasePlatformTestCase() {
     }
 
     @Test
-    fun `置灰 — LESS/SCSS 嵌套 ruleset 正确处理（子 ruleset 也独立判断）`() {
+    fun `置灰 — LESS-SCSS 嵌套 ruleset 正确处理（子 ruleset 也独立判断）`() {
         myFixture.addFileToProject("App.tsx", """
             import styles from './App.module.scss'
             export function App() { return <div className={styles.parent}>Hi</div> }
