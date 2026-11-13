@@ -178,4 +178,101 @@ class LessMixinUnusedDetectionTest : BasePlatformTestCase() {
             "ghost" in used
         )
     }
+
+    // ======================== 新增强用例 ========================
+
+    @Test
+    fun `跨父级 mixin 调用（嵌套 ruleset 调用顶层 mixin）`() {
+        val less = configureLess(
+            """
+            .flex-center {
+              display: flex;
+              align-items: center;
+            }
+            .wrapper {
+              .inner {
+                .flex-center();
+              }
+            }
+            .fully-unused {
+              color: red;
+            }
+            """.trimIndent()
+        )
+        val used = ApplicationManager.getApplication().runReadAction<Set<String>> { snapshotUsed(less) }
+        Assert.assertTrue(
+            "嵌套的 .inner 里调用的 .flex-center 应计入 used（跨父级调用）",
+            "flex-center" in used
+        )
+        Assert.assertFalse("fully-unused 不应进 used", "fully-unused" in used)
+
+        val flagged = unusedProblemClassNames()
+        Assert.assertFalse("flex-center 不应被报未使用（嵌套调用场景）", "flex-center" in flagged)
+        Assert.assertTrue("fully-unused 应被报未使用", "fully-unused" in flagged)
+    }
+
+    @Test
+    fun `参数化 mixin 调用（带括号和参数）同样计入`() {
+        val less = configureLess(
+            """
+            .flex-center {
+              display: flex;
+              align-items: center;
+            }
+            .a {
+              .flex-center();
+            }
+            .b {
+              .flex-center;
+            }
+            .c {
+              .flex-center(red);
+            }
+            .d {
+              .flex-center(#ff0, 8px);
+            }
+            .fully-unused {
+              color: red;
+            }
+            """.trimIndent()
+        )
+        val used = ApplicationManager.getApplication().runReadAction<Set<String>> { snapshotUsed(less) }
+        Assert.assertTrue(
+            "参数化调用 .flex-center(red) 应计入 used（实际 used=${used.sorted()}）",
+            "flex-center" in used
+        )
+        Assert.assertFalse("fully-unused 不应进 used", "fully-unused" in used)
+
+        val flagged = unusedProblemClassNames()
+        Assert.assertFalse("flex-center 不应被报未使用（多种调用形式）", "flex-center" in flagged)
+    }
+
+    @Test
+    fun `LESS :extend all 形式（带 all 关键字）计入使用`() {
+        val less = configureLess(
+            """
+            .base {
+              color: red;
+            }
+            .a:extend(.base all) {
+              font-weight: bold;
+            }
+            .b:extend(.base) {
+              font-size: 14px;
+            }
+            .fully-unused {
+              color: blue;
+            }
+            """.trimIndent()
+        )
+        val used = ApplicationManager.getApplication().runReadAction<Set<String>> { snapshotUsed(less) }
+        Assert.assertTrue(
+            ":extend(.base all) 的 base 应计入 used（实际 used=${used.sorted()}）",
+            "base" in used
+        )
+        Assert.assertFalse("fully-unused 不应进 used", "fully-unused" in used)
+
+        val flagged = unusedProblemClassNames()
+        Assert.assertFalse("base 不应被报未使用（extend all + extend 形式）", "base" in flagged)
+    }
 }

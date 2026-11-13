@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.5"
+version = "1.5.6"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.6</h3>
+<ul>
+    <li>🧪 新增约 28 个端到端回归测试：<code>VueScopedStyleToModuleIntentionTest</code>（15 用例，覆盖 v1.5.0~v1.5.5 全流程 + isAvailable 边界）、<code>DuplicateCssInspectionEdgeCaseTest</code>（10 用例，覆盖 MIN_SHARED_DECLARATIONS=3 阈值边界 + v1.5.5 三个 bug 回归：黄线范围 / @media LCA / @supports LCA）、<code>LessMixinUnusedDetectionTest</code> 扩充 3 用例（跨父级 mixin 调用 / 参数化 mixin / :extend all 形式）</li>
+</ul>
 <h3>1.5.5</h3>
 <ul>
     <li>🐞 修复 <code>DashStyleHighlightAnnotator</code> 画黄线范围太大：原来对整个 <code>ruleset.block</code>（<code>{ ... }</code> body）画波浪线，LESS/SCSS 深嵌套场景下嵌套 ruleset 子块也被黄线覆盖视觉非常扎眼；现已改为 <code>dedupDeclarationRange(block)</code> 只画该 ruleset 的**直接 declaration** 范围，排除所有嵌套 ruleset 子块</li>
