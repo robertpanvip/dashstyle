@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.2"
+version = "1.5.3"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.3</h3>
+<ul>
+    <li>🐞 紧急修复 <code>VueScopedStyleToModuleIntention</code> 生成 kebab-case 类名访问时内层用双引号 <code>${'$'}style["xxx-xxx"]</code>，和外层属性 <code>:class="..."</code> 的双引号直接冲突导致 Vue 属性值解析炸掉；现已统一改为 <code>${'$'}style['xxx-xxx']</code> 单引号写法，避开外层属性值的双引号包裹</li>
+</ul>
 <h3>1.5.2</h3>
 <ul>
     <li>🐞 紧急修复 <code>VueScopedStyleToModuleIntention</code> 迁移后 <code>&lt;style scoped&gt;</code> 变成 <code>&lt;style module&lt;style&gt;</code> 标签头粘在一起：<code>CssModuleFileResolver.promoteVueStyleModule</code> 里用了零宽正向先行断言 <code>(?=^&lt;style\b)</code>，替换不消耗字符导致原 <code>&lt;style&gt;</code> 残留；现已改为直接匹配 <code>^&lt;style\b</code> 替换</li>

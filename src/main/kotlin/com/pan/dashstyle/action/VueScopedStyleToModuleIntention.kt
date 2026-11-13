@@ -198,6 +198,6 @@ class VueScopedStyleToModuleIntention : IntentionAction {
     /** 类名 → `$style.xxx`（kebab 自动走 bracket 写法）。 */
     private fun nameAccessExpr(name: String): String {
         val kebab = NamingUtil.camelToKebab(name)
-        return if (kebab.contains("-")) "\$style[\"$kebab\"]" else "\$style.$name"
+        return if (kebab.contains("-")) "\$style['$kebab']" else "\$style.$name"
     }
 }
