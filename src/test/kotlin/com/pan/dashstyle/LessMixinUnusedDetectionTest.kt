@@ -248,7 +248,7 @@ class LessMixinUnusedDetectionTest : BasePlatformTestCase() {
     }
 
     @Test
-    fun `LESS :extend all 形式（带 all 关键字）计入使用`() {
+    fun `LESS extend all 形式（带 all 关键字）计入使用`() {
         val less = configureLess(
             """
             .base {

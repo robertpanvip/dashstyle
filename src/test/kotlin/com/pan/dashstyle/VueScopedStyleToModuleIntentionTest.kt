@@ -101,9 +101,9 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
         Assert.assertTrue("应含 <style module", after.contains("<style module"))
         Assert.assertFalse("不应再含 scoped", after.contains("scoped"))
 
-        // class → :class="$style.xxx"
-        Assert.assertTrue("box 应被转成 $style.box", after.contains("""<div :class="$style.box">"""))
-        Assert.assertTrue("title 应被转成 $style.title", after.contains("""<span :class="$style.title">"""))
+        // class → :class="${'$'}style.xxx"
+        Assert.assertTrue("box 应被转成 ${'$'}style.box", after.contains("""<div :class="${'$'}style.box">"""))
+        Assert.assertTrue("title 应被转成 ${'$'}style.title", after.contains("""<span :class="${'$'}style.title">"""))
     }
 
     @Test
@@ -122,8 +122,8 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
 
         val after = myFixture.file.text
         Assert.assertTrue("多类名应拼成数组，含 container 和 wrapper",
-            after.contains(""":class="[$style.container, $style.wrapper]""") ||
-            after.contains(""":class="[$style.container,$style.wrapper]"""))
+            after.contains(""":class="[${'$'}style.container, ${'$'}style.wrapper]""") ||
+            after.contains(""":class="[${'$'}style.container,${'$'}style.wrapper]"""))
     }
 
     // ======================== v1.5.2 回归 — promote 零宽 lookahead bug ========================
@@ -187,10 +187,10 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
         val after = runIntentionAndGetText(project, vue)
 
         // 关键：外层 :class="..." 双引号，内层 bracket 必须用单引号
-        Assert.assertTrue("应是 $style['node-right'] 单引号，不是 $style[\"node-right\"] 双引号嵌双引号",
-            after.contains(""":class="$style['node-right']" """.trim()))
+        Assert.assertTrue("应是 ${'$'}style['node-right'] 单引号，不是 ${'$'}style[\"node-right\"] 双引号嵌双引号",
+            after.contains(""":class="${'$'}style['node-right']" """.trim()))
         Assert.assertFalse("内层不能是双引号嵌套双引号",
-            after.contains("""$style["node-right"]"""))
+            after.contains("""${'$'}style["node-right"]"""))
     }
 
     @Test
@@ -206,8 +206,8 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
 
         val after = runIntentionAndGetText(project, vue)
 
-        Assert.assertTrue("camelCase 应保持 $style.nodeRight 写法",
-            after.contains("""$style.nodeRight"""))
+        Assert.assertTrue("camelCase 应保持 ${'$'}style.nodeRight 写法",
+            after.contains("""${'$'}style.nodeRight"""))
     }
 
     // ======================== v1.5.4 回归 — 混合 Tailwind 保留 + 多 scoped style tags ========================
@@ -225,10 +225,10 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
 
         val after = runIntentionAndGetText(project, vue)
 
-        // mybtn 命中 CSS → $style.mybtn；flex/gap-2 是 Tailwind → 保持 JS 字符串字面量
+        // mybtn 命中 CSS → ${'$'}style.mybtn；flex/gap-2 是 Tailwind → 保持 JS 字符串字面量
         Assert.assertTrue("应保留 Tailwind flex 类", after.contains("'flex'"))
         Assert.assertTrue("应保留 Tailwind gap-2 类", after.contains("'gap-2'"))
-        Assert.assertTrue("mybtn 应被转成 $style.mybtn", after.contains("$style.mybtn"))
+        Assert.assertTrue("mybtn 应被转成 ${'$'}style.mybtn", after.contains("${'$'}style.mybtn"))
     }
 
     @Test
@@ -247,8 +247,8 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
 
         val after = runIntentionAndGetText(project, vue)
 
-        Assert.assertTrue("a 应被转", after.contains("$style.a"))
-        Assert.assertTrue("b 应被转（第二个 scoped style 里定义的）", after.contains("$style.b"))
+        Assert.assertTrue("a 应被转", after.contains("${'$'}style.a"))
+        Assert.assertTrue("b 应被转（第二个 scoped style 里定义的）", after.contains("${'$'}style.b"))
         // 两个 scoped → module
         Assert.assertEquals("两个 style tag 都应变成 module", 2,
             Regex("""<style module""").findAll(after).count())
@@ -271,15 +271,15 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
         val after = runIntentionAndGetText(project, vue)
 
         // global-class 定义在不带 scoped 的 style 里，不应被计入 allClasses → 保持原样
-        Assert.assertTrue("global-class 不应被转成 $style.global-class（定义在全局 style）",
+        Assert.assertTrue("global-class 不应被转成 ${'$'}style.global-class（定义在全局 style）",
             after.contains("'global-class'") || after.contains("global-class"))
-        Assert.assertTrue("mybtn 应被转", after.contains("$style.mybtn"))
+        Assert.assertTrue("mybtn 应被转", after.contains("${'$'}style.mybtn"))
     }
 
     // ======================== v1.5.1 增强 — :class 动态字面量替换 ========================
 
     @Test
-    fun `v1_5_1 增强 — :class 数组里的静态字符串替换`() {
+    fun `v1_5_1 增强 - class 数组里的静态字符串替换`() {
         val vue = configureVue("""
 <template>
   <div :class="['card', computedVar]">Hi</div>
@@ -291,8 +291,8 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
 
         val after = runIntentionAndGetText(project, vue)
 
-        Assert.assertTrue("数组里的 'card' 应被替换成 $style.card",
-            after.contains("""[$style.card"""))
+        Assert.assertTrue("数组里的 'card' 应被替换成 ${'$'}style.card",
+            after.contains("""[${'$'}style.card"""))
         Assert.assertTrue("computedVar 应保持原样", after.contains("computedVar"))
     }
 
@@ -310,8 +310,8 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
 
         val after = runIntentionAndGetText(project, vue)
 
-        Assert.assertTrue("'highlight' 应被转", after.contains("""$style.highlight"""))
-        Assert.assertTrue("'muted' 应被转", after.contains("""$style.muted"""))
+        Assert.assertTrue("'highlight' 应被转", after.contains("""${'$'}style.highlight"""))
+        Assert.assertTrue("'muted' 应被转", after.contains("""${'$'}style.muted"""))
         // 原字符串字面量不应再留
         Assert.assertFalse("原 'highlight' 字符串应被替换",
             after.contains("""'highlight'"""))
@@ -320,10 +320,10 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
     }
 
     @Test
-    fun `v1_5_1 增强 — :class 反引号模板 literal 不被误碰`() {
+    fun `v1_5_1 增强 - class 反引号模板 literal 不被误碰`() {
         val vue = configureVue("""
 <template>
-  <div :class="`icon-${type}`">Hi</div>
+  <div :class="`icon-${'$'}{type}`">Hi</div>
 </template>
 <style scoped>
 .icon-user { display: block; }
