@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.3"
+version = "1.5.4"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.4</h3>
+<ul>
+    <li>🐞 修复 <code>VueScopedStyleToModuleIntention</code> 收集 CSS 类名时从<b>整个文件全局</b>扫 <code>CssRuleset</code>，把不带 scoped 的普通 <code>&lt;style&gt;</code>（全局样式）里的类也误算进来：模板引用这些全局类的静态 <code>class="..."</code> 被误转成 <code>:class="${'$'}style.xxx"</code>，但 promote 只升级 scoped style，全局 style 保持原样，运行时 <code>${'$'}style.xxx</code> 找不到定义；现已限定只从当前 scoped style tag <b>子树内部</b> 提取类名</li>
+    <li>🐞 修复静态 class 替换时只保留命中 CSS 定义的类、丢掉 Tailwind / 组件自带 class 等非 CSS 定义类：<code>class="mybtn flex gap-2"</code> 此前整体替换为 <code>:class="${'$'}style.mybtn"</code>，<code>flex</code> 和 <code>gap-2</code> 直接消失；现已把不能转的类保持为 JS 字符串字面量拼进数组，变成 <code>:class="[${'$'}style.mybtn, 'flex', 'gap-2']"</code></li>
+</ul>
 <h3>1.5.3</h3>
 <ul>
     <li>🐞 紧急修复 <code>VueScopedStyleToModuleIntention</code> 生成 kebab-case 类名访问时内层用双引号 <code>${'$'}style["xxx-xxx"]</code>，和外层属性 <code>:class="..."</code> 的双引号直接冲突导致 Vue 属性值解析炸掉；现已统一改为 <code>${'$'}style['xxx-xxx']</code> 单引号写法，避开外层属性值的双引号包裹</li>
