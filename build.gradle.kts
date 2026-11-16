@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.8"
+version = "1.5.9"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,11 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.9</h3>
+<ul>
+    <li>✨ <code>VueScopedStyleToModuleIntention</code> 现在支持 <code>:class="{ 'kebab-case': cond }"</code> 对象字面量 key 场景，自动生成计算属性语法 <code>[$style['kebab-case']]</code>；value 位置的字符串字面量仍走直接替换路径；identifier key（如 <code>{ active: cond }</code>）保持原样</li>
+    <li>🧪 新增 4 个 v1.5.9 回归测试覆盖：kebab-case key 计算属性 / value 直接替换 / 多 key 混合 identifier+string / 数组嵌套里的对象 key</li>
+</ul>
 <h3>1.5.8</h3>
 <ul>
     <li>🧪 测试增强：<code>DashStyleHighlightAnnotator</code> 新增 10 个直接测试（置灰 5 + 黄线 4 + 共存 1），锁定置灰范围严格夹紧 selectorList、黄线范围只含 declaration（排除嵌套 ruleset 子块）的正确性</li>
