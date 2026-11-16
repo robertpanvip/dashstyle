@@ -324,22 +324,12 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             if (cssVf == null || !isCssModuleFile(cssFile))
                 return CachedValueProvider.Result.create(Snapshot(emptySet(), true, emptyMap(), emptySet()), cssFile)
 
+            val tracker = com.intellij.psi.util.PsiModificationTracker.getInstance(cssFile.project)
             val references = findReferencingSourceFiles(cssFile)
             if (references.isEmpty()) {
-                // 没有任何引用源文件，且不是动态引用：存在两类情形——
-                //   ① 该 CSS Module 确实没有任何 import（真·全部未使用）；
-                //   ② 扫描暂态失准：git 回滚 / VFS refresh / 索引未及时更新 / PSI 与磁盘不同步
-                //      （ReferencesSearch 依赖索引，外部批量改文件时结果可能为空）。
-                // 情形②若被当成"全 unused" 会导致**整个 CSS 文件全部置灰**（用户反馈：git 回滚后全部置灰）。
-                // 采用保守策略：references 为空的场景本身无法区分 ①②，
-                // 直接把整个文件标为 hasDynamic（跳过置灰），等索引/PSI 稳定后再判断。
-                // 这样彻底避免"回滚瞬间/刷新间隙 把全部类误置灰"。
-                // 依赖 PsiModificationTracker 实例：任何代码改动（含 git 回滚后的重排）
-                // 都会让此 hasDynamic 快照失效并重算，一旦 references 恢复，回归正常置灰判断。
-                // 注意：必须依赖 tracker 对象本身（ModificationTracker 类型），
-                // 不能依赖 tracker.modificationCount（Long）—— CachedValue 拒绝非受管类型依赖，
-                // 会抛 "Wrong dependency type: class java.lang.Long" 并让 daemon 置灰分析崩溃。
-                val tracker = com.intellij.psi.util.PsiModificationTracker.getInstance(cssFile.project)
+                // 没有任何引用源文件——可能是真·全未使用，也可能是索引未就绪间隙。
+                // 保守标记 hasDynamic 跳过置灰；依赖 tracker + cssFile，
+                // 索引/PSI 一变就让快照失效重算。
                 return CachedValueProvider.Result.create(
                     Snapshot(emptySet(), true, emptyMap(), emptySet()),
                     cssFile,
@@ -348,22 +338,20 @@ class UnusedCssModuleClassInspection : LocalInspectionTool() {
             }
 
             val snap = computeFileSnapshot(cssFile, references)
+            // --- deps 列表：必须包含 tracker 以保证 CachedValue compute 的幂等性 ---
+            // 历史 Bug：当 references 在某些时刻（索引间隙）为空时走保守分支，
+            // 与当前正常分支产出的 Snapshot（hasDynamic=true vs false）和 deps 列表（3 vs 5 元素）
+            // 完全不等价 → JetBrains IdempotenceChecker 在 getValueWithLock 里抛
+            //   PluginException: Non-idempotent computation
+            // 解法：在所有路径都包含全局 PsiModificationTracker 依赖——
+            // 索引刷新 / VFS 事件 / 外部文件改动都会让 tracker bump，
+            // 两条路径的快照会被统一失效重算，不会在不同时刻出现两个不等价结果。
             val deps = mutableListOf<Any>()
             deps += cssFile
-            // 依赖每个引用源文件自身：编辑引用源（含在其中新增/删除 $style.xxx 引用或 import）→ 该
-            // 文件 PSI 变化 → 快照失效重算，used 立即更新。
+            deps += tracker
+            // 依赖每个引用源文件自身：编辑引用源（含新增/删除 $style.xxx 引用或 import）→
+            // 该文件 PSI 变化 → 快照立即失效重算，used 立即可见更新。
             for ((srcPsi, _) in references) deps += srcPsi
-            // 注意：这里**不能**再加 PsiModificationTracker.forLanguages(js/html/vue) 之类的全局依赖
-            // —— 它会在任何 JS/Vue 文件的任意代码块修改时 bump：用户在无关文件函数体内打一个字，
-            // 所有 module 快照都被判失效，下一次 pass 逐个重算（每次重算含一次全项目 ReferencesSearch），
-            // module 文件越多越卡（用户反馈：装插件后大项目明显变卡）。
-            // 覆盖「新增 import 引用」的失效策略：
-            //   ① module 尚无任何引用源 → references 为空，上方 hasDynamic 分支已依赖全局
-            //      PsiModificationTracker 实例（任意代码改动都会失效重算），首个 import 出现即可恢复；
-            //   ② module 已有引用源、再有**新文件**开始 import 它 → 新文件不在 references 集合内，
-            //      快照会短暂不失效（最迟在 cssFile 或任一既有引用源被编辑后重算）。
-            //      这是刻意的取舍：不置灰正确性（references 为空才可能误置灰，已被①的保守分支覆盖）
-            //      不受影响，只可能延迟「取消置灰」一拍，换取避免「每次无关编辑全量重算」的性能问题。
             return CachedValueProvider.Result.create(snap, deps)
         }
 
