@@ -7,11 +7,13 @@ import com.pan.dashstyle.support.NamingUtil
 
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.lang.javascript.psi.JSLiteralExpression
+import com.intellij.lang.javascript.psi.JSProperty
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.css.CssRuleset
 import com.intellij.psi.util.PsiTreeUtil
@@ -24,7 +26,10 @@ import com.intellij.psi.xml.XmlTag
  *   1. 扫描所有 `<style scoped>` 子树里的 CssRuleset，提取类名定义集合（**仅限 scoped style**，
  *      不扫文件里其他不带 scoped 的普通 <style>，避免把全局样式的类误算进来）
  *   2. 收集模板里所有静态 `class="..."` 属性
- *   3. 额外扫描 `:class` / `v-bind:class` 里的 JS 字符串字面量
+ *   3. 额外扫描 `:class` / `v-bind:class` 里的 JS 字符串字面量，并按上下文分类：
+ *      - 数组元素 / 三元分支值 / 对象 value → 直接替换 `'foo'` → `$style.foo`
+ *      - 对象 key（`{ 'foo': cond }`）→ 计算属性语法 `'foo'` → `[$style.foo]`
+ *        （对象 key 不能是表达式，不加 `[...]` 会生成非法 JS）
  *   4. 静态属性里：命中 CSS 定义的类 → $style.xxx；**不命中的类保持原样**（Tailwind / 组件自带 class 等），
  *      拼 JS 数组：`class="foo flex"` → `:class="[$style.foo, 'flex']"`
  *   5. 动态字面量里：只替换命中 CSS 定义的那个，剩余保持
@@ -69,10 +74,11 @@ class VueScopedStyleToModuleIntention : IntentionAction {
                 entry.second.split(CLASS_SPLIT).any { it in allClasses }
             }) return true
 
-        // 条件 B：存在 :class / v-bind:class 里的 JS 字符串字面量值命中 CSS 定义集合
-        if (collectDynamicStringLiterals(file).any { literal ->
-                literal.stringValue?.let { it in allClasses } == true
-            }) return true
+        // 条件 B：存在 :class 里的 JS 字符串字面量（数组元素 / 三元值 / 对象 value）命中
+        if (findDirectReplaceLiteralRanges(file, allClasses).isNotEmpty()) return true
+
+        // 条件 C：存在 :class 对象字面量的字符串 key 命中（JSProperty.name 里嵌的 key 不是独立 PSI 节点）
+        if (findObjectKeyReplacements(file, allClasses).isNotEmpty()) return true
 
         return false
     }
@@ -89,15 +95,11 @@ class VueScopedStyleToModuleIntention : IntentionAction {
         if (allClasses.isEmpty()) return
 
         // ---- 静态 class 属性 → 整体替换成 :class="..." ----
-        // 关键：能转的类 → $style.xxx，**不能转的类保持为 JS 字符串**（Tailwind / 全局 class）
-        //        这样 `class="mybtn flex gap-2"` 不会把 flex/gap-2 丢成空。
         val staticAttrReplacements = collectStaticClassAttrs(file).mapNotNull { (attr, value) ->
             if (TEMPLATE_INTERPOLATION.containsMatchIn(value)) return@mapNotNull null
             val parts = value.split(CLASS_SPLIT).filter { it.isNotBlank() }
-            // 至少有一个 part 命中 CSS 定义——否则整属性跳过
             val hasConverted = parts.any { it in allClasses }
             if (!hasConverted) return@mapNotNull null
-            // 每个 part：命中的 → $style.xxx，未命中的 → JS 字符串字面量（保持原样）
             val exprs = parts.map { name ->
                 if (name in allClasses) nameAccessExpr(name)
                 else "'$name'"
@@ -107,17 +109,16 @@ class VueScopedStyleToModuleIntention : IntentionAction {
             attr.textRange to ":class=\"$newExpr\""
         }
 
-        // ---- :class / v-bind:class 里的 JS 字符串字面量 → 只替换命中的那个 ----
-        val dynamicLiteralReplacements = collectDynamicStringLiterals(file)
-            .mapNotNull { literal ->
-                val strVal = literal.stringValue ?: return@mapNotNull null
-                if (strVal !in allClasses) return@mapNotNull null
-                val newExpr = nameAccessExpr(strVal)
-                literal.textRange to newExpr
-            }
+        // ---- :class / v-bind:class 里的 JS 字符串字面量 → 直接替换 ----
+        // （数组元素 / 三元值 / 对象 value，这些场景字面量是独立 JSLiteralExpression PSI 节点）
+        val dynamicValueReplacements = findDirectReplaceLiteralRanges(file, allClasses)
+
+        // ---- :class 对象字面量的字符串 key → 计算属性语法 ----
+        // （JSProperty 里字符串 key 不是独立 PSI 节点，用文本范围替换 key 部分）
+        val objectKeyReplacements = findObjectKeyReplacements(file, allClasses)
 
         // ---- 合并所有替换，按 range 降序 ----
-        val allReplacements = (staticAttrReplacements + dynamicLiteralReplacements)
+        val allReplacements = (staticAttrReplacements + dynamicValueReplacements + objectKeyReplacements)
             .sortedByDescending { (range, _) -> range.startOffset }
 
         if (allReplacements.isEmpty()) return
@@ -186,25 +187,109 @@ class VueScopedStyleToModuleIntention : IntentionAction {
     }
 
     /**
-     * 收集模板里 `:class` / `v-bind:class` 属性值内部的所有 JS 字符串字面量。
-     * 反引号模板 literal 不会被 JSLiteralExpression 命中（它是 JsTemplateLiteral 另一种类型），
-     * 所以天然安全跳过。
+     * 收集 `:class` / `v-bind:class` 里的 JS 字符串字面量中，**可以直接替换**（生成 `$style.xxx`）的那些。
+     * 覆盖场景：数组元素、三元分支值、对象 value 值。
+     * 返回 [(range, replacement), ...]。
+     *
+     * 对象 key 的字符串字面量**不在此处处理**——它们在 Vue 模板 PSI 里不是独立 JSLiteralExpression
+     * 节点，而是直接嵌在 JSProperty.name 里。用 [findObjectKeyReplacements] 单独处理。
      */
-    private fun collectDynamicStringLiterals(file: PsiFile): List<JSLiteralExpression> {
+    private fun findDirectReplaceLiteralRanges(file: PsiFile, allClasses: Set<String>): List<Pair<TextRange, String>> {
         val dynamicClassRanges = PsiTreeUtil.findChildrenOfType(file, XmlAttribute::class.java)
             .filter { DYNAMIC_CLASS_ATTR.matches(it.name) }
             .map { it.textRange }
-
         if (dynamicClassRanges.isEmpty()) return emptyList()
 
         val allLiterals = runCatching {
             PsiTreeUtil.findChildrenOfType(file, JSLiteralExpression::class.java)
         }.getOrDefault(emptyList())
 
-        return allLiterals.filter { literal ->
+        val result = mutableListOf<Pair<TextRange, String>>()
+        for (literal in allLiterals) {
             val r = literal.textRange
-            dynamicClassRanges.any { it.contains(r) }
+            if (dynamicClassRanges.none { it.contains(r) }) continue
+            // 跳过那些实际上是 JSProperty key 的字面量——它们不是独立 PSI 节点，
+            // 但在 .js/.ts 文件（非 Vue 模板）里可能以字面量形式出现，
+            // 这里保守处理：如果 parent 是 JSProperty 且我们是第一个有意义的子节点，
+            // 就跳过让 findObjectKeyReplacements 用 JSProperty 路径处理。
+            if (isObjectKeyLiteralNode(literal)) continue
+
+            val strVal = literal.stringValue ?: continue
+            if (strVal in allClasses) {
+                result += r to nameAccessExpr(strVal)
+            }
         }
+        return result
+    }
+
+    /**
+     * 收集 `:class` / `v-bind:class` 里 **JS 对象字面量的字符串 key** 的替换范围。
+     *
+     * 关键发现：在 Vue 模板的 JS 绑定 PSI 里，`{ 'invalid-option': cond }` 的字符串 key
+     * **不是独立的 JSLiteralExpression PSI 节点**——JetBrains JS PSI 直接把 key 名存为
+     * JSProperty.name 属性（已自动去除引号）。JSProperty 的子节点只有 value，不含 key。
+     * 因此必须通过 JSProperty.text 找到 key 字符串的文本位置再做替换。
+     *
+     * 替换策略：key 是表达式语境（object literal key position），不能直接写 `$style.xxx`
+     * 会生成非法 JS `{ $style.xxx: cond }`，必须用计算属性语法 `{ [$style.xxx]: cond }`。
+     *
+     * 返回 [(keyTextRange, "[\$style.xxx]"), ...] —— 替换的是 key 本身（含引号），
+     * 用计算属性包裹的 $style 访问表达式替代。
+     */
+    private fun findObjectKeyReplacements(file: PsiFile, allClasses: Set<String>): List<Pair<TextRange, String>> {
+        val dynamicClassRanges = PsiTreeUtil.findChildrenOfType(file, XmlAttribute::class.java)
+            .filter { DYNAMIC_CLASS_ATTR.matches(it.name) }
+            .map { it.textRange }
+        if (dynamicClassRanges.isEmpty()) return emptyList()
+
+        val allProperties = runCatching {
+            PsiTreeUtil.findChildrenOfType(file, JSProperty::class.java)
+        }.getOrDefault(emptyList())
+
+        val result = mutableListOf<Pair<TextRange, String>>()
+        for (prop in allProperties) {
+            val propRange = prop.textRange
+            if (dynamicClassRanges.none { it.contains(propRange) }) continue
+
+            // prop.text 形如：'invalid-option': option.invalid
+            // 检查 key 是否是带引号的字符串（以 ' 或 " 开头）
+            val propText = prop.text ?: continue
+            val quote = propText.firstOrNull()
+            if (quote != '\'' && quote != '"') continue
+
+            // JSProperty.name 已经是去引号后的 key 值（JetBrains PSI 自动处理）
+            val keyName = prop.name ?: continue
+            if (keyName !in allClasses) continue
+
+            // 找到 key 字符串（含引号）的精确范围：从 JSProperty 起点开始，
+            // 匹配 `'xxx'` 或 `"xxx"` 模式直到闭合引号
+            val quotedKeyMatch = Regex("""^['"][^'"]+['"]""").find(propText) ?: continue
+            val quotedKeyLength = quotedKeyMatch.value.length
+
+            val keyRange = TextRange(propRange.startOffset, propRange.startOffset + quotedKeyLength)
+            val replacement = "[${nameAccessExpr(keyName)}]"
+            result += keyRange to replacement
+        }
+        return result
+    }
+
+    /**
+     * 判断 JSLiteralExpression 是否为 JSProperty 的 key 节点（兜底路径）。
+     * 在 .js/.ts 文件（非 Vue 模板）里，JSProperty 的字符串 key 有时是独立的
+     * JSLiteralExpression 子节点。此时 findDirectReplaceLiteralRanges 要跳过它，
+     * 让 findObjectKeyReplacements 统一处理（避免生成非法 JS）。
+     *
+     * Vue 模板里 JSProperty 根本没有 key 子节点，此方法自然返回 false。
+     */
+    private fun isObjectKeyLiteralNode(literal: JSLiteralExpression): Boolean {
+        val parent = literal.parent ?: return false
+        if (parent !is JSProperty) return false
+        // 跳过前置空白，找到 JSProperty 的第一个有意义子节点——就是 key
+        var firstMeaningful: PsiElement? = parent.firstChild
+        while (firstMeaningful != null && firstMeaningful.text?.isBlank() == true) {
+            firstMeaningful = firstMeaningful.nextSibling
+        }
+        return firstMeaningful === literal
     }
 
     /**

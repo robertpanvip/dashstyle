@@ -335,6 +335,92 @@ class VueScopedStyleToModuleIntentionTest : BasePlatformTestCase() {
         Assert.assertFalse("反引号模板不应触发迁移", isAvailable(vue))
     }
 
+    // ======================== v1.5.9 增强 — :class 对象字面量 key 计算属性语法 ========================
+
+    @Test
+    fun `v1_5_9 增强 — 对象字面量 key kebab-case 转计算属性`() {
+        val vue = configureVue("""
+<template>
+  <div :class="{ 'invalid-option': option.invalid }">Hi</div>
+</template>
+<style scoped lang="less">
+.invalid-option { color: #ff4d4f; }
+</style>
+        """.trimIndent())
+
+        Assert.assertTrue("对象 key 命中 CSS 应触发迁移", isAvailable(vue))
+        val after = runIntentionAndGetText(project, vue)
+
+        // 关键：对象 key 必须用计算属性语法 [$style['invalid-option']]，
+        // 不能直接写成 $style['invalid-option']: option.invalid（非法 JS）
+        Assert.assertTrue("对象 key 应生成计算属性语法 [${'$'}style['invalid-option']]",
+            after.contains("""[${'$'}style['invalid-option']]: option.invalid"""))
+        Assert.assertFalse("原字符串 key 'invalid-option' 应被替换",
+            Regex("""\{ 'invalid-option':""").containsMatchIn(after))
+    }
+
+    @Test
+    fun `v1_5_9 增强 — 对象 value 字符串字面量直接替换`() {
+        // value 位置的字面量不是 key，走直接替换路径（v1.5.1 原逻辑）
+        val vue = configureVue("""
+<template>
+  <div :class="{ active: 'highlight' }">Hi</div>
+</template>
+<style scoped>
+.highlight { color: yellow; }
+</style>
+        """.trimIndent())
+
+        val after = runIntentionAndGetText(project, vue)
+
+        Assert.assertTrue("value 'highlight' 应直接替换成 ${'$'}style.highlight",
+            after.contains("""${'$'}style.highlight"""))
+        Assert.assertFalse("value 不应加计算属性括号",
+            after.contains("""[${'$'}style.highlight]"""))
+    }
+
+    @Test
+    fun `v1_5_9 增强 — 多 key 对象混合 identifier + 字符串 key`() {
+        val vue = configureVue("""
+<template>
+  <div :class="{ active: isActive, 'error-state': hasError, disabled: isDisabled }">Hi</div>
+</template>
+<style scoped>
+.error-state { color: red; }
+</style>
+        """.trimIndent())
+
+        val after = runIntentionAndGetText(project, vue)
+
+        // 只有 'error-state' 命中 CSS → 计算属性替换
+        Assert.assertTrue("字符串 key 应转成 [${'$'}style['error-state']]",
+            after.contains("""[${'$'}style['error-state']]: hasError"""))
+        // 未命中的 identifier key（active / disabled）保持原样
+        Assert.assertTrue("identifier key 应保持 active",
+            Regex("""\{\s*active:""").containsMatchIn(after))
+        Assert.assertTrue("identifier key 应保持 disabled",
+            after.contains("disabled: isDisabled"))
+    }
+
+    @Test
+    fun `v1_5_9 增强 — 对象在数组里也能识别 key`() {
+        val vue = configureVue("""
+<template>
+  <div :class="[staticClass, { 'card-body': isBody }]">Hi</div>
+</template>
+<style scoped>
+.card-body { padding: 8px; }
+</style>
+        """.trimIndent())
+
+        val after = runIntentionAndGetText(project, vue)
+
+        Assert.assertTrue("嵌套数组里的对象 key 应转计算属性",
+            after.contains("""[${'$'}style['card-body']]: isBody"""))
+        Assert.assertTrue("原字符串 key 'card-body' 不应再留",
+            Regex("""'card-body': isBody""").find(after) == null)
+    }
+
     // ======================== isAvailable 边界 ========================
 
     @Test
