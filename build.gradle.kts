@@ -99,7 +99,7 @@ intellijPlatform {
         changeNotes = """
 <h3>1.5.9</h3>
 <ul>
-    <li>✨ <code>VueScopedStyleToModuleIntention</code> 现在支持 <code>:class="{ 'kebab-case': cond }"</code> 对象字面量 key 场景，自动生成计算属性语法 <code>[$style['kebab-case']]</code>；value 位置的字符串字面量仍走直接替换路径；identifier key（如 <code>{ active: cond }</code>）保持原样</li>
+    <li>✨ <code>VueScopedStyleToModuleIntention</code> 现在支持 <code>:class="{ 'kebab-case': cond }"</code> 对象字面量 key 场景，自动生成计算属性语法 <code>[${'$'}style['kebab-case']]</code>；value 位置的字符串字面量仍走直接替换路径；identifier key（如 <code>{ active: cond }</code>）保持原样</li>
     <li>🧪 新增 4 个 v1.5.9 回归测试覆盖：kebab-case key 计算属性 / value 直接替换 / 多 key 混合 identifier+string / 数组嵌套里的对象 key</li>
 </ul>
 <h3>1.5.8</h3>
