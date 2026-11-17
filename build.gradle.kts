@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.9"
+version = "1.5.10"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.10</h3>
+<ul>
+    <li>🐛 修 <code>UnusedCssModuleClassInspection</code> CachedValue 幂等性 Bug：JetBrains 2025.3 IdempotenceChecker 抛出 <code>PluginException: Non-idempotent computation</code>——当 <code>ReferencesSearch</code> 在索引间隙返回空时，compute 走保守分支（hasDynamic=true）与正常分支（hasDynamic=false）产出不等价的 Snapshot 和 deps 列表（3 vs 5 元素）。修复：所有路径都带上 <code>PsiModificationTracker</code> 依赖，索引刷新/外部改动/bump 统一失效快照。</li>
+</ul>
 <h3>1.5.9</h3>
 <ul>
     <li>✨ <code>VueScopedStyleToModuleIntention</code> 现在支持 <code>:class="{ 'kebab-case': cond }"</code> 对象字面量 key 场景，自动生成计算属性语法 <code>[${'$'}style['kebab-case']]</code>；value 位置的字符串字面量仍走直接替换路径；identifier key（如 <code>{ active: cond }</code>）保持原样</li>
