@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "com.pan"
-version = "1.5.10"
+version = "1.5.11"
 
 repositories {
     // 这两个声明会被 init-script 里的 URL 改写落到腾讯镜像
@@ -97,6 +97,10 @@ intellijPlatform {
             sinceBuild = "251"
         }
         changeNotes = """
+<h3>1.5.11</h3>
+<ul>
+    <li>🐛 修「重复声明抽取」QuickFix 在 LESS/SCSS 嵌套里生成垃圾输出：JetBrains CSS PSI 的 <code>CssDeclaration.textRange</code> 只覆盖 <code>prop: value</code>，尾随分号是独立 sibling 节点。替换时不扩范围会残留分号，导致第一个声明 <code>.shared-font-size();</code> 自带分号 + 残留分号 → <code>.shared-font-size();;</code>，其余声明替换为空后留下裸 <code>;</code> → 整体变成 <code>.shared-font-size();; ; ;</code> 的垃圾格式。修复：替换前把 endOffset 向后吞并到包含分号 + 分号后 whitespace（不超过 block 边界）。</li>
+</ul>
 <h3>1.5.10</h3>
 <ul>
     <li>🐛 修 <code>UnusedCssModuleClassInspection</code> CachedValue 幂等性 Bug：JetBrains 2025.3 IdempotenceChecker 抛出 <code>PluginException: Non-idempotent computation</code>——当 <code>ReferencesSearch</code> 在索引间隙返回空时，compute 走保守分支（hasDynamic=true）与正常分支（hasDynamic=false）产出不等价的 Snapshot 和 deps 列表（3 vs 5 元素）。修复：所有路径都带上 <code>PsiModificationTracker</code> 依赖，索引刷新/外部改动/bump 统一失效快照。</li>

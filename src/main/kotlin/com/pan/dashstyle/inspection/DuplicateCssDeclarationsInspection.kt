@@ -13,6 +13,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.TextRange
 import com.intellij.psi.*
 import com.intellij.psi.css.*
 import com.intellij.psi.util.CachedValueProvider
@@ -201,12 +202,48 @@ class DuplicateCssDeclarationsInspection : LocalInspectionTool() {
                     var insertedRef = false
                     for (d in decls) {
                         if (removalSig(d) !in sigsToRemove) continue
-                        val r = d.textRange
+                        // ★ Bug fix（v1.5.11）：扩展替换范围包含紧随其后的分号 + 中间空白。
+                        // JetBrains CSS PSI 的 CssDeclaration.textRange 只覆盖 `prop: value`，
+                        // 尾随分号是独立 sibling 节点（可能带一个空白 token），不在范围内。
+                        // 不扩的话：
+                        //   1) 第一个匹配声明替换为 `.shared();`（自带分号）+ 残留原分号 → `.shared();;`
+                        //   2) 第二/第三个匹配声明替换为空字符串 + 各自残留分号 → 裸 `;`
+                        // 最终变成 `.shared-font-size();; ; ;` 的垃圾输出。
+                        val range = d.textRange
+                        var end = range.endOffset
+                        // 向后吞并所有连续的分号 token 和中间 whitespace
+                        var nxt = d.nextSibling
+                        while (nxt != null) {
+                            val t = nxt.text
+                            if (t == null || t.isBlank()) {
+                                // 只允许跳过声明和分号之间的一个空白 token，别把下一行缩进也吃进去
+                                if (nxt.textRange.startOffset < end) {
+                                    end = maxOf(end, nxt.textRange.endOffset)
+                                }
+                                nxt = nxt.nextSibling
+                                continue
+                            }
+                            // 分号
+                            if (t == ";") {
+                                end = maxOf(end, nxt.textRange.endOffset)
+                                nxt = nxt.nextSibling
+                                // 分号后的空白也吃掉（避免留下多余空行/缩进）
+                                if (nxt != null && (nxt.text == null || nxt.text.isBlank())) {
+                                    end = maxOf(end, nxt.textRange.endOffset)
+                                }
+                                break
+                            }
+                            // 其他东西（下一个声明、嵌套 ruleset、block 闭合）就停
+                            break
+                        }
+                        if (end > block.textRange.endOffset) end = block.textRange.endOffset
+
+                        val expandedRange = TextRange(range.startOffset, end)
                         if (ref != null && !insertedRef) {
-                            edits.add(Edit(r.startOffset, r.endOffset, ref))
+                            edits.add(Edit(expandedRange.startOffset, expandedRange.endOffset, ref))
                             insertedRef = true
                         } else {
-                            edits.add(Edit(r.startOffset, r.endOffset, ""))
+                            edits.add(Edit(expandedRange.startOffset, expandedRange.endOffset, ""))
                         }
                     }
                 }
